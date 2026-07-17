@@ -32,6 +32,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -63,6 +64,11 @@ ANSI = re.compile(r"\x1b\[[0-9;]*m")
 SERVICES = ["mosdns", "sniproxy", "wa-shim", "quic-proxy",
             "5gpn-tgbot", "5gpn-api"]
 
+CLASH_ADDR = os.environ.get("CLASH_ADDR", "127.0.0.1:9090")
+CLASH_SECRET_FILE = os.environ.get("MIHOMO_API_SECRET_FILE", "/etc/5gpn/mihomo-api-secret")
+MIHOMO_STATIC_DIR = os.environ.get("MIHOMO_STATIC_DIR", "/opt/5gpn/webui/mihomo")
+CLASH_WS_PATHS = {"traffic", "logs", "connections", "memory"}
+
 
 def run(argv, inp=None, timeout=180):
     try:
@@ -79,6 +85,65 @@ def run(argv, inp=None, timeout=180):
 
 def ctl(*args, inp=None, timeout=180):
     return run(["bash", MGMT, *args], inp=inp, timeout=timeout)
+
+
+# --- mihomo (Clash API) integration ------------------------------------------
+def clash_secret():
+    return read_file(CLASH_SECRET_FILE).strip()
+
+
+def clash_request(method, sub, body=None, ctype=None, timeout=30):
+    """Call the loopback Clash API with the server-side secret. Returns
+    (status, content_type, response_bytes)."""
+    sub = sub.split("?", 1)[0].strip("/")
+    if not sub or not re.match(r"^[A-Za-z0-9_./-]+$", sub) or ".." in sub:
+        return 400, "application/json", b'{"message":"bad path"}'
+    secret = clash_secret()
+    if not secret:
+        return 503, "application/json", b'{"message":"mihomo api not configured"}'
+    req = urllib.request.Request("http://%s/%s" % (CLASH_ADDR, sub),
+                                 data=body, method=method)
+    req.add_header("Authorization", "Bearer " + secret)
+    if ctype:
+        req.add_header("Content-Type", ctype)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status, resp.headers.get("Content-Type", "application/json"), resp.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.headers.get("Content-Type", "application/json"), e.read()
+    except Exception as e:  # noqa: BLE001
+        return 502, "application/json", ('{"message":"mihomo unreachable: %s"}' % e).encode()
+
+
+def ws_allowed(sub):
+    return sub.split("?", 1)[0].strip("/") in CLASH_WS_PATHS
+
+
+def mihomo_overview():
+    secret = clash_secret()
+    if not secret:
+        return None, "mihomo API 未配置（缺少 secret，运行 install.sh --setup-api）"
+    def get(p):
+        req = urllib.request.Request("http://%s%s" % (CLASH_ADDR, p))
+        req.add_header("Authorization", "Bearer " + secret)
+        with urllib.request.urlopen(req, timeout=8) as r:
+            return json.loads(r.read().decode())
+    try:
+        conns = get("/connections")
+        mem = get("/memory")
+        ver = get("/version")
+    except Exception as e:  # noqa: BLE001
+        return None, "mihomo 不可达（smart 出口未启用？）: %s" % e
+    cl = conns.get("connections") or []
+    top = {}
+    for c in cl:
+        key = c.get("rule") or "(direct)"
+        top[key] = top.get(key, 0) + 1
+    top5 = sorted(top.items(), key=lambda kv: -kv[1])[:5]
+    return {"ok": True, "connections": len(cl),
+            "upload": conns.get("uploadTotal", 0), "download": conns.get("downloadTotal", 0),
+            "memory": mem.get("inuse", 0), "version": ver.get("version", ""),
+            "top_rules": [{"rule": k, "count": v} for k, v in top5]}, None
 
 
 def read_file(path):
@@ -699,6 +764,17 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:  # noqa: BLE001
             pass
 
+    def _send_raw(self, code, data, ctype="application/json"):
+        self.send_response(code)
+        self.send_header("Content-Type", ctype + ("; charset=utf-8" if ctype.startswith(("text/", "application/json")) else ""))
+        self.send_header("Content-Length", str(len(data)))
+        self._cors()
+        self.end_headers()
+        try:
+            self.wfile.write(data)
+        except Exception:  # noqa: BLE001
+            pass
+
     def _auth(self):
         h = self.headers.get("Authorization", "")
         return h.startswith("Bearer ") and hmac.compare_digest(h[7:], TOKEN)
@@ -725,6 +801,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"ok": True, "service": "5gpn-api"})
         if not self._auth():
             return self._send(401, {"ok": False, "error": "unauthorized"})
+        if path == "/api/mihomo/overview":
+            data, err = mihomo_overview()
+            return self._send(200 if data else 502, data or {"ok": False, "error": err})
+        if path.startswith("/api/mihomo/proxy/"):
+            sub = self.path.split("/api/mihomo/proxy/", 1)[1]
+            status, ctype, data = clash_request("GET", sub)
+            return self._send_raw(status, data, ctype)
         if path == "/api/status":
             exits, cur = list_exits()
             services = {s: run(["systemctl", "is-active", s], timeout=5)[0] for s in SERVICES}
@@ -780,6 +863,13 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
         if not self._auth():
             return self._send(401, {"ok": False, "error": "unauthorized"})
+        if path.startswith("/api/mihomo/proxy/"):
+            sub = self.path.split("/api/mihomo/proxy/", 1)[1]
+            n = int(self.headers.get("Content-Length", "0") or 0)
+            body = self.rfile.read(n) if 0 < n <= 2_000_000 else None
+            status, ctype, data = clash_request(self.command, sub, body=body,
+                                                ctype=self.headers.get("Content-Type"))
+            return self._send_raw(status, data, ctype)
         b = self._json_body()
 
         if path == "/api/exits/set":
