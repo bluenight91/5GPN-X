@@ -2456,12 +2456,16 @@ install_metacubexd() {
     local url="https://github.com/MetaCubeX/metacubexd/releases/download/v${ver}/compressed-dist.tgz"
     local tmp; tmp="$(mktemp)"
     info "Downloading metacubexd v${ver}..."
-    if ! curl -fsSL "$url" -o "$tmp"; then
+    if ! curl -fsSL --max-time 90 "$url" -o "$tmp"; then
         warn "metacubexd 下载失败（可稍后重跑 --setup-api）；mihomo 监控页暂不可用，其余功能不受影响。"
         rm -f "$tmp"; return 0
     fi
+    rm -rf "${BASE_DIR}/webui/mihomo"
     mkdir -p "${BASE_DIR}/webui/mihomo"
-    tar -xzf "$tmp" -C "${BASE_DIR}/webui/mihomo" 2>/dev/null || tar -xf "$tmp" -C "${BASE_DIR}/webui/mihomo"
+    if ! tar -xzf "$tmp" -C "${BASE_DIR}/webui/mihomo" 2>/dev/null && ! tar -xf "$tmp" -C "${BASE_DIR}/webui/mihomo"; then
+        warn "metacubexd 解压失败（可稍后重跑 --setup-api）；其余功能不受影响。"
+        rm -f "$tmp"; return 0
+    fi
     rm -f "$tmp"
     ok "metacubexd v${ver} installed to ${BASE_DIR}/webui/mihomo"
 }
@@ -2480,6 +2484,9 @@ setup_api() {
     local py; py="$(command -v python3 || echo /usr/bin/python3)"
     if [[ ! -f "${LIB_DIR}/api-server.py" ]]; then
         err "api-server.py not found in ${LIB_DIR}"; return 1
+    fi
+    if [[ ! -f "${LIB_DIR}/mihomo-router-config.py" ]]; then
+        err "mihomo-router-config.py not found in ${LIB_DIR}"; return 1
     fi
 
     info "Installing HTTP control API..."
