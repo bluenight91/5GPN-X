@@ -112,6 +112,8 @@ def normalize_sub(raw):
             allowed.append(("timeout", str(max(100, min(10000, int(v))))))
         elif k == "url" and re.match(r"^https?://", v):
             allowed.append(("url", v))
+        elif k == "force" and v in ("true", "false"):
+            allowed.append((k, v))
         elif k == "level" and v in ("debug", "info", "warning", "error", "silent"):
             allowed.append(("level", v))
     return path + ("?" + urllib.parse.urlencode(allowed) if allowed else "")
@@ -186,25 +188,40 @@ def ws_relay(client_sock, sub, client_headers):
         client_sock.sendall(head + b"\r\n\r\n" + rest)
         client_sock.setblocking(False)
         upstream.setblocking(False)
-        socks = [client_sock, upstream]
+        # The client socket is read raw from here on, bypassing the handler's
+        # buffered rfile. Browsers don't send WS frames before the 101, so
+        # rfile has no buffered client bytes here.
+        peer = {client_sock: upstream, upstream: client_sock}
+        pending = {client_sock: bytearray(), upstream: bytearray()}
+        # Transient non-blocking conditions: SSLWantRead/WantWrite on the TLS
+        # client socket, BlockingIOError on the plain upstream socket.
+        WANT = (ssl.SSLWantReadError, ssl.SSLWantWriteError, BlockingIOError)
         while True:
-            r, _, x = select.select(socks, [], socks, 300)
+            r, w, x = select.select(list(pending),
+                                    [s for s in pending if pending[s]],
+                                    list(pending), 300)
             if x:
                 return
-            if not r:
-                continue
             for s in r:
                 try:
                     data = s.recv(65536)
+                except WANT:
+                    continue            # TLS record not complete yet; retry
                 except OSError:
                     return
-                other = upstream if s is client_sock else client_sock
                 if not data:
                     return
+                pending[peer[s]] += data
+            for s in w:
                 try:
-                    other.sendall(data)
+                    n = s.send(pending[s])
+                except WANT:
+                    continue            # retry the SAME bytes once writable
                 except OSError:
                     return
+                if n <= 0:
+                    return
+                del pending[s][:n]      # drop only what was actually sent
     finally:
         try:
             upstream.close()
@@ -843,7 +860,7 @@ class Handler(BaseHTTPRequestHandler):
     def _cors(self):
         self.send_header("Access-Control-Allow-Origin", ORIGIN)
         self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 
     def _send(self, code, obj):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
@@ -931,8 +948,8 @@ class Handler(BaseHTTPRequestHandler):
             data, err = mihomo_overview()
             return self._send(200 if data else 502, data or {"ok": False, "error": err})
         if path.startswith("/api/mihomo/proxy/") and self.headers.get("Upgrade", "").lower() == "websocket":
-            sub = self.path.split("/api/mihomo/proxy/", 1)[1]
-            if not ws_allowed(sub):
+            sub = normalize_sub(self.path.split("/api/mihomo/proxy/", 1)[1])
+            if not sub or sub.split("?", 1)[0] not in CLASH_WS_PATHS:
                 return self._send(403, {"ok": False, "error": "forbidden"})
             try:
                 self.close_connection = True
