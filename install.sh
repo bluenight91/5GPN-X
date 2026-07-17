@@ -27,6 +27,7 @@ MIHOMO_CFG_GEN="/opt/5gpn/bin/mihomo-exit-config.py"
 MIHOMO_ROUTER_GEN="/opt/5gpn/bin/mihomo-router-config.py"
 RULES_IMPORT="/opt/5gpn/bin/rules-import.py"
 MIHOMO_VERSION_DEFAULT="1.19.28"
+METACUBEXD_VERSION_DEFAULT="1.269.0"
 MOSDNS_VERSION_DEFAULT="5.3.4"
 DEFAULT_REMOTE_DNS=("1.1.1.1" "8.8.8.8" "9.9.9.9")
 DEFAULT_LOCAL_DNS=("101.226.4.6" "218.30.118.6" "180.76.76.76" "119.29.29.29")
@@ -2074,6 +2075,7 @@ regen_smart() {
     local yaml gen_err; yaml="$(exit_mihomo_conf smart)"
     if ! gen_err="$(EXITS_DIR="${EXITS_DIR}" WG_DIR="${WG_DIR}" PGW_RULESET_CACHE="${RULESET_CACHE}" \
                     PGW_POLICY_MAP="${POLICY_MAP}" \
+                    MIHOMO_API_SECRET_FILE="${MIHOMO_API_SECRET_FILE}" \
                     python3 "${MIHOMO_ROUTER_GEN}" "$eff" 2>&1 >"${yaml}.tmp")"; then
         err "Rules error: ${gen_err}"; rm -f "${yaml}.tmp" "$eff"; exit 1
     fi
@@ -2445,9 +2447,23 @@ EOF
 ensure_mihomo_api_secret() {
     if [[ ! -s "${MIHOMO_API_SECRET_FILE}" ]]; then
         mkdir -p /etc/5gpn; chmod 700 /etc/5gpn
-        openssl rand -hex 32 > "${MIHOMO_API_SECRET_FILE}"
-        chmod 600 "${MIHOMO_API_SECRET_FILE}"
+        openssl rand -hex 32 2>/dev/null > "${MIHOMO_API_SECRET_FILE}" || head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "${MIHOMO_API_SECRET_FILE}"
     fi
+    chmod 600 "${MIHOMO_API_SECRET_FILE}"
+}
+install_metacubexd() {
+    local ver="${METACUBEXD_VERSION:-${METACUBEXD_VERSION_DEFAULT}}"
+    local url="https://github.com/MetaCubeX/metacubexd/releases/download/v${ver}/compressed-dist.tgz"
+    local tmp; tmp="$(mktemp)"
+    info "Downloading metacubexd v${ver}..."
+    if ! curl -fsSL "$url" -o "$tmp"; then
+        warn "metacubexd 下载失败（可稍后重跑 --setup-api）；mihomo 监控页暂不可用，其余功能不受影响。"
+        rm -f "$tmp"; return 0
+    fi
+    mkdir -p "${BASE_DIR}/webui/mihomo"
+    tar -xzf "$tmp" -C "${BASE_DIR}/webui/mihomo" 2>/dev/null || tar -xf "$tmp" -C "${BASE_DIR}/webui/mihomo"
+    rm -f "$tmp"
+    ok "metacubexd v${ver} installed to ${BASE_DIR}/webui/mihomo"
 }
 setup_api() {
     local token="${API_TOKEN:-}"
@@ -2469,6 +2485,13 @@ setup_api() {
     info "Installing HTTP control API..."
     ensure_mihomo_api_secret
     mkdir -p "${BASE_DIR}/bin" "${CONF_DIR}"
+    # Refresh the installed router generator so the regen below emits the Clash API block.
+    install -m 0755 "${LIB_DIR}/mihomo-router-config.py" "${MIHOMO_ROUTER_GEN}"
+    install_metacubexd
+    if [[ -f "${RULES_FILE}" ]]; then
+        info "Rebuilding smart router config to enable the mihomo API..."
+        ( regen_smart ) || warn "smart 配置重建失败；配置规则后可重跑 --setup-api"
+    fi
     install -m 0755 "${LIB_DIR}/api-server.py" "${BASE_DIR}/bin/api-server.py"
     install -m 0755 "${SCRIPT_PATH}" "${BASE_DIR}/bin/5gpn-ctl"
     # Bundle the web panel so it can be served/copied from the box if wanted.
