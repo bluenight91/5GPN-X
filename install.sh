@@ -15,6 +15,7 @@ EXIT_MARK="0x1"
 EXIT_TABLE="100"
 WG_DIR="/etc/wireguard"
 EXITS_DIR="/etc/5gpn/exits"
+MIHOMO_API_SECRET_FILE=/etc/5gpn/mihomo-api-secret
 RULES_FILE="/etc/5gpn/rules.conf"
 POLICY_MAP="/etc/5gpn/policy-map.conf"
 KEEP_FILE="/etc/5gpn/keep-categories"
@@ -2441,6 +2442,13 @@ EOF
     fi
     ok "Telegram bot 已安装。在 Telegram 给你的 Bot 发送 /start 开始操作。"
 }
+ensure_mihomo_api_secret() {
+    if [[ ! -s "${MIHOMO_API_SECRET_FILE}" ]]; then
+        mkdir -p /etc/5gpn; chmod 700 /etc/5gpn
+        openssl rand -hex 32 > "${MIHOMO_API_SECRET_FILE}"
+        chmod 600 "${MIHOMO_API_SECRET_FILE}"
+    fi
+}
 setup_api() {
     local token="${API_TOKEN:-}"
     local port="${API_PORT:-${API_PORT_DEFAULT}}"
@@ -2459,6 +2467,7 @@ setup_api() {
     fi
 
     info "Installing HTTP control API..."
+    ensure_mihomo_api_secret
     mkdir -p "${BASE_DIR}/bin" "${CONF_DIR}"
     install -m 0755 "${LIB_DIR}/api-server.py" "${BASE_DIR}/bin/api-server.py"
     install -m 0755 "${SCRIPT_PATH}" "${BASE_DIR}/bin/5gpn-ctl"

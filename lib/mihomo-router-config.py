@@ -14,6 +14,7 @@ EXITS_DIR = os.environ.get("EXITS_DIR", "/etc/5gpn/exits")
 WG_DIR = os.environ.get("WG_DIR", "/etc/wireguard")
 CACHE_DIR = os.environ.get("PGW_RULESET_CACHE", "/etc/5gpn/rulesets")
 POLICY_MAP_FILE = os.environ.get("PGW_POLICY_MAP", "/etc/5gpn/policy-map.conf")
+SECRET_FILE = os.environ.get("MIHOMO_API_SECRET_FILE", "/etc/5gpn/mihomo-api-secret")
 DEFAULT_TARGET = os.environ.get("PGW_DEFAULT_TARGET", "direct")
 INTERVAL = int(os.environ.get("PGW_RULESET_INTERVAL", "86400"))
 GEOSITE_MRS = "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/%s.mrs"
@@ -259,6 +260,15 @@ def main():
                           "override-destination": True,
                           "sniff": {"TLS": {"ports": [443, 8443]}, "HTTP": {"ports": [80, "8080-8880"]}}},
               "proxies": proxies, "rule-providers": providers, "rules": rules}
+    secret = ""
+    try:
+        with open(SECRET_FILE, encoding="utf-8") as fh:
+            secret = fh.read().strip()
+    except OSError:
+        secret = ""
+    if secret:
+        config["external-controller"] = "127.0.0.1:9090"
+        config["secret"] = secret
     sys.stdout.write(json.dumps(config, indent=2, ensure_ascii=False) + "\n")
 
 
