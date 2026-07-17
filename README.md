@@ -74,6 +74,7 @@ sudo ./install.sh -ios                  # 重新生成 iOS 描述文件和二维
 sudo ./install.sh --list-exits          # 列出出口
 sudo ./install.sh --check-exits         # 检测出口连通性
 sudo ./install.sh --setup-tgbot         # 配置 Telegram Bot
+sudo ./install.sh --setup-api           # 启用 HTTP 控制 API + 网页控制台（可选）
 sudo ./install.sh --uninstall           # 卸载
 ```
 
@@ -156,6 +157,16 @@ sudo ./install.sh --setup-tgbot
 
 添加出口：`🌐 出口 -> ➕ 添加出口`，直接粘贴节点链接（`ss:// vmess:// trojan:// vless:// hysteria2:// tuic:// anytls:// socks5:// http://`），备注会自动作为出口名。
 
+## 网页控制台（可选）
+
+```bash
+sudo ./install.sh --setup-api   # 生成令牌并启用 HTTP 控制 API（默认端口 8444）
+```
+
+执行后会打印 **API 地址** 与 **令牌**。打开仓库里的 `webui/index.html`（纯静态单文件，可本地双击打开，或托管到任意静态托管 / Cloudflare Pages，见 `webui/README.md`），填入地址和令牌即可在网页上查看实时状态与流量曲线、管理出口与分流规则、更新规则集、备份/恢复配置——与 Telegram Bot 调用同一后端，实时同步。面板还支持绑定你自己的 OpenAI 兼容接口，用自然语言生成分流方案（人工确认后才生效）。
+
+令牌保存在 `/opt/5gpn/etc/api.env`（权限 600）。注意：默认 `FIREWALL_MODE=preserve` 不接管防火墙，需自行放行 TCP 8444；8443 已被回环 sniproxy 占用，故 API 默认用 8444。
+
 ## 配置参考
 
 ### 仓库结构
@@ -189,6 +200,7 @@ tests/            # 策略测试
 | 443 | UDP | `172.22.0.0/16` | QUIC 透明代理 |
 | 853 | TCP | 公网 | DNS over TLS |
 | 8111 | TCP | 公网 | iOS 描述文件下载 |
+| 8444 | TCP | 公网 | HTTP 控制 API（可选，`--setup-api` 后；注意 8443 已被回环 sniproxy 占用） |
 
 ### 环境变量
 

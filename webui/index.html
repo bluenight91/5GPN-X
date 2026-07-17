@@ -1,0 +1,856 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1115">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>5GPN-X 控制台</title>
+<style>
+  /* ---- theme: dark (default) ---- */
+  :root { --bg:#0f1115; --card:#181b22; --line:#262b36; --fg:#e6e9ef; --mut:#9aa4b2;
+          --acc:#4f8cff; --ok:#2ecc71; --bad:#ff5c5c; --warn:#f5a623;
+          --input-bg:#11141a; --btn-bg:#222836; --btn-line:#2f3645; --shadow:none;
+          --sidebar-bg:#14171e; --nav-active:rgba(79,140,255,.16); }
+  @media (prefers-color-scheme:light) {
+    :root:not([data-theme="dark"]) {
+      --bg:#f4f6f9; --card:#ffffff; --line:#e3e7ee; --fg:#1b1f27; --mut:#5b6573;
+      --acc:#2563eb; --ok:#16a34a; --bad:#dc2626; --warn:#b45309;
+      --input-bg:#ffffff; --btn-bg:#eef1f6; --btn-line:#d4dae3; --shadow:0 1px 3px rgba(20,30,60,.06);
+      --sidebar-bg:#ffffff; --nav-active:rgba(37,99,235,.10); }
+  }
+  :root[data-theme="light"] {
+    --bg:#f4f6f9; --card:#ffffff; --line:#e3e7ee; --fg:#1b1f27; --mut:#5b6573;
+    --acc:#2563eb; --ok:#16a34a; --bad:#dc2626; --warn:#b45309;
+    --input-bg:#ffffff; --btn-bg:#eef1f6; --btn-line:#d4dae3; --shadow:0 1px 3px rgba(20,30,60,.06);
+    --sidebar-bg:#ffffff; --nav-active:rgba(37,99,235,.10); }
+
+  * { box-sizing:border-box; }
+  html { -webkit-text-size-adjust:100%; }
+  body { margin:0; background:var(--bg); color:var(--fg); overflow-x:hidden;
+         -webkit-tap-highlight-color:transparent; transition:background-color .2s, color .2s;
+         font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif; }
+  h2 { font-size:13px; margin:0 0 10px; color:var(--mut); text-transform:uppercase; letter-spacing:.04em; }
+  .hide { display:none !important; }
+  .grow { flex:1; } .muted { color:var(--mut); } .small { font-size:12px; }
+  a { color:var(--acc); }
+
+  /* form controls */
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .row + .row { margin-top:8px; }
+  input, textarea, select, button { font-family:inherit; font-size:16px;
+    color:var(--fg); background:var(--input-bg); border:1px solid var(--line); border-radius:10px; padding:10px 12px; line-height:1.25; }
+  input, select { min-width:0; }
+  input[type=text], input[type=password] { flex:1 1 200px; }
+  select { min-height:44px; }
+  textarea { width:100%; min-height:130px; resize:vertical; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:14px; }
+  button { cursor:pointer; background:var(--btn-bg); border-color:var(--btn-line); min-height:42px; padding:9px 14px;
+    touch-action:manipulation; transition:transform .05s, background-color .2s, border-color .2s; }
+  button:active { transform:scale(.97); }
+  @media (hover:hover) { button:hover { border-color:var(--acc); } }
+  button.primary { background:var(--acc); border-color:var(--acc); color:#fff; }
+  button.danger { border-color:var(--bad); color:var(--bad); }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+
+  /* ---- login screen ---- */
+  .login { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:16px; }
+  .logincard { width:100%; max-width:380px; background:var(--card); border:1px solid var(--line);
+    border-radius:16px; padding:22px; box-shadow:var(--shadow); }
+  .logincard h1 { font-size:20px; margin:0 0 4px; }
+  .logincard .sub { color:var(--mut); font-size:13px; margin-bottom:16px; }
+
+  /* ---- app layout (UniFi-style) ---- */
+  .layout { display:flex; min-height:100vh; }
+  .sidebar { width:214px; flex:0 0 214px; background:var(--sidebar-bg); border-right:1px solid var(--line);
+    display:flex; flex-direction:column; position:sticky; top:0; height:100vh; z-index:30; }
+  .brand { padding:18px 18px 10px; font-weight:700; font-size:16px; display:flex; align-items:center; gap:8px; }
+  .brand .dot { width:8px; height:8px; border-radius:50%; background:var(--bad); }
+  .brand .dot.on { background:var(--ok); }
+  nav.menu { flex:1; padding:8px; overflow:auto; }
+  .navitem { display:flex; align-items:center; gap:11px; padding:11px 14px; border-radius:10px;
+    color:var(--mut); cursor:pointer; font-size:14px; user-select:none; }
+  .navitem .ic { font-size:17px; width:20px; text-align:center; }
+  @media (hover:hover){ .navitem:hover { background:var(--nav-active); color:var(--fg); } }
+  .navitem.active { background:var(--nav-active); color:var(--acc); font-weight:600; }
+  .sidefoot { padding:12px; border-top:1px solid var(--line); display:flex; flex-direction:column; gap:8px; }
+  .sidefoot .url { font-size:11px; color:var(--mut); word-break:break-all; }
+
+  .main { flex:1; min-width:0; display:flex; flex-direction:column; }
+  .topbar { display:flex; align-items:center; gap:10px; padding:10px 16px; border-bottom:1px solid var(--line);
+    background:var(--card); position:sticky; top:0; z-index:10; min-height:56px; }
+  .topbar .title { font-size:16px; font-weight:600; flex:1; }
+  .topbar button { min-height:38px; padding:7px 11px; }
+  #themeBtn { border-radius:999px; }
+  .hamb { display:none; }
+  .scrim { position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:25; }
+  .content { padding:18px; width:100%; max-width:1080px; }
+
+  /* dashboard tiles */
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:14px; }
+  .tile { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px 16px; box-shadow:var(--shadow); }
+  .tile .tlabel { color:var(--mut); font-size:12px; }
+  .tile .tval { font-size:23px; font-weight:700; margin:5px 0 8px; word-break:break-all; }
+  .tile .tsub { color:var(--mut); font-size:11px; margin-top:7px; }
+
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:16px; margin-bottom:14px; box-shadow:var(--shadow); }
+
+  .pill { font-size:12px; padding:3px 9px; border-radius:999px; border:1px solid var(--line); color:var(--mut); white-space:nowrap; display:inline-block; }
+  .pill.on { color:var(--ok); border-color:var(--ok); }
+  .pill.off { color:var(--bad); border-color:var(--bad); }
+  .pill.wait { color:var(--warn); border-color:var(--warn); }
+  .pills { display:flex; flex-wrap:wrap; gap:6px; }
+
+  /* toast notifications (visible feedback on any section) */
+  #toasts { position:fixed; left:50%; transform:translateX(-50%); z-index:50;
+    bottom:max(16px,env(safe-area-inset-bottom)); display:flex; flex-direction:column; gap:8px;
+    width:min(92vw,440px); pointer-events:none; }
+  .toast { background:var(--card); border:1px solid var(--line); border-left:3px solid var(--acc);
+    border-radius:10px; padding:10px 12px; box-shadow:0 8px 28px rgba(0,0,0,.28); font-size:13px;
+    white-space:pre-wrap; word-break:break-word; pointer-events:auto; animation:tin .18s ease; }
+  .toast.ok { border-left-color:var(--ok); } .toast.bad { border-left-color:var(--bad); } .toast.wait { border-left-color:var(--warn); }
+  @keyframes tin { from{opacity:0; transform:translateY(10px);} to{opacity:1; transform:none;} }
+  button:disabled { opacity:.5; cursor:progress; }
+
+  .exit { display:flex; align-items:center; gap:8px; padding:11px 0; border-top:1px solid var(--line); flex-wrap:wrap; }
+  .exit:first-child { border-top:none; }
+  .exit .name { font-weight:600; } .exit .meta { color:var(--mut); font-size:12px; word-break:break-all; }
+
+  .bar { height:9px; background:var(--input-bg); border-radius:6px; overflow:hidden; border:1px solid var(--line); }
+  .bar>i { display:block; height:100%; background:linear-gradient(90deg,#2ecc71,#f5a623,#ff5c5c); }
+  .mono { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; white-space:pre-wrap; word-break:break-word; }
+  #out { max-height:360px; overflow:auto; }
+  #chart { width:100%; height:220px; display:block; }
+  #latChart { width:100%; height:200px; display:block; }
+  .chart-tip { position:fixed; z-index:60; pointer-events:none; background:var(--card); border:1px solid var(--line);
+    border-radius:8px; padding:7px 9px; font-size:12px; box-shadow:0 6px 22px rgba(0,0,0,.3); min-width:130px; }
+  .chart-tip .t { color:var(--mut); margin-bottom:4px; }
+  .chart-tip .d { display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:6px; vertical-align:middle; }
+  .chart-tip b { float:right; margin-left:16px; }
+  #rulelist { max-height:340px; overflow:auto; margin-top:8px; border:1px solid var(--line); border-radius:8px; }
+  .rrow { display:flex; gap:8px; align-items:center; padding:7px 10px; border-top:1px solid var(--line); }
+  .rrow:first-child { border-top:none; } .rrow .mono { flex:1; word-break:break-all; }
+  .rrow .idx { color:var(--mut); min-width:30px; } .rrow button { min-height:34px; padding:5px 10px; }
+  details > summary { cursor:pointer; }
+
+  /* ---- mobile drawer ---- */
+  @media (max-width:860px) {
+    .sidebar { position:fixed; left:0; top:0; bottom:0; height:100%; transform:translateX(-100%); transition:transform .2s ease; }
+    .sidebar.open { transform:none; box-shadow:0 0 40px rgba(0,0,0,.4); }
+    .hamb { display:inline-flex; }
+    .content { padding:14px; padding-bottom:max(18px,env(safe-area-inset-bottom)); }
+    .topbar { padding-left:max(12px,env(safe-area-inset-left)); }
+    input[type=text], input[type=password] { flex:1 1 100%; }
+    .card .row > button { flex:1 1 auto; }
+    .card > .row:first-child > button, .topbar button { flex:0 0 auto; }
+    .exit .name { order:1; flex:1 1 100%; } .exit .meta { order:2; flex:1 1 100%; }
+    .exit button { order:3; flex:1 1 calc(50% - 4px); } .exit .pill { order:3; margin-left:auto; }
+    .exit select { order:3; flex:1 1 100%; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ============ login ============ -->
+<div id="login" class="login">
+  <div class="logincard">
+    <h1>🛰️ 5GPN-X 控制台</h1>
+    <div class="sub">连接到你的网关 API</div>
+    <div class="row"><input id="url" type="text" placeholder="https://你的域名:8444" autocomplete="off"></div>
+    <div class="row" style="margin-top:8px"><input id="token" type="password" placeholder="API 令牌 (API_TOKEN)" autocomplete="off"></div>
+    <div class="row" style="margin-top:10px">
+      <button class="primary grow" onclick="connect()">连接</button>
+      <button onclick="clearCreds()">清除</button>
+      <button id="themeBtn2" onclick="cycleTheme()" title="切换主题">🌓</button>
+    </div>
+    <div class="row small muted" id="conn" style="margin-top:10px">未连接</div>
+  </div>
+</div>
+
+<!-- ============ app ============ -->
+<div id="app" class="layout hide">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand"><span class="dot" id="brandDot"></span> 5GPN-X</div>
+    <nav class="menu">
+      <div class="navitem active" data-sec="dash"    onclick="showSection('dash')"><span class="ic">📊</span> 概览</div>
+      <div class="navitem"        data-sec="exits"   onclick="showSection('exits')"><span class="ic">🌐</span> 出口</div>
+      <div class="navitem"        data-sec="routing" onclick="showSection('routing')"><span class="ic">🧭</span> 智能分流</div>
+      <div class="navitem"        data-sec="console" onclick="showSection('console')"><span class="ic">🖥️</span> 控制台</div>
+    </nav>
+    <div class="sidefoot">
+      <button id="themeBtn" onclick="cycleTheme()" title="切换主题">🌓 跟随</button>
+      <div class="url" id="sideUrl"></div>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <button class="hamb" onclick="toggleSidebar()">☰</button>
+      <div class="title" id="secTitle">概览</div>
+      <span class="pill wait hide" id="busy">⏳ 处理中</span>
+      <span class="pill on" id="connPill">●</span>
+      <button onclick="refreshAll()" title="刷新">🔄</button>
+    </header>
+
+    <div class="content">
+      <!-- 概览 -->
+      <section data-sec="dash">
+        <div class="card">
+          <div class="row"><h2 class="grow">实时</h2>
+            <label class="small muted" style="display:flex;align-items:center;gap:6px;cursor:pointer">
+              <input type="checkbox" id="autoref" onchange="toggleAuto()" style="min-height:auto;width:auto;flex:none"> 自动刷新</label>
+          </div>
+          <div id="live" class="row" style="gap:18px;font-size:15px"><span class="muted small">点“自动刷新”或刷新查看实时速率</span></div>
+        </div>
+        <div class="tiles" id="tiles"></div>
+        <div class="card">
+          <div class="row"><h2 class="grow">24 小时流量趋势</h2><button onclick="loadTraffic()">🔄</button></div>
+          <canvas id="chart"></canvas>
+          <div id="legend" class="pills small" style="margin-top:8px"></div>
+          <div id="traffic_note" class="small muted" style="margin-top:6px"></div>
+        </div>
+        <div class="card">
+          <div class="row"><h2 class="grow">24 小时出口延迟</h2><button onclick="loadLatency()">🔄</button></div>
+          <canvas id="latChart"></canvas>
+          <div id="latLegend" class="pills small" style="margin-top:8px"></div>
+          <div id="lat_note" class="small muted" style="margin-top:6px"></div>
+        </div>
+        <div class="card"><h2>服务</h2><div id="services" class="pills"></div></div>
+      </section>
+
+      <!-- 出口 -->
+      <section data-sec="exits" hidden>
+        <div class="card">
+          <div class="row"><h2 class="grow">出口</h2>
+            <button onclick="loadExitLatency()">📶 测延迟</button>
+            <button onclick="checkExits()">🩺 检查连通性</button></div>
+          <div id="exits"></div>
+          <div id="checkResult" style="margin-top:10px"></div>
+        </div>
+        <div class="card" id="ex_card">
+          <h2 id="ex_title">添加出口</h2>
+          <div class="row"><input id="ex_name" type="text" placeholder="名字 (1-11 小写字母/数字)"></div>
+          <div class="row"><textarea id="ex_cfg" placeholder="socks5://用户:密码@host:端口
+或 socks5h://…  /  ss://…  /  整段 WireGuard [Interface]/[Peer]
+密码含 @ : / # 等特殊字符直接一行原样粘贴即可"></textarea></div>
+          <div class="row">
+            <button class="primary" id="ex_btn" onclick="addExit()">➕ 添加</button>
+            <button id="ex_cancel" class="hide" onclick="cancelEditExit()">取消</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 智能分流 -->
+      <section data-sec="routing" hidden>
+        <div class="card">
+          <h2>🤖 AI 智能配置</h2>
+          <details id="aiCfgBox">
+            <summary class="muted small">AI 接口设置（绑定你自己的 API，OpenAI 兼容）</summary>
+            <div class="row" style="margin-top:8px"><input id="ai_base" type="text" placeholder="API Base URL，如 https://api.openai.com/v1"></div>
+            <div class="row"><input id="ai_key" type="password" placeholder="API Key（存服务器，不回显）"></div>
+            <div class="row"><input id="ai_model" type="text" placeholder="模型，如 gpt-4o-mini"><button class="primary" onclick="aiSaveConfig()">保存</button></div>
+            <div class="row small muted" id="ai_cfg_state"></div>
+          </details>
+          <div class="row" style="margin-top:10px"><input id="ai_repo" type="text" placeholder="GitHub 仓库链接（可选）"></div>
+          <div class="row"><input id="ai_intent" type="text" placeholder="意图，如：走 IIJ 加速 / 让某服务直连"></div>
+          <div class="row"><button class="primary" onclick="aiPlan()">✨ 生成方案</button></div>
+          <div id="ai_plan"></div>
+          <div class="small muted" style="margin-top:6px">方案仅为建议，需点“确认应用”后才会生效。</div>
+        </div>
+
+        <div class="card">
+          <h2>🔧 工具</h2>
+          <div class="small muted">域名路由测试 —— 看它会不会进网关、走哪个出口</div>
+          <div class="row" style="margin-top:6px">
+            <input id="rt_domain" type="text" placeholder="域名，如 youtube.com">
+            <button onclick="routeTest()">测试</button>
+          </div>
+          <div id="rt_result" class="small" style="margin-top:8px"></div>
+          <div class="small muted" style="margin-top:14px">一键加速 / 直连某域名（自动处理「劫持 + 路由」两层）</div>
+          <div class="row" style="margin-top:6px">
+            <input id="pd_domain" type="text" placeholder="域名，如 chat.openai.com">
+            <select id="pd_target"></select>
+            <button class="primary" onclick="proxyDomain()">应用</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>规则组（分类 → 出口）</h2>
+          <div id="policy"></div>
+          <div class="row" style="margin-top:12px">
+            <input id="g_name" type="text" placeholder="新规则组名，如 Stream / Game">
+            <select id="g_tgt"></select>
+            <button class="primary" onclick="createGroup()">＋ 新建规则组</button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="row"><h2 class="grow">分流规则</h2>
+            <span class="muted small" id="rules_meta"></span>
+            <button onclick="loadRules()">🔄 读取</button>
+            <button onclick="updateRules()">⟳ 更新规则集</button></div>
+          <div class="row" style="margin-top:6px">
+            <select id="r_type">
+              <option>DOMAIN-SUFFIX</option><option>DOMAIN</option><option>DOMAIN-KEYWORD</option>
+              <option>IP-CIDR</option><option>RULE-SET</option><option>GEOSITE</option>
+              <option>GEOIP</option><option>FINAL</option>
+            </select>
+            <input id="r_val" type="text" placeholder="值，如 youtube.com / 1.2.3.0/24 / 规则集URL">
+          </div>
+          <div class="row">
+            <input id="r_tgt" type="text" placeholder="目标：出口名 / direct / block / 规则组(如 AI)" list="tgtlist">
+            <datalist id="tgtlist"></datalist>
+            <button class="primary" id="addRuleBtn" onclick="addRule()">➕ 添加一条</button>
+            <button id="cancelEditBtn" class="hide" onclick="cancelEdit()">取消</button>
+          </div>
+          <div class="row" style="margin-top:8px">
+            <input id="r_filter" type="text" placeholder="过滤规则…" oninput="renderRuleList()">
+            <span class="muted small" id="r_count"></span>
+          </div>
+          <div id="rulelist"></div>
+          <details style="margin-top:10px">
+            <summary class="muted small">高级：直接编辑整份规则文本</summary>
+            <div class="row" style="margin-top:8px"><textarea id="rules" placeholder="读取后在此编辑…"></textarea></div>
+            <div class="row"><button class="primary" onclick="saveRules()">💾 保存整份并应用</button></div>
+          </details>
+        </div>
+      </section>
+
+      <!-- 控制台 -->
+      <section data-sec="console" hidden>
+        <div class="card">
+          <h2>配置备份 / 恢复</h2>
+          <div class="row">
+            <button class="primary" onclick="backupConfig()">⬇️ 下载备份</button>
+            <button onclick="$('restoreFile').click()">⬆️ 恢复备份</button>
+            <input type="file" id="restoreFile" accept=".gz,.tgz,application/gzip" class="hide" onchange="restoreConfig(this)">
+          </div>
+          <div class="small muted" style="margin-top:6px">备份含出口配置（含密码/密钥），请妥善保管。恢复后会重建路由。</div>
+        </div>
+        <div class="card">
+          <div class="row"><h2 class="grow">操作输出</h2><button onclick="$('out').textContent=''">清空</button></div>
+          <div id="out" class="mono"></div>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+<div id="scrim" class="scrim hide" onclick="closeSidebar()"></div>
+<div id="toasts"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+let BASE = "", TOKEN = "";
+let RULES = [], lastTraffic = null, lastLatency = null, EDIT_IDX = null, LAT = {}, AIPLAN = null, EDIT_EXIT = null;
+const SEC_TITLE = { dash:"概览", exits:"出口", routing:"智能分流", console:"控制台" };
+
+/* ---- theme (auto / light / dark) ---- */
+const THEMES = ["auto","light","dark"], THEME_ICON = {auto:"🌓 跟随", light:"☀️ 白天", dark:"🌙 夜间"};
+function cssVar(n){ return getComputedStyle(document.body).getPropertyValue(n).trim() || "#888"; }
+function applyTheme(t){
+  if(t==="auto") document.documentElement.removeAttribute("data-theme");
+  else document.documentElement.setAttribute("data-theme", t);
+  const b=$("themeBtn"); if(b) b.textContent = THEME_ICON[t]||THEME_ICON.auto;
+  const m=document.querySelector('meta[name=theme-color]'); if(m) m.setAttribute("content", cssVar("--bg"));
+  if(lastTraffic) drawChart(lastTraffic);
+}
+function cycleTheme(){
+  const cur=localStorage.getItem("pgw_theme")||"auto";
+  const next=THEMES[(THEMES.indexOf(cur)+1)%THEMES.length];
+  localStorage.setItem("pgw_theme", next); applyTheme(next);
+}
+applyTheme(localStorage.getItem("pgw_theme")||"auto");
+if(window.matchMedia) window.matchMedia("(prefers-color-scheme:light)").addEventListener("change", ()=>{
+  if((localStorage.getItem("pgw_theme")||"auto")==="auto") applyTheme("auto");
+});
+
+/* ---- nav / drawer ---- */
+function showSection(sec){
+  sec = sec || "dash";
+  document.querySelectorAll('section[data-sec]').forEach(s=>{ s.hidden = (s.dataset.sec!==sec); });
+  document.querySelectorAll('.navitem').forEach(n=>n.classList.toggle('active', n.dataset.sec===sec));
+  $("secTitle").textContent = SEC_TITLE[sec]||"";
+  localStorage.setItem("pgw_sec", sec);
+  closeSidebar();
+  if(sec==="dash"){ loadTraffic(); loadLatency(); loadLive(); }
+  if(sec==="exits" && !Object.keys(LAT).length) loadExitLatency();
+  if(sec==="routing"){ loadRules(); aiLoadConfig(); }
+}
+function toggleSidebar(){ const o=$("sidebar").classList.toggle("open"); $("scrim").classList.toggle("hide", !o); }
+function closeSidebar(){ $("sidebar").classList.remove("open"); $("scrim").classList.add("hide"); }
+function refreshAll(){ loadStatus(); loadTraffic(); loadRules(); }
+
+function toast(msg, type){
+  const c=$("toasts"); if(!c) return;
+  const d=document.createElement("div"); d.className="toast "+(type||""); d.textContent=msg;
+  c.appendChild(d);
+  while(c.children.length>4) c.firstChild.remove();
+  setTimeout(()=>{ d.style.transition="opacity .3s"; d.style.opacity="0"; setTimeout(()=>d.remove(),300); }, type==="bad"?6000:3500);
+}
+function log(msg){
+  const o=$("out"); const t=new Date().toLocaleTimeString(); o.textContent="["+t+"] "+msg+"\n"+o.textContent;
+  const first=String(msg).split("\n")[0];
+  const ty = first.startsWith("✅")?"ok" : first.startsWith("❌")?"bad" : first.startsWith("⏳")?"wait" : "";
+  toast(first, ty);
+}
+let BUSY=0;
+function busy(on){ BUSY=Math.max(0,BUSY+(on?1:-1)); const b=$("busy"); if(b) b.classList.toggle("hide", BUSY<=0); }
+function esc(s){ return (s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+function clearCreds(){ localStorage.removeItem("pgw_url"); localStorage.removeItem("pgw_token");
+  $("url").value=""; $("token").value=""; $("app").classList.add("hide"); $("login").classList.remove("hide"); $("conn").textContent="已清除"; }
+
+async function api(path, method, body) {
+  const post = method && method !== "GET";
+  const opt = { method: method||"GET", headers: { "Authorization": "Bearer "+TOKEN } };
+  if (body !== undefined) { opt.headers["Content-Type"]="application/json"; opt.body=JSON.stringify(body); }
+  let r;
+  try { r = await fetch(BASE+path, opt); }
+  catch(e) { throw new Error(post ? "NETDROP" : e.message); }   // connection reset (e.g. router rebuild)
+  const txt = await r.text().catch(()=> "");
+  if (!txt) { throw new Error(post ? "NETDROP" : ("HTTP "+r.status)); }
+  let j; try { j = JSON.parse(txt); } catch(e) { throw new Error(post ? "NETDROP" : ("HTTP "+r.status)); }
+  if (!r.ok && j && j.error) throw new Error(j.error);
+  return j;
+}
+
+// Mutating call: a dropped response (the router rebuild can briefly reset the
+// connection on this small box) is NOT treated as failure — we reload and show
+// the real state. Genuine validation errors return fast JSON and still surface.
+async function mutate(path, body, label, reload) {
+  log("⏳ " + label + "…"); busy(true);
+  try {
+    const r = await api(path, "POST", body);
+    log((r.ok ? "✅ " : "❌ ") + label + (r.output ? "\n"+r.output : ""));
+    if (reload) reload();
+    return r.ok;
+  } catch(e) {
+    if (e.message === "NETDROP") {
+      log("⏳ " + label + "：服务器重建路由，连接短暂中断；已自动刷新，请核对结果。");
+      if (reload) reload();
+    } else { log("❌ " + label + "：" + e.message); }
+    return false;
+  } finally { busy(false); }
+}
+function refreshState(){ loadStatus(); loadRules(); }
+
+async function connect() {
+  BASE = $("url").value.trim().replace(/\/+$/,"");
+  TOKEN = $("token").value.trim();
+  if (!BASE || !TOKEN) { $("conn").textContent="请填写地址和令牌"; return; }
+  $("conn").textContent = "连接中…";
+  try {
+    await fetch(BASE+"/api/health").then(r=>r.json());
+    await api("/api/status");
+    localStorage.setItem("pgw_url", BASE); localStorage.setItem("pgw_token", TOKEN);
+    $("login").classList.add("hide"); $("app").classList.remove("hide");
+    $("brandDot").classList.add("on"); $("sideUrl").textContent = BASE;
+    loadStatus(); loadRules();
+    showSection(localStorage.getItem("pgw_sec")||"dash");
+    $("autoref").checked = localStorage.getItem("pgw_auto")==="1"; toggleAuto();
+  } catch(e) {
+    $("conn").textContent = "连接失败：" + e.message + "（检查地址/端口/证书/令牌）";
+  }
+}
+
+function gb(mb){ return ((mb||0)/1024).toFixed(1); }
+function fmtUptime(s){ s=s||0; const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);
+  return (d?d+"天":"")+(h?h+"小时":"")+((d||h)?"":m+"分")||"0分"; }
+function tile(label,val,pct,sub){
+  return `<div class="tile"><div class="tlabel">${label}</div><div class="tval">${val}</div>`+
+    (pct!=null?`<div class="bar"><i style="width:${Math.max(0,Math.min(100,Math.round(pct)))}%"></i></div>`:``)+
+    (sub?`<div class="tsub">${sub}</div>`:``)+`</div>`;
+}
+async function loadStatus() {
+  try {
+    const s = await api("/api/status");
+    const r = s.resources||s.memory||{};
+    const memPct  = r.total_mb ? r.used_mb/r.total_mb*100 : 0;
+    const diskPct = r.disk_total_mb ? r.disk_used_mb/r.disk_total_mb*100 : 0;
+    const cpu = r.cpu_percent||0;
+    const load = (r.load||[]).map(x=>x.toFixed(2)).join(" ");
+    $("tiles").innerHTML =
+      tile("当前出口", esc(s.current), null, "") +
+      tile("CPU", cpu+"%", cpu, (r.cpu_cores||1)+" 核 · 负载 "+(load||"-")) +
+      tile("内存", (r.used_mb||0)+" MB", memPct, "共 "+(r.total_mb||0)+" · swap "+(r.swap_used_mb||0)) +
+      tile("硬盘", gb(r.disk_used_mb)+" GB", diskPct, "共 "+gb(r.disk_total_mb)+" GB") +
+      tile("运行时间", fmtUptime(r.uptime_sec), null, "");
+    $("services").innerHTML = Object.entries(s.services||{}).map(([k,v])=>
+      `<span class="pill ${v?'on':'off'}">${k} ${v?'●':'○'}</span>`).join("");
+    $("connPill").className = "pill on"; $("connPill").textContent = "● 在线";
+    renderExits(s.exits, s.current);
+    renderPolicy(s.policy, s.exits);
+  } catch(e){ $("connPill").className="pill off"; $("connPill").textContent="● 离线"; log("状态获取失败："+e.message); }
+}
+
+const COLORS = ["#4f8cff","#2ecc71","#f5a623","#ff5c5c","#a06cff","#19c3c3","#ff8c42"];
+function fmtRate(mbps){ return mbps>=1 ? mbps.toFixed(1)+" Mbps" : (mbps*1000).toFixed(0)+" Kbps"; }
+function fmtBytes(b){ const u=["B","KB","MB","GB","TB"]; let i=0; while(b>=1024&&i<u.length-1){b/=1024;i++;}
+  return b.toFixed(b<10&&i>0?1:0)+u[i]; }
+async function loadTraffic(){ try{ drawChart(await api("/api/traffic")); }catch(e){ log("流量获取失败："+e.message); } }
+async function loadLatency(){ try{ drawLatency(await api("/api/latency")); }catch(e){ log("延迟图获取失败："+e.message); } }
+window.addEventListener("resize", ()=>{ if(lastTraffic) drawChart(lastTraffic); if(lastLatency) drawLatency(lastLatency); });
+
+// generic multi-series 24h line chart; valOf maps a point's per-series value -> number|null
+function lineChart(cv, d, valOf, yfmt){
+  const dpr=window.devicePixelRatio||1, W=cv.clientWidth||600, H=cv.clientHeight||200;
+  cv.width=W*dpr; cv.height=H*dpr; const g=cv.getContext("2d"); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,W,H);
+  const now=d.now||Math.floor(Date.now()/1000), tStart=now-86400;
+  const series=d.series||[], pts=d.points||[];
+  const lines={}, vals={}; let maxY=0;
+  series.forEach(s=>{lines[s]=[];vals[s]=[];});
+  pts.forEach(p=>{ const v=p.v||{}; series.forEach(s=>{ const x=valOf(v[s]); if(x!=null&&!isNaN(x)){ lines[s].push([p.t,x]); vals[s].push(x); if(x>maxY)maxY=x; }});});
+  if(maxY<=0)maxY=1;
+  const pad={l:48,r:8,t:8,b:18}, x0=pad.l,x1=W-pad.r,y0=pad.t,y1=H-pad.b;
+  g.strokeStyle=cssVar("--line"); g.fillStyle=cssVar("--mut"); g.font="10px sans-serif"; g.lineWidth=1;
+  for(let i=0;i<=3;i++){ const y=y1-(y1-y0)*i/3; g.beginPath();g.moveTo(x0,y);g.lineTo(x1,y);g.stroke(); g.fillText(yfmt(maxY*i/3),2,y+3); }
+  for(let hh=0;hh<=24;hh+=6){ const x=x0+(x1-x0)*hh/24; g.fillText(hh===24?"现在":("-"+(24-hh)+"h"),x-10,H-4); }
+  const xOf=t=>x0+(x1-x0)*Math.max(0,Math.min(1,(t-tStart)/86400)), yOf=v=>y1-(y1-y0)*Math.min(v,maxY)/maxY;
+  series.forEach((s,i)=>{ const pa=lines[s]; if(!pa.length)return; g.strokeStyle=COLORS[i%COLORS.length]; g.lineWidth=1.8; g.beginPath();
+    pa.forEach((pt,j)=>{const x=xOf(pt[0]),y=yOf(pt[1]); j?g.lineTo(x,y):g.moveTo(x,y);}); g.stroke(); });
+  cv._args={d,valOf,yfmt};
+  cv._geo={x0,x1,y0,y1,tStart,series,lines,xOf,yOf};
+  return {series, vals, pts};
+}
+// hover crosshair + tooltip showing each series' value at the cursor's time
+function attachHover(cv){
+  if(cv._hov) return; cv._hov=true;
+  let raf=0, ev=null;
+  const tip=document.createElement("div"); tip.className="chart-tip hide"; document.body.appendChild(tip);
+  const base=()=>{ const a=cv._args; if(a) lineChart(cv,a.d,a.valOf,a.yfmt); };
+  function render(){
+    raf=0; const g=cv._geo, a=cv._args; if(!g||!a||!ev) return;
+    const rect=cv.getBoundingClientRect(), px=ev.clientX-rect.left;
+    base();   // redraw chart to clear previous crosshair
+    if(px<g.x0-2 || px>g.x1+2){ tip.classList.add("hide"); return; }
+    const ctx=cv.getContext("2d");
+    ctx.save(); ctx.strokeStyle=cssVar("--mut"); ctx.globalAlpha=.55; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(px,g.y0); ctx.lineTo(px,g.y1); ctx.stroke(); ctx.restore();
+    const t=g.tStart+(px-g.x0)/(g.x1-g.x0)*86400, rows=[];
+    g.series.forEach((s,i)=>{ const pa=g.lines[s]; if(!pa||!pa.length) return;
+      let best=null,bd=1e15; for(const p of pa){ const dd=Math.abs(p[0]-t); if(dd<bd){bd=dd;best=p;} }
+      if(!best) return;
+      ctx.fillStyle=COLORS[i%COLORS.length]; ctx.beginPath(); ctx.arc(g.xOf(best[0]),g.yOf(best[1]),3,0,7); ctx.fill();
+      rows.push([s,best[1],COLORS[i%COLORS.length]]);
+    });
+    rows.sort((p,q)=>q[1]-p[1]);
+    const tl=new Date(t*1000).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"});
+    tip.innerHTML = `<div class="t">${tl}</div>` + (rows.length? rows.map(r=>
+      `<div><span class="d" style="background:${r[2]}"></span>${esc(r[0]==="server"?"本机":r[0])} <b>${esc(a.yfmt(r[1]))}</b></div>`).join("")
+      : `<div class="muted">无数据</div>`);
+    tip.classList.remove("hide");
+    let tx=ev.clientX+14, ty=ev.clientY+14;
+    if(tx+tip.offsetWidth>innerWidth-8) tx=ev.clientX-tip.offsetWidth-14;
+    if(ty+tip.offsetHeight>innerHeight-8) ty=ev.clientY-tip.offsetHeight-14;
+    tip.style.left=tx+"px"; tip.style.top=ty+"px";
+  }
+  cv.addEventListener("mousemove", e=>{ ev=e; if(!raf) raf=requestAnimationFrame(render); });
+  cv.addEventListener("mouseleave", ()=>{ tip.classList.add("hide"); base(); });
+}
+function drawChart(d){
+  lastTraffic=d; const cv=$("chart"); if(!cv) return; const iv=d.interval_sec||300;
+  const {series,pts}=lineChart(cv, d, x=>Array.isArray(x)?(x[0]+x[1])*8/iv/1e6:null, fmtRate);
+  const totals={}; series.forEach(s=>totals[s]=0);
+  pts.forEach(p=>{const v=p.v||{}; series.forEach(s=>{ if(Array.isArray(v[s])) totals[s]+=v[s][0]+v[s][1]; });});
+  $("legend").innerHTML = series.map((s,i)=>`<span class="pill" style="border-color:${COLORS[i%COLORS.length]};color:${COLORS[i%COLORS.length]}">${s==="server"?"本机":esc(s)} ${fmtBytes(totals[s])}</span>`).join("")||`<span class="muted small">暂无数据</span>`;
+  $("traffic_note").textContent = pts.length<2 ? ("数据积累中（每 "+(iv/60)+" 分钟采样一次）…") : "";
+  attachHover(cv);
+}
+function drawLatency(d){
+  lastLatency=d; const cv=$("latChart"); if(!cv) return;
+  const {series,vals,pts}=lineChart(cv, d, x=>(typeof x==="number"?x:null), n=>n.toFixed(0)+"ms");
+  $("latLegend").innerHTML = series.map((s,i)=>{ const a=vals[s]; const last=a.length?(a[a.length-1].toFixed(0)+"ms"):"超时";
+    return `<span class="pill" style="border-color:${COLORS[i%COLORS.length]};color:${COLORS[i%COLORS.length]}">${esc(s)} ${last}</span>`;
+  }).join("")||`<span class="muted small">暂无数据</span>`;
+  $("lat_note").textContent = pts.length<2 ? "数据积累中（每 5 分钟采样一次）…" : "";
+  attachHover(cv);
+}
+
+function renderExits(exits, cur) {
+  const box = $("exits");
+  const rows = [`<div class="exit"><span class="name">local</span><span class="meta grow">本机直出</span>`+
+    (cur==="local"?`<span class="pill on">使用中</span>`:`<button onclick="setExit('local')">切换</button>`)+`</div>`,
+    `<div class="exit"><span class="name">smart</span><span class="meta grow">智能分流（按规则）</span>`+
+    (cur==="smart"?`<span class="pill on">使用中</span>`:`<button onclick="setExit('smart')">切换</button>`)+`</div>`];
+  (exits||[]).forEach(e=>{
+    rows.push(`<div class="exit"><span class="name">${esc(e.name)}</span>`+
+      `<span class="meta grow">${esc(e.type)} ${esc(e.server||"")}</span>`+
+      latPill(e.name)+
+      (e.active?`<span class="pill on">使用中</span>`:`<button onclick="setExit('${esc(e.name)}')">切换</button>`)+
+      `<button onclick="editExit('${esc(e.name)}')">改</button>`+
+      `<button class="danger" onclick="delExit('${esc(e.name)}')">删</button></div>`);
+  });
+  box.innerHTML = rows.join("");
+}
+function latPill(name){
+  const l = LAT[name]; if(!l) return "";
+  if(l.ms==null) return `<span class="pill off">超时</span>`;
+  const cls = l.ms<100 ? "on" : (l.ms<250 ? "wait" : "off");
+  return `<span class="pill ${cls}">${Math.round(l.ms)}ms${l.method==="tcp"?"·tcp":""}</span>`;
+}
+async function loadExitLatency(){
+  log("⏳ 测试出口延迟…"); busy(true);
+  try{
+    const r = await api("/api/exits/latency");
+    LAT = r.latency || {};
+    const parts = Object.entries(LAT).map(([n,l])=> n+" "+(l.ms==null?"超时":(Math.round(l.ms)+"ms")));
+    toast("📶 延迟：" + (parts.join(" · ") || "无可测出口"), "ok");
+    loadStatus();   // re-render exits with latency badges
+  }catch(e){ log("❌ 测延迟："+e.message); }
+  finally{ busy(false); }
+}
+function renderPolicy(policy, exits) {
+  const box = $("policy");
+  const targets = ["direct","block"].concat((exits||[]).map(e=>e.name));   // valid policy targets
+  if($("g_tgt")) $("g_tgt").innerHTML = targets.map(t=>`<option>${esc(t)}</option>`).join("");
+  if($("pd_target")) $("pd_target").innerHTML = (exits||[]).map(e=>e.name).concat(["direct","block"]).map(t=>`<option>${esc(t)}</option>`).join("");
+  const ents = Object.entries(policy||{});
+  if (!ents.length) { box.innerHTML = `<div class="muted small">（暂无规则组，下面新建一个，或在“分流规则”里添加规则后自动出现）</div>`; return; }
+  box.innerHTML = ents.map(([cat,tgt])=>{
+    const opts = targets.map(t=>`<option ${t===tgt?'selected':''}>${esc(t)}</option>`).join("");
+    return `<div class="exit"><span class="name grow">${esc(cat)}</span>`+
+      `<select id="pol_${esc(cat)}">${opts}</select>`+
+      `<button onclick="setPolicy('${esc(cat)}')">设置</button>`+
+      `<button onclick="renameGroup('${esc(cat)}')">改名</button>`+
+      `<button class="danger" onclick="delGroup('${esc(cat)}')">删</button></div>`;
+  }).join("");
+}
+async function createGroup(){
+  const name=$("g_name").value.trim(), tgt=$("g_tgt").value;
+  if(!name){ log("请填规则组名"); return; }
+  const ok=await mutate("/api/policy",{category:name,target:tgt},"新建规则组 "+name+" → "+tgt, refreshState);
+  if(ok) $("g_name").value="";
+}
+function renameGroup(cat){
+  const n=(prompt("把规则组「"+cat+"」改名为：", cat)||"").trim();
+  if(!n||n===cat) return;
+  mutate("/api/policy/rename",{old:cat,new:n},"改名 "+cat+" → "+n, refreshState);
+}
+function delGroup(cat){
+  if(!confirm("删除规则组「"+cat+"」？引用它的规则会回退为直连，可稍后改它们的目标。"))return;
+  mutate("/api/policy/del",{category:cat},"删除规则组 "+cat, refreshState);
+}
+
+function setExit(name){ mutate("/api/exits/set",{name},"切换出口 "+name, loadStatus); }
+function delExit(name){ if(confirm("删除出口 "+name+" ?")) mutate("/api/exits/del",{name},"删除出口 "+name, loadStatus); }
+async function addExit(){
+  const config=$("ex_cfg").value;
+  if(!config.trim()){ log("请填写配置"); return; }
+  if(EDIT_EXIT){
+    const ok=await mutate("/api/exits/edit",{name:EDIT_EXIT,config},"修改出口 "+EDIT_EXIT, loadStatus);
+    if(ok) cancelEditExit();
+    return;
+  }
+  const name=$("ex_name").value.trim();
+  if(!name){ log("请填写名字"); return; }
+  const ok=await mutate("/api/exits/add",{name,config},"添加出口 "+name, loadStatus);
+  if(ok){ $("ex_name").value=""; $("ex_cfg").value=""; }
+}
+function editExit(name){
+  EDIT_EXIT=name;
+  showSection("exits");
+  $("ex_name").value=name; $("ex_name").readOnly=true;
+  $("ex_cfg").value="";
+  $("ex_cfg").placeholder="粘贴出口「"+name+"」的新配置（完整 socks5:// / ss:// / WireGuard），将覆盖原配置";
+  $("ex_title").textContent="修改出口 "+name;
+  $("ex_btn").textContent="💾 保存修改";
+  $("ex_cancel").classList.remove("hide");
+  $("ex_card").scrollIntoView({behavior:"smooth",block:"start"});
+  $("ex_cfg").focus();
+}
+function cancelEditExit(){
+  EDIT_EXIT=null;
+  $("ex_name").readOnly=false; $("ex_name").value=""; $("ex_cfg").value="";
+  $("ex_cfg").placeholder="socks5://用户:密码@host:端口\n或 socks5h://…  /  ss://…  /  整段 WireGuard [Interface]/[Peer]\n密码含 @ : / # 等特殊字符直接一行原样粘贴即可";
+  $("ex_title").textContent="添加出口";
+  $("ex_btn").textContent="➕ 添加";
+  $("ex_cancel").classList.add("hide");
+}
+async function checkExits(){
+  log("⏳ 检查出口连通性…"); busy(true);
+  $("checkResult").innerHTML = `<div class="muted small">检查中…</div>`;
+  try{
+    const r=await api("/api/exits/check","POST",{});
+    const items=r.exits||[];
+    const bad=items.filter(x=>x.state!=="UP").length;
+    $("checkResult").innerHTML = items.length ? items.map(x=>{
+      const cls = x.state==="UP"?"on":(x.state==="DOWN"?"off":"");
+      return `<div class="exit"><span class="name grow">${esc(x.name)}</span>`+
+        `<span class="meta">${esc(x.server||"")}</span>`+
+        `<span class="pill ${cls}">${esc(x.state)}</span></div>`;
+    }).join("") : `<div class="muted small">没有可检查的出口</div>`;
+    toast(bad ? ("🩺 "+bad+" 个出口不可达") : "🩺 全部出口在线", bad?"bad":"ok");
+    log("🩺 出口连通性：\n"+items.map(x=>`  ${x.name}  ${x.server}  ${x.state}`).join("\n"));
+  }catch(e){
+    $("checkResult").innerHTML = `<div class="muted small">检查失败</div>`;
+    log("❌ 检查连通性："+e.message);
+  }finally{ busy(false); }
+}
+function setPolicy(cat){ const tgt=$("pol_"+cat).value; mutate("/api/policy",{category:cat,target:tgt}, cat+" → "+tgt, loadStatus); }
+
+async function loadRules(){ try{ const r=await api("/api/rules"); RULES=r.entries||[]; $("rules").value=r.rules||"";
+  $("rules_meta").textContent="共 "+(r.count||0)+" 条";
+  const tgts=[...new Set(RULES.map(e=>e.target).filter(Boolean).concat(["direct","block"]))].sort();
+  $("tgtlist").innerHTML=tgts.map(t=>`<option value="${esc(t)}">`).join("");
+  renderRuleList();
+}catch(e){ log("❌ "+e.message);} }
+function renderRuleList(){
+  const q=($("r_filter").value||"").trim().toLowerCase();
+  const rows=RULES.filter(e=>!q||e.raw.toLowerCase().includes(q));
+  $("r_count").textContent=q?(rows.length+"/"+RULES.length):(RULES.length+" 条");
+  $("rulelist").innerHTML = rows.length? rows.map(e=>
+    `<div class="rrow"><span class="idx">#${e.i}</span><span class="mono">${esc(e.raw)}</span>`+
+    `<button onclick="editRule(${e.i})">改</button>`+
+    `<button class="danger" onclick="delRule(${e.i})">删</button></div>`).join("")
+    : `<div class="rrow muted small">无匹配规则</div>`;
+}
+const RULE_TYPES = ["DOMAIN-SUFFIX","DOMAIN","DOMAIN-KEYWORD","IP-CIDR","RULE-SET","GEOSITE","GEOIP","FINAL"];
+function editRule(i){
+  const e = RULES.find(x=>x.i===i); if(!e) return;
+  EDIT_IDX = i;
+  $("r_type").value = RULE_TYPES.includes(e.type) ? e.type : "DOMAIN-SUFFIX";
+  $("r_val").value = e.value||"";
+  $("r_tgt").value = e.target||"";
+  $("addRuleBtn").textContent = "💾 保存修改 #"+i;
+  $("cancelEditBtn").classList.remove("hide");
+  $("r_val").focus();
+}
+function cancelEdit(){
+  EDIT_IDX = null;
+  $("r_val").value=""; $("r_tgt").value="";
+  $("addRuleBtn").textContent = "➕ 添加一条";
+  $("cancelEditBtn").classList.add("hide");
+}
+async function addRule(){
+  const type=$("r_type").value, val=$("r_val").value.trim(), tgt=$("r_tgt").value.trim();
+  if(!tgt){ log("请填目标"); return; }
+  if(type!=="FINAL" && !val){ log("请填规则值"); return; }
+  const rule = type==="FINAL" ? ("FINAL,"+tgt) : (type+","+val+","+tgt);
+  if(EDIT_IDX!=null){
+    const i=EDIT_IDX;
+    const ok=await mutate("/api/rules/edit",{index:i,rule},"修改规则 #"+i+" → "+rule, loadRules);
+    if(ok) cancelEdit();
+    return;
+  }
+  const ok=await mutate("/api/rules/add",{rule},"添加规则 "+rule, loadRules);
+  if(ok) $("r_val").value="";
+}
+function delRule(i){ if(confirm("删除规则 #"+i+" ?")) mutate("/api/rules/del",{index:i},"删除规则 #"+i, loadRules); }
+function saveRules(){ const rules=$("rules").value; if(!rules.trim()){log("规则为空");return;}
+  if(confirm("保存并应用整份分流规则？")) mutate("/api/rules",{rules},"保存整份规则", refreshState); }
+function updateRules(){ mutate("/api/update-rules",{},"更新 GFWList/ChinaList", loadStatus); }
+
+/* ---- live dashboard (auto-refresh) ---- */
+let autoTimer=null, liveTimer=null;
+function fmtBps(bytes){ const b=(bytes||0)*8; return b>=1e6?(b/1e6).toFixed(1)+" Mbps":b>=1e3?(b/1e3).toFixed(0)+" Kbps":b.toFixed(0)+" bps"; }
+async function loadLive(){ try{ const d=await api("/api/live");
+  $("live").innerHTML = `<span>↓ <b>${fmtBps(d.server.rx)}</b></span><span>↑ <b>${fmtBps(d.server.tx)}</b></span>`+
+    `<span>🔗 连接 <b>${d.conns}</b></span>`+
+    Object.entries(d.exits||{}).filter(([k,v])=>v.rx+v.tx>0).map(([k,v])=>`<span class="muted small">${esc(k)} ↓${fmtBps(v.rx)} ↑${fmtBps(v.tx)}</span>`).join("");
+}catch(e){} }
+function toggleAuto(){
+  const on=$("autoref").checked; localStorage.setItem("pgw_auto", on?"1":"0");
+  if(liveTimer){clearInterval(liveTimer);liveTimer=null;} if(autoTimer){clearInterval(autoTimer);autoTimer=null;}
+  if(on){ loadLive(); liveTimer=setInterval(loadLive,3000);
+    autoTimer=setInterval(()=>{ loadStatus(); loadTraffic(); loadLatency(); },20000); }
+}
+
+/* ---- route tester + one-click proxy a domain ---- */
+async function routeTest(){
+  const dm=$("rt_domain").value.trim(); if(!dm){ log("请输入域名"); return; }
+  $("rt_result").innerHTML=`<span class="muted">测试中…</span>`;
+  try{ const r=await api("/api/route/test","POST",{domain:dm}); const x=r.result||{};
+    if(x.error){ $("rt_result").textContent=x.error; return; }
+    $("rt_result").innerHTML =
+      `劫持进网关：<b>${x.hijacked?"是 ✅":"否（客户端直连，不经网关）"}</b><br>`+
+      `命中规则：<span class="mono">${esc(x.matched)}</span><br>`+
+      `最终走：<b>${esc(x.target)}</b>（分类 ${esc(x.category)}）<br>`+
+      `<span class="muted">${esc(x.note)}</span>`;
+  }catch(e){ $("rt_result").textContent="测试失败："+e.message; }
+}
+async function proxyDomain(){
+  const dm=$("pd_domain").value.trim(), tg=$("pd_target").value;
+  if(!dm){ log("请输入域名"); return; }
+  const ok=await mutate("/api/proxy-domain",{domain:dm,target:tg},"一键 "+dm+" → "+tg, refreshState);
+  if(ok) $("pd_domain").value="";
+}
+
+/* ---- config backup / restore ---- */
+async function backupConfig(){
+  log("⏳ 生成备份…"); busy(true);
+  try{ const r=await api("/api/backup");
+    const bin=Uint8Array.from(atob(r.data), c=>c.charCodeAt(0));
+    const url=URL.createObjectURL(new Blob([bin],{type:"application/gzip"}));
+    const a=document.createElement("a"); a.href=url; a.download=r.filename||"5gpn-backup.tar.gz"; a.click();
+    setTimeout(()=>URL.revokeObjectURL(url),2000); log("✅ 备份已下载");
+  }catch(e){ log("❌ 备份："+e.message); } finally{ busy(false); }
+}
+function restoreConfig(input){
+  const f=input.files[0]; if(!f) return;
+  if(!confirm("用该备份覆盖当前配置并重建路由？")){ input.value=""; return; }
+  const rd=new FileReader();
+  rd.onload=async()=>{
+    let bin=""; const u=new Uint8Array(rd.result);
+    for(let i=0;i<u.length;i++) bin+=String.fromCharCode(u[i]);
+    await mutate("/api/restore",{data:btoa(bin)},"恢复备份", refreshState);
+    input.value="";
+  };
+  rd.readAsArrayBuffer(f);
+}
+
+/* ---- AI assistant ---- */
+async function aiLoadConfig(){
+  try{ const c=await api("/api/ai/config");
+    $("ai_base").value=c.base_url||""; $("ai_model").value=c.model||"";
+    $("ai_cfg_state").textContent = c.configured ? "已配置 ✅（Key 已保存在服务器）" : "未配置";
+    if(!c.configured && $("aiCfgBox")) $("aiCfgBox").open=true;
+  }catch(e){}
+}
+async function aiSaveConfig(){
+  const base=$("ai_base").value.trim(), key=$("ai_key").value, model=$("ai_model").value.trim();
+  if(!base){ log("请填写 API Base URL"); return; }
+  busy(true);
+  try{ const r=await api("/api/ai/config","POST",{base_url:base,key,model});
+    log((r.ok?"✅ ":"❌ ")+"AI 配置已保存"); $("ai_key").value=""; aiLoadConfig();
+  }catch(e){ log("❌ 保存 AI 配置："+e.message); } finally{ busy(false); }
+}
+async function aiPlan(){
+  const repo=$("ai_repo").value.trim(), intent=$("ai_intent").value.trim();
+  if(!intent){ log("请填写意图"); return; }
+  $("ai_plan").innerHTML=`<div class="muted small" style="margin-top:8px">🤖 AI 生成中（读取仓库 + 推理，可能要十几秒）…</div>`;
+  busy(true);
+  try{
+    const r=await api("/api/ai/plan","POST",{repo,intent});
+    const p=r.plan;
+    if(!p || (!(p.rules||[]).length && !Object.keys(p.policy||{}).length)){
+      AIPLAN=null;
+      $("ai_plan").innerHTML=`<div class="small muted" style="margin-top:8px">未能解析出可用方案。AI 原始返回：</div><div class="mono small">${esc(r.raw||"(空)")}</div>`;
+      return;
+    }
+    AIPLAN=p;
+    const rules=p.rules||[], pol=p.policy||{};
+    $("ai_plan").innerHTML =
+      `<div style="margin-top:12px;border-top:1px solid var(--line);padding-top:10px">`+
+      (p.explanation?`<div class="small">${esc(p.explanation)}</div>`:"")+
+      `<div class="small muted" style="margin-top:8px">将新增规则（${rules.length}）</div>`+
+      `<div class="mono small">${rules.map(esc).join("\n")||"(无)"}</div>`+
+      `<div class="small muted" style="margin-top:8px">分类 → 出口</div>`+
+      `<div class="mono small">${Object.entries(pol).map(([k,v])=>esc(k+" → "+v)).join("\n")||"(无)"}</div>`+
+      `<div class="row" style="margin-top:12px"><button class="primary" onclick="aiApply()">✅ 确认应用</button><button onclick="aiCancel()">取消</button></div>`+
+      `</div>`;
+  }catch(e){ AIPLAN=null; $("ai_plan").innerHTML=""; log("❌ 生成方案："+e.message); }
+  finally{ busy(false); }
+}
+function aiCancel(){ AIPLAN=null; $("ai_plan").innerHTML=""; }
+async function aiApply(){
+  if(!AIPLAN) return;
+  if(!confirm("确认应用该 AI 方案？将修改分流规则与分类映射。")) return;
+  const ok=await mutate("/api/ai/apply",{rules:AIPLAN.rules||[],policy:AIPLAN.policy||{}},"应用 AI 方案", refreshState);
+  if(ok){ AIPLAN=null; $("ai_plan").innerHTML=""; }
+}
+
+// restore saved creds
+(function(){ const u=localStorage.getItem("pgw_url"), t=localStorage.getItem("pgw_token");
+  if(u) $("url").value=u; if(t) $("token").value=t; if(u&&t) connect(); })();
+</script>
+</body>
+</html>

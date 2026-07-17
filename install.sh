@@ -9,6 +9,7 @@ CONF_DIR="${BASE_DIR}/etc"
 SRC_DIR="${BASE_DIR}/src"
 WWW_DIR="${BASE_DIR}/www"
 IOS_PROFILE_PORT=8111
+API_PORT_DEFAULT=8444
 EXIT_USER="pxout"
 EXIT_MARK="0x1"
 EXIT_TABLE="100"
@@ -332,6 +333,10 @@ Options:
                  'smart' for rule-based per-domain routing (see --set-rules).
   --del-exit <name>
                  Remove a configured exit.
+  --edit-exit <name>
+                 Replace an existing exit's config in place (reads the new
+                 wg.conf / proxy URI from stdin; validates before replacing,
+                 re-activates if it is the active exit).
   --set-rules [file]
                  Install routing rules (file/stdin/paste) for the
                  'smart' exit: route domains to exits / direct / block, with
@@ -353,6 +358,10 @@ Options:
   --show-policy  Print the category -> target policy map.
   --setup-tgbot  Install/enable the Telegram control bot (uses TG_BOT_TOKEN /
                  TG_ADMIN_IDS env vars, or prompts interactively).
+  --setup-api    Install/enable the HTTP control API + web panel (uses API_TOKEN
+                 / API_PORT env vars, or generates a token). Prints the panel
+                 URL and token; does NOT open the firewall port for you in the
+                 default preserve mode.
   --setup-whatsapp
                  Install/repair the iOS WhatsApp no-SNI TCP/443 shim.
   --uninstall    Remove all installed components
@@ -1720,7 +1729,10 @@ if name in ("local", "smart") or not re.match(r"^[\w\-\u4e00-\u9fff]{1,16}$", na
     raise SystemExit(1)
 PYNAME
     [[ "$name" == "local" || "$name" == "smart" ]] && { err "'$name' is a reserved exit name (smart = rule-based router; use --set-rules)"; exit 1; }
-    exit_exists "$name" && { err "Exit '$name' already exists"; exit 1; }
+    # edit_exit sets PGW_EXIT_OVERWRITE=1 to replace an existing exit's config.
+    if [[ "${PGW_EXIT_OVERWRITE:-0}" != "1" ]]; then
+        exit_exists "$name" && { err "Exit '$name' already exists"; exit 1; }
+    fi
     mkdir -p "${WG_DIR}"; chmod 700 "${WG_DIR}"
     mkdir -p "${EXITS_DIR}"; chmod 700 "${EXITS_DIR}"
     local tmp; tmp="$(mktemp)"
@@ -1804,6 +1816,33 @@ del_exit() {
         "$(exit_type_file "$name")" "${EXITS_DIR}/${name}.uri"
     rm -rf "${CONF_DIR}/mihomo/${name}"
     ok "Exit '$name' removed"
+}
+edit_exit() {
+    local name="${1:-}"
+    [[ -z "$name" ]] && { err "Usage: $0 --edit-exit <name>"; exit 1; }
+    [[ "$name" == "local" || "$name" == "smart" ]] && { err "'$name' is reserved"; exit 1; }
+    exit_exists "$name" || { err "Exit '$name' does not exist (use --add-exit to create it)"; exit 1; }
+    local cur="local"
+    [[ -f "${CONF_DIR}/current-exit" ]] && cur="$(cat "${CONF_DIR}/current-exit" 2>/dev/null || echo local)"
+    if [[ "$cur" == "$name" ]]; then
+        exit_down "$name" || true
+    fi
+    info "Modifying exit '$name' (new config is validated before replacing)..."
+    PGW_EXIT_OVERWRITE=1 add_exit "$name"        # reads new config from stdin
+    # Drop stale artifacts when the exit type changed (wireguard <-> URI).
+    local new_type; new_type="$(cat "$(exit_type_file "$name")" 2>/dev/null || echo "")"
+    if [[ "$new_type" == "wireguard" ]]; then
+        rm -f "$(exit_mihomo_conf "$name")" "${EXITS_DIR}/${name}.uri"
+        rm -rf "${CONF_DIR}/mihomo/${name}"
+    else
+        rm -f "$(exit_conf_path "$name")"
+    fi
+    [[ -f "${RULES_FILE}" ]] && regen_smart
+    if [[ "$cur" == "$name" ]]; then
+        info "Re-activating '$name' with the new config..."
+        set_exit "$name"
+    fi
+    ok "Exit '$name' modified."
 }
 rename_exit() {
     local old="${1:-}" new="${2:-}"
@@ -2402,6 +2441,100 @@ EOF
     fi
     ok "Telegram bot 已安装。在 Telegram 给你的 Bot 发送 /start 开始操作。"
 }
+setup_api() {
+    local token="${API_TOKEN:-}"
+    local port="${API_PORT:-${API_PORT_DEFAULT}}"
+    port="$(printf '%s' "$port" | tr -dc '0-9')"; [[ -n "$port" ]] || port="${API_PORT_DEFAULT}"
+
+    if [[ -z "$token" ]]; then
+        token="$(openssl rand -hex 24 2>/dev/null || head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+    fi
+    if [[ -z "$token" || ${#token} -lt 16 ]]; then
+        err "Could not generate an API token. Set API_TOKEN and retry."; return 1
+    fi
+
+    local py; py="$(command -v python3 || echo /usr/bin/python3)"
+    if [[ ! -f "${LIB_DIR}/api-server.py" ]]; then
+        err "api-server.py not found in ${LIB_DIR}"; return 1
+    fi
+
+    info "Installing HTTP control API..."
+    mkdir -p "${BASE_DIR}/bin" "${CONF_DIR}"
+    install -m 0755 "${LIB_DIR}/api-server.py" "${BASE_DIR}/bin/api-server.py"
+    install -m 0755 "${SCRIPT_PATH}" "${BASE_DIR}/bin/5gpn-ctl"
+    # Bundle the web panel so it can be served/copied from the box if wanted.
+    if [[ -f "${SCRIPT_DIR}/webui/index.html" ]]; then
+        mkdir -p "${BASE_DIR}/webui"
+        install -m 0644 "${SCRIPT_DIR}/webui/index.html" "${BASE_DIR}/webui/index.html"
+    fi
+
+    local domain; domain="$(cat "${CONF_DIR}/.domain" 2>/dev/null || echo "")"
+    local cert="/etc/mosdns/certs/fullchain.pem" key="/etc/mosdns/certs/privkey.pem"
+    [[ -f "$cert" && -f "$key" ]] || warn "TLS certs not found at ${cert} — run --renew-cert or full install first; the API needs them to start."
+
+    cat > "${CONF_DIR}/api.env" <<EOF
+API_TOKEN=${token}
+API_PORT=${port}
+API_BIND=0.0.0.0
+API_TLS_CERT=${cert}
+API_TLS_KEY=${key}
+API_ALLOW_ORIGIN=*
+MGMT=${BASE_DIR}/bin/5gpn-ctl
+CONF_DIR=${CONF_DIR}
+EOF
+    chmod 600 "${CONF_DIR}/api.env"
+    printf '%s' "$port" > "${CONF_DIR}/.api_port"
+
+    cat > /etc/systemd/system/5gpn-api.service <<EOF
+[Unit]
+Description=5GPN-X HTTP control API
+After=network-online.target mosdns.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=${CONF_DIR}/api.env
+ExecStart=${py} ${BASE_DIR}/bin/api-server.py
+Restart=on-failure
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable --now 5gpn-api.service 2>/dev/null || systemctl restart 5gpn-api.service
+
+    echo ""
+    ok "HTTP 控制 API 已启用。"
+    echo "  地址 (API Base URL): https://${domain:-<你的域名>}:${port}"
+    echo "  令牌 (API_TOKEN):    ${token}"
+    echo "  健康检查:            curl -k https://${domain:-<域名>}:${port}/api/health"
+    echo "  网页面板:            打开仓库里的 webui/index.html，填入上面的地址和令牌即可。"
+    echo "  令牌存放:            ${CONF_DIR}/api.env (chmod 600)"
+    warn "API 可控制出口/分流，务必保管好令牌；只用 HTTPS 访问。"
+    warn "默认不接管主机防火墙（FIREWALL_MODE=preserve）：请自行放行 TCP ${port}；"
+    warn "或重装/升级时用 FIREWALL_MODE=auto 让安装器增量放行。"
+}
+
+# Optional during the main install flow: enable the HTTP API/web panel only if
+# the user opts in (env API_SETUP=1 / API_TOKEN set, or an interactive yes).
+maybe_setup_api() {
+    local want="${API_SETUP:-}"
+    [[ -z "$want" && -n "${API_TOKEN:-}" ]] && want=1
+    if [[ -z "$want" && -t 0 ]]; then
+        echo ""
+        info "可选：启用 HTTP 控制 API + 网页面板（在网页上运维，与 Telegram Bot 实时同步）"
+        local ans; read -r -p "现在启用 API / 网页面板? [y/N]: " ans
+        case "$ans" in y|Y|yes|YES) want=1 ;; *) want=0 ;; esac
+    fi
+    if [[ "$want" == "1" ]]; then
+        setup_api
+    else
+        info "未启用 HTTP API（可选）。以后随时运行: $0 --setup-api"
+    fi
+}
 apply_lowmem_go_limits() {
     local d
     for svc in quic-proxy mosdns; do
@@ -2505,9 +2638,10 @@ do_uninstall() {
         systemctl stop "5gpn-singbox@$(basename "$f" .type).service" 2>/dev/null || true
     done
     shopt -u nullglob
-    systemctl stop mosdns dnsdist sniproxy wa-shim quic-proxy china-dns-race-proxy 5gpn-ios-profile.socket 5gpn-ios-profile 5gpn-exit 5gpn-tgbot 2>/dev/null || true
-    systemctl disable mosdns dnsdist sniproxy wa-shim quic-proxy china-dns-race-proxy 5gpn-ios-profile.socket 5gpn-ios-profile 5gpn-exit 5gpn-tgbot 2>/dev/null || true
+    systemctl stop mosdns dnsdist sniproxy wa-shim quic-proxy china-dns-race-proxy 5gpn-ios-profile.socket 5gpn-ios-profile 5gpn-exit 5gpn-tgbot 5gpn-api 2>/dev/null || true
+    systemctl disable mosdns dnsdist sniproxy wa-shim quic-proxy china-dns-race-proxy 5gpn-ios-profile.socket 5gpn-ios-profile 5gpn-exit 5gpn-tgbot 5gpn-api 2>/dev/null || true
     rm -f /etc/systemd/system/{mosdns,sniproxy,wa-shim,quic-proxy,china-dns-race-proxy,5gpn-ios-profile,update-mosdns-rules,5gpn-exit,5gpn-tgbot}.*
+    rm -f /etc/systemd/system/5gpn-api.*
     rm -f /etc/systemd/system/5gpn-ios-profile@.service \
         /etc/systemd/system/5gpn-mihomo@.service \
         /etc/systemd/system/5gpn-singbox@.service
@@ -2843,6 +2977,7 @@ main_install() {
     start_services
     setup_schedules
     setup_tgbot
+    maybe_setup_api
     echo ""
     echo "=========================================="
     echo "         部署完成！"
@@ -2921,6 +3056,10 @@ case "${1:-}" in
         check_root
         del_exit "${2:-}"
         ;;
+    --edit-exit)
+        check_root
+        edit_exit "${2:-}"
+        ;;
     --set-exit)
         check_root
         set_exit "${2:-}"
@@ -2969,6 +3108,10 @@ case "${1:-}" in
     --setup-tgbot)
         check_root
         setup_tgbot
+        ;;
+    --setup-api)
+        check_root
+        setup_api
         ;;
     --uninstall)
         do_uninstall
