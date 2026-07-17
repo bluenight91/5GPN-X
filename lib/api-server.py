@@ -25,6 +25,7 @@ import io
 import json
 import os
 import re
+import select
 import socket
 import tarfile
 import ssl
@@ -33,6 +34,7 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -92,17 +94,43 @@ def clash_secret():
     return read_file(CLASH_SECRET_FILE).strip()
 
 
+def normalize_sub(raw):
+    """Decode, validate and normalize a Clash API sub-path (path + filtered
+    query). Returns the normalized string, or None when invalid."""
+    raw = raw.split("#", 1)[0]
+    path, _, query = raw.partition("?")
+    path = urllib.parse.unquote(path).strip("/")
+    if not path or ".." in path:
+        return None
+    if not re.fullmatch(r"[\w./\-一-鿿]+", path):
+        return None
+    if not query:
+        return path
+    allowed = []
+    for k, v in urllib.parse.parse_qsl(query, keep_blank_values=True):
+        if k == "timeout" and v.isdigit():
+            allowed.append(("timeout", str(max(100, min(10000, int(v))))))
+        elif k == "url" and re.match(r"^https?://", v):
+            allowed.append(("url", v))
+        elif k == "level" and v in ("debug", "info", "warning", "error", "silent"):
+            allowed.append(("level", v))
+    return path + ("?" + urllib.parse.urlencode(allowed) if allowed else "")
+
+
 def clash_request(method, sub, body=None, ctype=None, timeout=30):
     """Call the loopback Clash API with the server-side secret. Returns
     (status, content_type, response_bytes)."""
-    sub = sub.split("?", 1)[0].strip("/")
-    if not sub or not re.match(r"^[A-Za-z0-9_./-]+$", sub) or ".." in sub:
-        return 400, "application/json", b'{"message":"bad path"}'
+    sub = normalize_sub(sub)
+    if sub is None:
+        return 400, "application/json", json.dumps({"message": "bad path"}).encode()
     secret = clash_secret()
     if not secret:
-        return 503, "application/json", b'{"message":"mihomo api not configured"}'
-    req = urllib.request.Request("http://%s/%s" % (CLASH_ADDR, sub),
-                                 data=body, method=method)
+        return 503, "application/json", json.dumps({"message": "mihomo api not configured"}).encode()
+    path, _, query = sub.partition("?")
+    url = "http://%s/%s" % (CLASH_ADDR, urllib.parse.quote(path, safe="/"))
+    if query:
+        url += "?" + query
+    req = urllib.request.Request(url, data=body, method=method)
     req.add_header("Authorization", "Bearer " + secret)
     if ctype:
         req.add_header("Content-Type", ctype)
@@ -112,11 +140,76 @@ def clash_request(method, sub, body=None, ctype=None, timeout=30):
     except urllib.error.HTTPError as e:
         return e.code, e.headers.get("Content-Type", "application/json"), e.read()
     except Exception as e:  # noqa: BLE001
-        return 502, "application/json", ('{"message":"mihomo unreachable: %s"}' % e).encode()
+        return 502, "application/json", json.dumps({"message": "mihomo unreachable: %s" % e}).encode()
 
 
 def ws_allowed(sub):
-    return sub.split("?", 1)[0].strip("/") in CLASH_WS_PATHS
+    norm = normalize_sub(sub)
+    return bool(norm) and norm.split("?", 1)[0] in CLASH_WS_PATHS
+
+
+def build_ws_request(sub, client_headers):
+    """Rebuild the client's WS upgrade request for the loopback Clash API,
+    injecting the server-side secret. Returns raw bytes."""
+    lines = ["GET /%s HTTP/1.1" % sub,
+             "Host: %s" % CLASH_ADDR,
+             "Upgrade: websocket",
+             "Connection: Upgrade",
+             "Sec-WebSocket-Version: %s" % client_headers.get("Sec-WebSocket-Version", "13"),
+             "Sec-WebSocket-Key: %s" % client_headers.get("Sec-WebSocket-Key", ""),
+             "Authorization: Bearer %s" % clash_secret()]
+    proto = client_headers.get("Sec-WebSocket-Protocol")
+    if proto:
+        lines.append("Sec-WebSocket-Protocol: %s" % proto)
+    return ("\r\n".join(lines) + "\r\n\r\n").encode()
+
+
+def ws_relay(client_sock, sub, client_headers):
+    """Upgrade with mihomo, then pipe bytes both ways until either side closes.
+    Runs synchronously in the handler thread; caller must not touch the socket
+    afterwards."""
+    host, port = CLASH_ADDR.rsplit(":", 1)
+    upstream = socket.create_connection((host, int(port)), timeout=10)
+    try:
+        upstream.sendall(build_ws_request(sub, client_headers))
+        resp = b""
+        while b"\r\n\r\n" not in resp:
+            chunk = upstream.recv(4096)
+            if not chunk:
+                return
+            resp += chunk
+            if len(resp) > 65536:
+                return
+        head, _, rest = resp.partition(b"\r\n\r\n")
+        if b" 101 " not in head.split(b"\r\n", 1)[0]:
+            return
+        client_sock.sendall(head + b"\r\n\r\n" + rest)
+        client_sock.setblocking(False)
+        upstream.setblocking(False)
+        socks = [client_sock, upstream]
+        while True:
+            r, _, x = select.select(socks, [], socks, 300)
+            if x:
+                return
+            if not r:
+                continue
+            for s in r:
+                try:
+                    data = s.recv(65536)
+                except OSError:
+                    return
+                other = upstream if s is client_sock else client_sock
+                if not data:
+                    return
+                try:
+                    other.sendall(data)
+                except OSError:
+                    return
+    finally:
+        try:
+            upstream.close()
+        except OSError:
+            pass
 
 
 def mihomo_overview():
@@ -766,7 +859,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def _send_raw(self, code, data, ctype="application/json"):
         self.send_response(code)
-        self.send_header("Content-Type", ctype + ("; charset=utf-8" if ctype.startswith(("text/", "application/json")) else ""))
+        if "charset" not in ctype and ctype.startswith(("text/", "application/json")):
+            ctype += "; charset=utf-8"
+        self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
         self._cors()
         self.end_headers()
@@ -790,6 +885,37 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:  # noqa: BLE001
             return {}
 
+    def _proxy_mihomo(self, sub):
+        """Reverse-proxy one request (any method) to the loopback Clash API."""
+        try:
+            n = int(self.headers.get("Content-Length", "0") or 0)
+        except (TypeError, ValueError):
+            return self._send(400, {"ok": False, "error": "bad content-length"})
+        if n > 2_000_000:
+            return self._send(413, {"ok": False, "error": "payload too large"})
+        body = self.rfile.read(n) if n > 0 else None
+        status, ctype, data = clash_request(self.command, sub, body=body,
+                                            ctype=self.headers.get("Content-Type"))
+        return self._send_raw(status, data, ctype)
+
+    def _dispatch(self, method):
+        """PUT/PATCH/DELETE are only routed to the mihomo reverse proxy."""
+        path = self.path.split("?", 1)[0].rstrip("/") or "/"
+        if not self._auth():
+            return self._send(401, {"ok": False, "error": "unauthorized"})
+        if path.startswith("/api/mihomo/proxy/"):
+            return self._proxy_mihomo(self.path.split("/api/mihomo/proxy/", 1)[1])
+        return self._send(404, {"ok": False, "error": "not found"})
+
+    def do_PUT(self):
+        self._dispatch("PUT")
+
+    def do_PATCH(self):
+        self._dispatch("PATCH")
+
+    def do_DELETE(self):
+        self._dispatch("DELETE")
+
     def do_OPTIONS(self):
         self.send_response(204)
         self._cors()
@@ -804,6 +930,16 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/mihomo/overview":
             data, err = mihomo_overview()
             return self._send(200 if data else 502, data or {"ok": False, "error": err})
+        if path.startswith("/api/mihomo/proxy/") and self.headers.get("Upgrade", "").lower() == "websocket":
+            sub = self.path.split("/api/mihomo/proxy/", 1)[1]
+            if not ws_allowed(sub):
+                return self._send(403, {"ok": False, "error": "forbidden"})
+            try:
+                self.close_connection = True
+                ws_relay(self.connection, sub, self.headers)
+            except Exception:  # noqa: BLE001
+                pass
+            return
         if path.startswith("/api/mihomo/proxy/"):
             sub = self.path.split("/api/mihomo/proxy/", 1)[1]
             status, ctype, data = clash_request("GET", sub)
@@ -864,12 +1000,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self._auth():
             return self._send(401, {"ok": False, "error": "unauthorized"})
         if path.startswith("/api/mihomo/proxy/"):
-            sub = self.path.split("/api/mihomo/proxy/", 1)[1]
-            n = int(self.headers.get("Content-Length", "0") or 0)
-            body = self.rfile.read(n) if 0 < n <= 2_000_000 else None
-            status, ctype, data = clash_request(self.command, sub, body=body,
-                                                ctype=self.headers.get("Content-Type"))
-            return self._send_raw(status, data, ctype)
+            return self._proxy_mihomo(self.path.split("/api/mihomo/proxy/", 1)[1])
         b = self._json_body()
 
         if path == "/api/exits/set":

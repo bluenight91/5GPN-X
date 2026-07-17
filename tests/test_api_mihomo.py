@@ -6,6 +6,7 @@ import os
 import tempfile
 import threading
 import unittest
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -28,19 +29,24 @@ class FakeClash(BaseHTTPRequestHandler):
         self.wfile.write(body)
     def do_GET(self):
         FakeClash.last_auth = self.headers.get("Authorization")
-        if self.path == "/version": return self._j({"version": "1.19.28"})
-        if self.path == "/memory": return self._j({"inuse": 123456, "oslimit": 0})
-        if self.path == "/connections":
+        path = urllib.parse.unquote(self.path.split("?", 1)[0])
+        if path == "/version": return self._j({"version": "1.19.28"})
+        if path == "/memory": return self._j({"inuse": 123456, "oslimit": 0})
+        if path == "/connections":
             return self._j({"downloadTotal": 1000, "uploadTotal": 500, "connections": [
                 {"id": "1", "rule": "DomainSuffix", "chains": ["jp"]},
                 {"id": "2", "rule": "DomainSuffix", "chains": ["jp"]},
                 {"id": "3", "rule": "GeoIP", "chains": ["direct"]}]})
-        if self.path == "/configs": return self._j({"mode": "rule"})
+        if path == "/configs": return self._j({"mode": "rule"})
+        if path == "/proxies/日本/delay": return self._j({"delay": 42})
         self.send_response(404); self.end_headers()
     def do_PUT(self):
         FakeClash.last_auth = self.headers.get("Authorization")
         n = int(self.headers.get("Content-Length", "0") or 0)
         self.rfile.read(n)
+        self.send_response(204); self.end_headers()
+    def do_DELETE(self):
+        FakeClash.last_auth = self.headers.get("Authorization")
         self.send_response(204); self.end_headers()
 
 class MihomoApiTests(unittest.TestCase):
@@ -92,6 +98,40 @@ class MihomoApiTests(unittest.TestCase):
         self.assertTrue(self.api.ws_allowed("memory"))
         self.assertFalse(self.api.ws_allowed("configs"))
         self.assertFalse(self.api.ws_allowed("proxies"))
+
+    def test_proxy_forwards_query_with_allowlist(self):
+        # timeout 超界被夹紧、url 非 http(s) 被丢弃、level 合法值保留
+        status, _, data = self.api.clash_request("GET", "configs?timeout=99999&url=file:///etc/passwd&level=debug&bogus=1")
+        self.assertEqual(status, 200)
+
+    def test_normalize_sub(self):
+        self.assertEqual(self.api.normalize_sub("configs"), "configs")
+        self.assertEqual(self.api.normalize_sub("proxies/%E6%97%A5%E6%9C%AC/delay"),
+                         "proxies/日本/delay")
+        self.assertIsNone(self.api.normalize_sub("../etc/passwd"))
+        self.assertIsNone(self.api.normalize_sub("a b"))
+        self.assertIsNone(self.api.normalize_sub("configs%2e%2e/x"))
+        self.assertEqual(self.api.normalize_sub("logs?level=info&bogus=1"), "logs?level=info")
+        self.assertEqual(self.api.normalize_sub("proxies/jp/delay?timeout=99999&url=https://cp.cloudflare.com/"),
+                         "proxies/jp/delay?timeout=10000&url=https%3A%2F%2Fcp.cloudflare.com%2F")
+
+    def test_build_ws_request(self):
+        headers = {"Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+                   "Sec-WebSocket-Version": "13",
+                   "Sec-WebSocket-Protocol": "chat"}
+        req = self.api.build_ws_request("logs?level=info", headers).decode()
+        self.assertIn("GET /logs?level=info HTTP/1.1", req)
+        self.assertIn("Upgrade: websocket", req)
+        self.assertIn("Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==", req)
+        self.assertIn("Authorization: Bearer s3cr3t-test-token", req)
+        self.assertTrue(req.endswith("\r\n\r\n"))
+
+    def test_delete_and_cjk_proxy_name(self):
+        status, _, _ = self.api.clash_request("DELETE", "connections")
+        self.assertEqual(status, 204)
+        status, _, data = self.api.clash_request("GET", "proxies/%E6%97%A5%E6%9C%AC/delay?timeout=1000&url=https://cp.cloudflare.com/")
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(data)["delay"], 42)
 
 if __name__ == "__main__":
     unittest.main()
