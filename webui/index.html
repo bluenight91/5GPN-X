@@ -3,144 +3,168 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0f1115">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#f8fafc">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0d1117">
 <title>5GPN-X 控制台</title>
+<!-- =============================================================================
+  Task 6（壳）已完成：双主题令牌（浅色简洁风 / 深色运维风，跟随系统 + 手动三档）、
+  桌面侧边栏 / 移动端底部标签栏、iOS Safari 适配、六个可切换的占位 section、登录页。
+  Task 7 将填充六个页面的完整内容 —— 旧版控制台的全部 API 调用 JS 已原样保留在
+  下方脚本末尾的「Task 7 接线」区块中，请勿删除。
+============================================================================= -->
 <style>
-  /* ---- theme: dark (default) ---- */
-  :root { --bg:#0f1115; --card:#181b22; --line:#262b36; --fg:#e6e9ef; --mut:#9aa4b2;
-          --acc:#4f8cff; --ok:#2ecc71; --bad:#ff5c5c; --warn:#f5a623;
-          --input-bg:#11141a; --btn-bg:#222836; --btn-line:#2f3645; --shadow:none;
-          --sidebar-bg:#14171e; --nav-active:rgba(79,140,255,.16); }
-  @media (prefers-color-scheme:light) {
-    :root:not([data-theme="dark"]) {
-      --bg:#f4f6f9; --card:#ffffff; --line:#e3e7ee; --fg:#1b1f27; --mut:#5b6573;
-      --acc:#2563eb; --ok:#16a34a; --bad:#dc2626; --warn:#b45309;
-      --input-bg:#ffffff; --btn-bg:#eef1f6; --btn-line:#d4dae3; --shadow:0 1px 3px rgba(20,30,60,.06);
-      --sidebar-bg:#ffffff; --nav-active:rgba(37,99,235,.10); }
+  /* ---- 主题令牌：浅色（简洁风） ---- */
+  :root{
+    --bg:#f8fafc; --card:#ffffff; --border:#e2e8f0; --text:#1e293b; --sub:#64748b;
+    --accent:#2563eb; --ok:#16a34a; --warn:#d97706; --danger:#dc2626; --teal:#0d9488;
+    --shadow:0 1px 3px rgba(15,23,42,.08); --mono:"SF Mono",ui-monospace,Menlo,monospace;
+    /* 旧变量别名 → 新令牌（旧组件样式沿用别名，随主题自动切换） */
+    --fg:var(--text); --mut:var(--sub); --acc:var(--accent); --line:var(--border); --bad:var(--danger);
+    --input-bg:#ffffff; --btn-bg:#f1f5f9; --btn-line:#e2e8f0;
+    --sidebar-bg:var(--card); --nav-active:rgba(37,99,235,.10);
   }
-  :root[data-theme="light"] {
-    --bg:#f4f6f9; --card:#ffffff; --line:#e3e7ee; --fg:#1b1f27; --mut:#5b6573;
-    --acc:#2563eb; --ok:#16a34a; --bad:#dc2626; --warn:#b45309;
-    --input-bg:#ffffff; --btn-bg:#eef1f6; --btn-line:#d4dae3; --shadow:0 1px 3px rgba(20,30,60,.06);
-    --sidebar-bg:#ffffff; --nav-active:rgba(37,99,235,.10); }
+  /* ---- 主题令牌：深色（运维风 / GitHub Dark） ---- */
+  [data-theme="dark"]{
+    --bg:#0d1117; --card:#161b22; --border:#30363d; --text:#e6edf3; --sub:#8b949e;
+    --accent:#58a6ff; --ok:#3fb950; --warn:#d29922; --danger:#f85149; --teal:#58d6c9;
+    --shadow:0 1px 3px rgba(1,4,9,.6);
+    --input-bg:#0d1117; --btn-bg:#21262d; --btn-line:#30363d; --nav-active:rgba(88,166,255,.15);
+  }
+  @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+    --bg:#0d1117; --card:#161b22; --border:#30363d; --text:#e6edf3; --sub:#8b949e;
+    --accent:#58a6ff; --ok:#3fb950; --warn:#d29922; --danger:#f85149; --teal:#58d6c9;
+    --shadow:0 1px 3px rgba(1,4,9,.6);
+    --input-bg:#0d1117; --btn-bg:#21262d; --btn-line:#30363d; --nav-active:rgba(88,166,255,.15);
+  } }
+  [data-theme="dark"] .tval, [data-theme="dark"] .mono { font-variant-numeric:tabular-nums; }
 
   * { box-sizing:border-box; }
-  html { -webkit-text-size-adjust:100%; }
-  body { margin:0; background:var(--bg); color:var(--fg); overflow-x:hidden;
-         -webkit-tap-highlight-color:transparent; transition:background-color .2s, color .2s;
-         font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif; }
-  h2 { font-size:13px; margin:0 0 10px; color:var(--mut); text-transform:uppercase; letter-spacing:.04em; }
+  html { -webkit-tap-highlight-color:transparent; -webkit-text-size-adjust:100%; }
+  body { margin:0; background:var(--bg); color:var(--text); height:100dvh; overflow-x:hidden;
+         transition:background-color .2s, color .2s;
+         font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif; }
+  h2 { font-size:13px; margin:0 0 10px; color:var(--sub); text-transform:uppercase; letter-spacing:.04em; }
   .hide { display:none !important; }
-  .grow { flex:1; } .muted { color:var(--mut); } .small { font-size:12px; }
-  a { color:var(--acc); }
+  .grow { flex:1; } .muted { color:var(--sub); } .small { font-size:12px; }
+  a { color:var(--accent); }
 
-  /* form controls */
+  /* form controls（font-size:16px 防 iOS 聚焦缩放） */
   .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   .row + .row { margin-top:8px; }
-  input, textarea, select, button { font-family:inherit; font-size:16px;
-    color:var(--fg); background:var(--input-bg); border:1px solid var(--line); border-radius:10px; padding:10px 12px; line-height:1.25; }
+  input, select, textarea { font-size:16px; }
+  input, textarea, select, button { font-family:inherit;
+    color:var(--text); background:var(--input-bg); border:1px solid var(--border); border-radius:10px; padding:10px 12px; line-height:1.25; }
   input, select { min-width:0; }
   input[type=text], input[type=password] { flex:1 1 200px; }
   select { min-height:44px; }
-  textarea { width:100%; min-height:130px; resize:vertical; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:14px; }
+  textarea { width:100%; min-height:130px; resize:vertical; font-family:var(--mono); font-size:14px; }
   button { cursor:pointer; background:var(--btn-bg); border-color:var(--btn-line); min-height:42px; padding:9px 14px;
-    touch-action:manipulation; transition:transform .05s, background-color .2s, border-color .2s; }
+    font-size:14px; touch-action:manipulation; transition:transform .05s, background-color .2s, border-color .2s; }
   button:active { transform:scale(.97); }
-  @media (hover:hover) { button:hover { border-color:var(--acc); } }
-  button.primary { background:var(--acc); border-color:var(--acc); color:#fff; }
-  button.danger { border-color:var(--bad); color:var(--bad); }
+  @media (hover:hover) { button:hover { border-color:var(--accent); } }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button.danger { border-color:var(--danger); color:var(--danger); }
   button:disabled { opacity:.5; cursor:not-allowed; }
 
-  /* ---- login screen ---- */
-  .login { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:16px; }
-  .logincard { width:100%; max-width:380px; background:var(--card); border:1px solid var(--line);
+  /* ---- 登录页 ---- */
+  .login { min-height:100dvh; display:flex; align-items:center; justify-content:center; padding:16px; }
+  .logincard { width:100%; max-width:380px; background:var(--card); border:1px solid var(--border);
     border-radius:16px; padding:22px; box-shadow:var(--shadow); }
   .logincard h1 { font-size:20px; margin:0 0 4px; }
-  .logincard .sub { color:var(--mut); font-size:13px; margin-bottom:16px; }
+  .logincard .sub { color:var(--sub); font-size:13px; margin-bottom:16px; }
 
-  /* ---- app layout (UniFi-style) ---- */
-  .layout { display:flex; min-height:100vh; }
-  .sidebar { width:214px; flex:0 0 214px; background:var(--sidebar-bg); border-right:1px solid var(--line);
-    display:flex; flex-direction:column; position:sticky; top:0; height:100vh; z-index:30; }
-  .brand { padding:18px 18px 10px; font-weight:700; font-size:16px; display:flex; align-items:center; gap:8px; }
-  .brand .dot { width:8px; height:8px; border-radius:50%; background:var(--bad); }
+  /* ---- 布局：桌面侧边栏 ---- */
+  .layout { display:flex; height:100dvh; }
+  .sidebar { display:flex; flex-direction:column; gap:2px; width:200px; flex:0 0 200px;
+    padding:14px 10px; background:var(--card); border-right:1px solid var(--border); }
+  .brand { padding:4px 10px 12px; font-weight:700; font-size:16px; display:flex; align-items:center; gap:8px; }
+  .brand .dot { width:8px; height:8px; border-radius:50%; background:var(--danger); }
   .brand .dot.on { background:var(--ok); }
-  nav.menu { flex:1; padding:8px; overflow:auto; }
+  nav.menu { flex:1; padding:4px 0; overflow:auto; display:flex; flex-direction:column; gap:2px; }
   .navitem { display:flex; align-items:center; gap:11px; padding:11px 14px; border-radius:10px;
-    color:var(--mut); cursor:pointer; font-size:14px; user-select:none; }
+    color:var(--sub); cursor:pointer; font-size:14px; user-select:none; }
   .navitem .ic { font-size:17px; width:20px; text-align:center; }
-  @media (hover:hover){ .navitem:hover { background:var(--nav-active); color:var(--fg); } }
-  .navitem.active { background:var(--nav-active); color:var(--acc); font-weight:600; }
-  .sidefoot { padding:12px; border-top:1px solid var(--line); display:flex; flex-direction:column; gap:8px; }
-  .sidefoot .url { font-size:11px; color:var(--mut); word-break:break-all; }
+  @media (hover:hover){ .navitem:hover { background:var(--nav-active); color:var(--text); } }
+  .navitem.on { background:var(--nav-active); color:var(--accent); font-weight:600; }
+  .sidefoot { padding-top:12px; border-top:1px solid var(--border); display:flex; flex-direction:column; gap:8px; }
+  .sidefoot .url { font-size:11px; color:var(--sub); word-break:break-all; }
 
-  .main { flex:1; min-width:0; display:flex; flex-direction:column; }
-  .topbar { display:flex; align-items:center; gap:10px; padding:10px 16px; border-bottom:1px solid var(--line);
-    background:var(--card); position:sticky; top:0; z-index:10; min-height:56px; }
-  .topbar .title { font-size:16px; font-weight:600; flex:1; }
-  .topbar button { min-height:38px; padding:7px 11px; }
-  #themeBtn { border-radius:999px; }
-  .hamb { display:none; }
-  .scrim { position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:25; }
-  .content { padding:18px; width:100%; max-width:1080px; }
+  main { flex:1; min-width:0; overflow:auto; padding:18px; }
+  .topbar { display:flex; align-items:center; gap:10px; padding:0 0 12px; min-height:40px; }
+  .topbar .title { font-size:18px; font-weight:600; flex:1; }
+  section[id^="sec-"] { max-width:1080px; }
 
-  /* dashboard tiles */
+  /* ---- 移动端底部标签栏（默认隐藏） ---- */
+  .tabbar { display:none; }
+  .moresheet { position:fixed; left:8px; right:8px; z-index:60;
+    bottom:calc(64px + env(safe-area-inset-bottom));
+    background:var(--card); border:1px solid var(--border); border-radius:14px;
+    box-shadow:0 8px 28px rgba(0,0,0,.28); padding:8px; }
+  .moresheet a { display:flex; align-items:center; gap:10px; padding:12px; border-radius:10px;
+    color:var(--text); cursor:pointer; min-height:44px; user-select:none; }
+  @media (hover:hover){ .moresheet a:hover { background:var(--nav-active); } }
+
+  /* ---- 卡片与通用组件（Task 7 页面复用） ---- */
+  .card { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:16px; margin-bottom:14px; box-shadow:var(--shadow); }
   .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:14px; }
-  .tile { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px 16px; box-shadow:var(--shadow); }
-  .tile .tlabel { color:var(--mut); font-size:12px; }
+  .tile { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:14px 16px; box-shadow:var(--shadow); }
+  .tile .tlabel { color:var(--sub); font-size:12px; }
   .tile .tval { font-size:23px; font-weight:700; margin:5px 0 8px; word-break:break-all; }
-  .tile .tsub { color:var(--mut); font-size:11px; margin-top:7px; }
+  .tile .tsub { color:var(--sub); font-size:11px; margin-top:7px; }
 
-  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:16px; margin-bottom:14px; box-shadow:var(--shadow); }
-
-  .pill { font-size:12px; padding:3px 9px; border-radius:999px; border:1px solid var(--line); color:var(--mut); white-space:nowrap; display:inline-block; }
+  .pill { font-size:12px; padding:3px 9px; border-radius:999px; border:1px solid var(--border); color:var(--sub); white-space:nowrap; display:inline-block; }
   .pill.on { color:var(--ok); border-color:var(--ok); }
-  .pill.off { color:var(--bad); border-color:var(--bad); }
+  .pill.off { color:var(--danger); border-color:var(--danger); }
   .pill.wait { color:var(--warn); border-color:var(--warn); }
   .pills { display:flex; flex-wrap:wrap; gap:6px; }
 
   /* toast notifications (visible feedback on any section) */
-  #toasts { position:fixed; left:50%; transform:translateX(-50%); z-index:50;
+  #toasts { position:fixed; left:50%; transform:translateX(-50%); z-index:70;
     bottom:max(16px,env(safe-area-inset-bottom)); display:flex; flex-direction:column; gap:8px;
     width:min(92vw,440px); pointer-events:none; }
-  .toast { background:var(--card); border:1px solid var(--line); border-left:3px solid var(--acc);
+  .toast { background:var(--card); border:1px solid var(--border); border-left:3px solid var(--accent);
     border-radius:10px; padding:10px 12px; box-shadow:0 8px 28px rgba(0,0,0,.28); font-size:13px;
     white-space:pre-wrap; word-break:break-word; pointer-events:auto; animation:tin .18s ease; }
-  .toast.ok { border-left-color:var(--ok); } .toast.bad { border-left-color:var(--bad); } .toast.wait { border-left-color:var(--warn); }
+  .toast.ok { border-left-color:var(--ok); } .toast.bad { border-left-color:var(--danger); } .toast.wait { border-left-color:var(--warn); }
   @keyframes tin { from{opacity:0; transform:translateY(10px);} to{opacity:1; transform:none;} }
-  button:disabled { opacity:.5; cursor:progress; }
 
-  .exit { display:flex; align-items:center; gap:8px; padding:11px 0; border-top:1px solid var(--line); flex-wrap:wrap; }
+  .exit { display:flex; align-items:center; gap:8px; padding:11px 0; border-top:1px solid var(--border); flex-wrap:wrap; }
   .exit:first-child { border-top:none; }
-  .exit .name { font-weight:600; } .exit .meta { color:var(--mut); font-size:12px; word-break:break-all; }
+  .exit .name { font-weight:600; } .exit .meta { color:var(--sub); font-size:12px; word-break:break-all; }
 
-  .bar { height:9px; background:var(--input-bg); border-radius:6px; overflow:hidden; border:1px solid var(--line); }
-  .bar>i { display:block; height:100%; background:linear-gradient(90deg,#2ecc71,#f5a623,#ff5c5c); }
-  .mono { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; white-space:pre-wrap; word-break:break-word; }
+  .bar { height:9px; background:var(--input-bg); border-radius:6px; overflow:hidden; border:1px solid var(--border); }
+  .bar>i { display:block; height:100%; background:linear-gradient(90deg,var(--ok),var(--warn),var(--danger)); }
+  .mono { font-family:var(--mono); font-size:12px; white-space:pre-wrap; word-break:break-word; }
   #out { max-height:360px; overflow:auto; }
   #chart { width:100%; height:220px; display:block; }
   #latChart { width:100%; height:200px; display:block; }
-  .chart-tip { position:fixed; z-index:60; pointer-events:none; background:var(--card); border:1px solid var(--line);
+  .chart-tip { position:fixed; z-index:80; pointer-events:none; background:var(--card); border:1px solid var(--border);
     border-radius:8px; padding:7px 9px; font-size:12px; box-shadow:0 6px 22px rgba(0,0,0,.3); min-width:130px; }
-  .chart-tip .t { color:var(--mut); margin-bottom:4px; }
+  .chart-tip .t { color:var(--sub); margin-bottom:4px; }
   .chart-tip .d { display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:6px; vertical-align:middle; }
   .chart-tip b { float:right; margin-left:16px; }
-  #rulelist { max-height:340px; overflow:auto; margin-top:8px; border:1px solid var(--line); border-radius:8px; }
-  .rrow { display:flex; gap:8px; align-items:center; padding:7px 10px; border-top:1px solid var(--line); }
+  #rulelist { max-height:340px; overflow:auto; margin-top:8px; border:1px solid var(--border); border-radius:8px; }
+  .rrow { display:flex; gap:8px; align-items:center; padding:7px 10px; border-top:1px solid var(--border); }
   .rrow:first-child { border-top:none; } .rrow .mono { flex:1; word-break:break-all; }
-  .rrow .idx { color:var(--mut); min-width:30px; } .rrow button { min-height:34px; padding:5px 10px; }
+  .rrow .idx { color:var(--sub); min-width:30px; } .rrow button { min-height:34px; padding:5px 10px; }
   details > summary { cursor:pointer; }
+  iframe.mihomo { width:100%; border:1px solid var(--border); border-radius:10px; min-height:70dvh; background:var(--card); }
 
-  /* ---- mobile drawer ---- */
-  @media (max-width:860px) {
-    .sidebar { position:fixed; left:0; top:0; bottom:0; height:100%; transform:translateX(-100%); transition:transform .2s ease; }
-    .sidebar.open { transform:none; box-shadow:0 0 40px rgba(0,0,0,.4); }
-    .hamb { display:inline-flex; }
-    .content { padding:14px; padding-bottom:max(18px,env(safe-area-inset-bottom)); }
-    .topbar { padding-left:max(12px,env(safe-area-inset-left)); }
+  /* ---- 移动端：<768px 侧边栏隐藏，底部标签栏 ---- */
+  @media (max-width:768px){
+    .sidebar { display:none; }
+    .tabbar { display:flex; position:fixed; left:0; right:0; bottom:0; z-index:50;
+      background:var(--card); border-top:1px solid var(--border);
+      padding:6px 2px calc(6px + env(safe-area-inset-bottom)); }
+    .tabbar a { flex:1; text-align:center; color:var(--sub); font-size:10px; padding:4px 0;
+      min-height:44px; cursor:pointer; user-select:none; }
+    .tabbar a .ic { display:block; font-size:18px; line-height:1.7; }
+    .tabbar a.on { color:var(--accent); }
+    main { padding:14px 14px calc(84px + env(safe-area-inset-bottom)); }
+    #toasts { bottom:calc(76px + env(safe-area-inset-bottom)); }
     input[type=text], input[type=password] { flex:1 1 100%; }
     .card .row > button { flex:1 1 auto; }
     .card > .row:first-child > button, .topbar button { flex:0 0 auto; }
@@ -152,7 +176,7 @@
 </head>
 <body>
 
-<!-- ============ login ============ -->
+<!-- ============ 登录 ============ -->
 <div id="login" class="login">
   <div class="logincard">
     <h1>🛰️ 5GPN-X 控制台</h1>
@@ -162,224 +186,200 @@
     <div class="row" style="margin-top:10px">
       <button class="primary grow" onclick="connect()">连接</button>
       <button onclick="clearCreds()">清除</button>
-      <button id="themeBtn2" onclick="cycleTheme()" title="切换主题">🌓</button>
     </div>
     <div class="row small muted" id="conn" style="margin-top:10px">未连接</div>
   </div>
 </div>
 
-<!-- ============ app ============ -->
+<!-- ============ 壳（登录后显示） ============ -->
 <div id="app" class="layout hide">
-  <aside class="sidebar" id="sidebar">
+  <aside class="sidebar">
     <div class="brand"><span class="dot" id="brandDot"></span> 5GPN-X</div>
     <nav class="menu">
-      <div class="navitem active" data-sec="dash"    onclick="showSection('dash')"><span class="ic">📊</span> 概览</div>
-      <div class="navitem"        data-sec="exits"   onclick="showSection('exits')"><span class="ic">🌐</span> 出口</div>
-      <div class="navitem"        data-sec="routing" onclick="showSection('routing')"><span class="ic">🧭</span> 智能分流</div>
-      <div class="navitem"        data-sec="console" onclick="showSection('console')"><span class="ic">🖥️</span> 控制台</div>
+      <a class="navitem on" data-section="dashboard"><span class="ic">📊</span> 首页</a>
+      <a class="navitem" data-section="exits"><span class="ic">🌐</span> 出口</a>
+      <a class="navitem" data-section="rules"><span class="ic">🧭</span> 规则</a>
+      <a class="navitem" data-section="monitor"><span class="ic">📈</span> 监控</a>
+      <a class="navitem" data-section="ai"><span class="ic">🤖</span> AI 助手</a>
+      <a class="navitem" data-section="settings"><span class="ic">⚙️</span> 设置</a>
     </nav>
     <div class="sidefoot">
-      <button id="themeBtn" onclick="cycleTheme()" title="切换主题">🌓 跟随</button>
+      <select id="themeSel" onchange="setTheme(this.value)" title="主题">
+        <option value="system">🌓 跟随系统</option>
+        <option value="dark">🌙 深色</option>
+        <option value="light">☀️ 浅色</option>
+      </select>
+      <button onclick="clearCreds()">登出</button>
       <div class="url" id="sideUrl"></div>
     </div>
   </aside>
 
-  <div class="main">
+  <main id="main">
     <header class="topbar">
-      <button class="hamb" onclick="toggleSidebar()">☰</button>
-      <div class="title" id="secTitle">概览</div>
+      <div class="title" id="secTitle">首页</div>
       <span class="pill wait hide" id="busy">⏳ 处理中</span>
       <span class="pill on" id="connPill">●</span>
-      <button onclick="refreshAll()" title="刷新">🔄</button>
     </header>
 
-    <div class="content">
-      <!-- 概览 -->
-      <section data-sec="dash">
-        <div class="card">
-          <div class="row"><h2 class="grow">实时</h2>
-            <label class="small muted" style="display:flex;align-items:center;gap:6px;cursor:pointer">
-              <input type="checkbox" id="autoref" onchange="toggleAuto()" style="min-height:auto;width:auto;flex:none"> 自动刷新</label>
-          </div>
-          <div id="live" class="row" style="gap:18px;font-size:15px"><span class="muted small">点“自动刷新”或刷新查看实时速率</span></div>
-        </div>
-        <div class="tiles" id="tiles"></div>
-        <div class="card">
-          <div class="row"><h2 class="grow">24 小时流量趋势</h2><button onclick="loadTraffic()">🔄</button></div>
-          <canvas id="chart"></canvas>
-          <div id="legend" class="pills small" style="margin-top:8px"></div>
-          <div id="traffic_note" class="small muted" style="margin-top:6px"></div>
-        </div>
-        <div class="card">
-          <div class="row"><h2 class="grow">24 小时出口延迟</h2><button onclick="loadLatency()">🔄</button></div>
-          <canvas id="latChart"></canvas>
-          <div id="latLegend" class="pills small" style="margin-top:8px"></div>
-          <div id="lat_note" class="small muted" style="margin-top:6px"></div>
-        </div>
-        <div class="card"><h2>服务</h2><div id="services" class="pills"></div></div>
-      </section>
+    <!-- 六个 section：Task 6 交付占位骨架，Task 7 填充完整页面 -->
+    <section id="sec-dashboard">
+      <div class="card">
+        <h2>首页 / 仪表盘</h2>
+        <div class="muted small">资源卡片、实时速率、24h 流量与延迟曲线、mihomo 概览卡（Task 7 填充）</div>
+      </div>
+    </section>
 
-      <!-- 出口 -->
-      <section data-sec="exits" hidden>
-        <div class="card">
-          <div class="row"><h2 class="grow">出口</h2>
-            <button onclick="loadExitLatency()">📶 测延迟</button>
-            <button onclick="checkExits()">🩺 检查连通性</button></div>
-          <div id="exits"></div>
-          <div id="checkResult" style="margin-top:10px"></div>
-        </div>
-        <div class="card" id="ex_card">
-          <h2 id="ex_title">添加出口</h2>
-          <div class="row"><input id="ex_name" type="text" placeholder="名字 (1-11 小写字母/数字)"></div>
-          <div class="row"><textarea id="ex_cfg" placeholder="socks5://用户:密码@host:端口
-或 socks5h://…  /  ss://…  /  整段 WireGuard [Interface]/[Peer]
-密码含 @ : / # 等特殊字符直接一行原样粘贴即可"></textarea></div>
-          <div class="row">
-            <button class="primary" id="ex_btn" onclick="addExit()">➕ 添加</button>
-            <button id="ex_cancel" class="hide" onclick="cancelEditExit()">取消</button>
-          </div>
-        </div>
-      </section>
+    <section id="sec-exits" hidden>
+      <div class="card">
+        <h2>出口管理</h2>
+        <div class="muted small">出口列表、切换 / 添加 / 编辑 / 删除、连通性与延迟（Task 7 填充）</div>
+      </div>
+    </section>
 
-      <!-- 智能分流 -->
-      <section data-sec="routing" hidden>
-        <div class="card">
-          <h2>🤖 AI 智能配置</h2>
-          <details id="aiCfgBox">
-            <summary class="muted small">AI 接口设置（绑定你自己的 API，OpenAI 兼容）</summary>
-            <div class="row" style="margin-top:8px"><input id="ai_base" type="text" placeholder="API Base URL，如 https://api.openai.com/v1"></div>
-            <div class="row"><input id="ai_key" type="password" placeholder="API Key（存服务器，不回显）"></div>
-            <div class="row"><input id="ai_model" type="text" placeholder="模型，如 gpt-4o-mini"><button class="primary" onclick="aiSaveConfig()">保存</button></div>
-            <div class="row small muted" id="ai_cfg_state"></div>
-          </details>
-          <div class="row" style="margin-top:10px"><input id="ai_repo" type="text" placeholder="GitHub 仓库链接（可选）"></div>
-          <div class="row"><input id="ai_intent" type="text" placeholder="意图，如：走 IIJ 加速 / 让某服务直连"></div>
-          <div class="row"><button class="primary" onclick="aiPlan()">✨ 生成方案</button></div>
-          <div id="ai_plan"></div>
-          <div class="small muted" style="margin-top:6px">方案仅为建议，需点“确认应用”后才会生效。</div>
-        </div>
+    <section id="sec-rules" hidden>
+      <div class="card">
+        <h2>分流规则</h2>
+        <div class="muted small">规则编辑、规则组、域名路由测试、一键定向（Task 7 填充）</div>
+      </div>
+    </section>
 
-        <div class="card">
-          <h2>🔧 工具</h2>
-          <div class="small muted">域名路由测试 —— 看它会不会进网关、走哪个出口</div>
-          <div class="row" style="margin-top:6px">
-            <input id="rt_domain" type="text" placeholder="域名，如 youtube.com">
-            <button onclick="routeTest()">测试</button>
-          </div>
-          <div id="rt_result" class="small" style="margin-top:8px"></div>
-          <div class="small muted" style="margin-top:14px">一键加速 / 直连某域名（自动处理「劫持 + 路由」两层）</div>
-          <div class="row" style="margin-top:6px">
-            <input id="pd_domain" type="text" placeholder="域名，如 chat.openai.com">
-            <select id="pd_target"></select>
-            <button class="primary" onclick="proxyDomain()">应用</button>
-          </div>
-        </div>
+    <section id="sec-monitor" hidden>
+      <div class="card">
+        <div class="row"><h2 class="grow">mihomo 概览</h2><button onclick="loadMihomoOverview()">🔄</button></div>
+        <div id="mihomoOverview" class="small muted">尚未加载</div>
+      </div>
+      <div class="card">
+        <h2>metacubexd 面板</h2>
+        <div class="muted small" style="margin-bottom:8px">首次打开在面板设置页把后端填为同源 <span class="mono">/api/mihomo/proxy</span>，secret 留空。</div>
+        <iframe class="mihomo" src="/mihomo/index.html" title="mihomo 面板"></iframe>
+      </div>
+    </section>
 
-        <div class="card">
-          <h2>规则组（分类 → 出口）</h2>
-          <div id="policy"></div>
-          <div class="row" style="margin-top:12px">
-            <input id="g_name" type="text" placeholder="新规则组名，如 Stream / Game">
-            <select id="g_tgt"></select>
-            <button class="primary" onclick="createGroup()">＋ 新建规则组</button>
-          </div>
-        </div>
-        <div class="card">
-          <div class="row"><h2 class="grow">分流规则</h2>
-            <span class="muted small" id="rules_meta"></span>
-            <button onclick="loadRules()">🔄 读取</button>
-            <button onclick="updateRules()">⟳ 更新规则集</button></div>
-          <div class="row" style="margin-top:6px">
-            <select id="r_type">
-              <option>DOMAIN-SUFFIX</option><option>DOMAIN</option><option>DOMAIN-KEYWORD</option>
-              <option>IP-CIDR</option><option>RULE-SET</option><option>GEOSITE</option>
-              <option>GEOIP</option><option>FINAL</option>
-            </select>
-            <input id="r_val" type="text" placeholder="值，如 youtube.com / 1.2.3.0/24 / 规则集URL">
-          </div>
-          <div class="row">
-            <input id="r_tgt" type="text" placeholder="目标：出口名 / direct / block / 规则组(如 AI)" list="tgtlist">
-            <datalist id="tgtlist"></datalist>
-            <button class="primary" id="addRuleBtn" onclick="addRule()">➕ 添加一条</button>
-            <button id="cancelEditBtn" class="hide" onclick="cancelEdit()">取消</button>
-          </div>
-          <div class="row" style="margin-top:8px">
-            <input id="r_filter" type="text" placeholder="过滤规则…" oninput="renderRuleList()">
-            <span class="muted small" id="r_count"></span>
-          </div>
-          <div id="rulelist"></div>
-          <details style="margin-top:10px">
-            <summary class="muted small">高级：直接编辑整份规则文本</summary>
-            <div class="row" style="margin-top:8px"><textarea id="rules" placeholder="读取后在此编辑…"></textarea></div>
-            <div class="row"><button class="primary" onclick="saveRules()">💾 保存整份并应用</button></div>
-          </details>
-        </div>
-      </section>
+    <section id="sec-ai" hidden>
+      <div class="card">
+        <h2>AI 助手</h2>
+        <div class="muted small">AI 接口配置、生成方案、确认应用（Task 7 填充）</div>
+      </div>
+    </section>
 
-      <!-- 控制台 -->
-      <section data-sec="console" hidden>
-        <div class="card">
-          <h2>配置备份 / 恢复</h2>
-          <div class="row">
-            <button class="primary" onclick="backupConfig()">⬇️ 下载备份</button>
-            <button onclick="$('restoreFile').click()">⬆️ 恢复备份</button>
-            <input type="file" id="restoreFile" accept=".gz,.tgz,application/gzip" class="hide" onchange="restoreConfig(this)">
-          </div>
-          <div class="small muted" style="margin-top:6px">备份含出口配置（含密码/密钥），请妥善保管。恢复后会重建路由。</div>
-        </div>
-        <div class="card">
-          <div class="row"><h2 class="grow">操作输出</h2><button onclick="$('out').textContent=''">清空</button></div>
-          <div id="out" class="mono"></div>
-        </div>
-      </section>
+    <section id="sec-settings" hidden>
+      <div class="card">
+        <h2>设置</h2>
+        <div class="muted small">备份 / 恢复、更新规则集、API 地址与令牌、主题（Task 7 填充）</div>
+      </div>
+      <div class="card">
+        <div class="row"><h2 class="grow">操作输出</h2><button onclick="$('out').textContent=''">清空</button></div>
+        <div id="out" class="mono"></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- 移动端底部标签栏 -->
+  <nav class="tabbar">
+    <a data-section="dashboard" class="on"><span class="ic">📊</span>首页</a>
+    <a data-section="exits"><span class="ic">🌐</span>出口</a>
+    <a data-section="rules"><span class="ic">🧭</span>规则</a>
+    <a data-section="monitor"><span class="ic">📈</span>监控</a>
+    <a data-section="more"><span class="ic">⋯</span>更多</a>
+  </nav>
+  <div id="moreSheet" class="moresheet hide">
+    <a data-section="ai"><span class="ic">🤖</span> AI 助手</a>
+    <a data-section="settings"><span class="ic">⚙️</span> 设置</a>
+    <div class="row" style="padding:8px 12px 4px">
+      <span class="muted small grow">主题</span>
+      <select id="themeSelM" onchange="setTheme(this.value)">
+        <option value="system">跟随系统</option>
+        <option value="dark">深色</option>
+        <option value="light">浅色</option>
+      </select>
     </div>
   </div>
 </div>
-<div id="scrim" class="scrim hide" onclick="closeSidebar()"></div>
 <div id="toasts"></div>
 
 <script>
 const $ = id => document.getElementById(id);
 let BASE = "", TOKEN = "";
 let RULES = [], lastTraffic = null, lastLatency = null, EDIT_IDX = null, LAT = {}, AIPLAN = null, EDIT_EXIT = null;
-const SEC_TITLE = { dash:"概览", exits:"出口", routing:"智能分流", console:"控制台" };
 
-/* ---- theme (auto / light / dark) ---- */
-const THEMES = ["auto","light","dark"], THEME_ICON = {auto:"🌓 跟随", light:"☀️ 白天", dark:"🌙 夜间"};
-function cssVar(n){ return getComputedStyle(document.body).getPropertyValue(n).trim() || "#888"; }
-function applyTheme(t){
-  if(t==="auto") document.documentElement.removeAttribute("data-theme");
-  else document.documentElement.setAttribute("data-theme", t);
-  const b=$("themeBtn"); if(b) b.textContent = THEME_ICON[t]||THEME_ICON.auto;
-  const m=document.querySelector('meta[name=theme-color]'); if(m) m.setAttribute("content", cssVar("--bg"));
+/* ===================== Task 6：主题系统（跟随系统 / 深色 / 浅色） ===================== */
+const THEME_KEY="theme";  // "system" | "light" | "dark"
+function applyTheme(t){const d=t==="dark"||(t==="system"&&matchMedia("(prefers-color-scheme: dark)").matches);
+  document.documentElement.setAttribute("data-theme",d?"dark":"light");
   if(lastTraffic) drawChart(lastTraffic);
-}
-function cycleTheme(){
-  const cur=localStorage.getItem("pgw_theme")||"auto";
-  const next=THEMES[(THEMES.indexOf(cur)+1)%THEMES.length];
-  localStorage.setItem("pgw_theme", next); applyTheme(next);
-}
-applyTheme(localStorage.getItem("pgw_theme")||"auto");
-if(window.matchMedia) window.matchMedia("(prefers-color-scheme:light)").addEventListener("change", ()=>{
-  if((localStorage.getItem("pgw_theme")||"auto")==="auto") applyTheme("auto");
-});
+  if(lastLatency) drawLatency(lastLatency);}
+applyTheme(localStorage.getItem(THEME_KEY)||"system");
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change",()=>applyTheme(localStorage.getItem(THEME_KEY)||"system"));
+function setTheme(t){ localStorage.setItem(THEME_KEY,t); applyTheme(t); syncThemeSel(); }
+function syncThemeSel(){ const t=localStorage.getItem(THEME_KEY)||"system";
+  const a=$("themeSel"), b=$("themeSelM"); if(a) a.value=t; if(b) b.value=t; }
+function cssVar(n){ return getComputedStyle(document.body).getPropertyValue(n).trim() || "#888"; }
 
-/* ---- nav / drawer ---- */
+/* ===================== Task 6：壳导航（六 section + 移动端「更多」） ===================== */
+const SEC_TITLE = { dashboard:"首页", exits:"出口", rules:"规则", monitor:"监控", ai:"AI 助手", settings:"设置" };
 function showSection(sec){
-  sec = sec || "dash";
-  document.querySelectorAll('section[data-sec]').forEach(s=>{ s.hidden = (s.dataset.sec!==sec); });
-  document.querySelectorAll('.navitem').forEach(n=>n.classList.toggle('active', n.dataset.sec===sec));
-  $("secTitle").textContent = SEC_TITLE[sec]||"";
+  if(!SEC_TITLE[sec]) sec="dashboard";
+  document.querySelectorAll('main section[id^="sec-"]').forEach(s=>{ s.hidden = (s.id !== "sec-"+sec); });
+  document.querySelectorAll('[data-section]').forEach(n=>{
+    const ds=n.dataset.section;
+    n.classList.toggle('on', ds===sec || (ds==="more" && (sec==="ai"||sec==="settings")));
+  });
+  $("secTitle").textContent = SEC_TITLE[sec];
   localStorage.setItem("pgw_sec", sec);
-  closeSidebar();
-  if(sec==="dash"){ loadTraffic(); loadLatency(); loadLive(); }
-  if(sec==="exits" && !Object.keys(LAT).length) loadExitLatency();
-  if(sec==="routing"){ loadRules(); aiLoadConfig(); }
+  closeMore();
+  if(sec==="monitor") loadMihomoOverview();
 }
-function toggleSidebar(){ const o=$("sidebar").classList.toggle("open"); $("scrim").classList.toggle("hide", !o); }
-function closeSidebar(){ $("sidebar").classList.remove("open"); $("scrim").classList.add("hide"); }
-function refreshAll(){ loadStatus(); loadTraffic(); loadRules(); }
+document.querySelectorAll('[data-section]').forEach(el=>el.addEventListener('click',()=>{
+  const s=el.dataset.section;
+  if(s==="more"){ toggleMore(); return; }
+  showSection(s);
+}));
+function toggleMore(){ const m=$("moreSheet"); if(m) m.classList.toggle("hide"); }
+function closeMore(){ const m=$("moreSheet"); if(m) m.classList.add("hide"); }
 
+/* ---- monitor：mihomo 概览占位卡（/api/mihomo/overview；Task 7 完善） ---- */
+async function loadMihomoOverview(){
+  const box=$("mihomoOverview"); if(!box) return;
+  box.innerHTML='<span class="muted small">加载中…</span>';
+  try{
+    const d=await api("/api/mihomo/overview");
+    box.innerHTML =
+      `<span class="pill on">mihomo ${esc(d.version||"")}</span> `+
+      `<span class="pill">连接 ${d.connections||0}</span> `+
+      `<span class="pill">内存 ${fmtBytes(d.memory||0)}</span> `+
+      `<span class="pill">↑ ${fmtBytes(d.upload||0)} ↓ ${fmtBytes(d.download||0)}</span>`+
+      ((d.top_rules||[]).length ? `<div class="small muted" style="margin-top:6px">Top 规则：`+
+        d.top_rules.map(r=>esc(r.rule)+" × "+r.count).join(" · ")+`</div>` : "");
+  }catch(e){
+    box.innerHTML = `<span class="muted small">mihomo 离线（smart 出口未启用，或 mihomo API 未配置）</span>`;
+  }
+}
+
+/* ---- 登录 / 登出（Bearer 令牌模型不变） ---- */
+async function connect() {
+  BASE = $("url").value.trim().replace(/\/+$/,"");
+  TOKEN = $("token").value.trim();
+  if (!BASE || !TOKEN) { $("conn").textContent="请填写地址和令牌"; return; }
+  $("conn").textContent = "连接中…";
+  try {
+    await fetch(BASE+"/api/health").then(r=>r.json());
+    await api("/api/status");
+    localStorage.setItem("pgw_url", BASE); localStorage.setItem("pgw_token", TOKEN);
+    $("login").classList.add("hide"); $("app").classList.remove("hide");
+    $("brandDot").classList.add("on"); $("sideUrl").textContent = BASE;
+    syncThemeSel();
+    showSection(localStorage.getItem("pgw_sec")||"dashboard");
+  } catch(e) {
+    $("conn").textContent = "连接失败：" + e.message + "（检查地址/端口/证书/令牌）";
+  }
+}
+function clearCreds(){ localStorage.removeItem("pgw_url"); localStorage.removeItem("pgw_token");
+  $("url").value=""; $("token").value=""; $("app").classList.add("hide"); $("login").classList.remove("hide"); $("conn").textContent="已清除"; }
+
+/* ================================================================================
+   Task 7 接线：以下为旧版控制台的 API 调用与数据加载函数，原样保留。
+   其中部分函数引用的 DOM 元素将由 Task 7 在各 section 内重建，暂未被新壳调用。
+   ================================================================================ */
 function toast(msg, type){
   const c=$("toasts"); if(!c) return;
   const d=document.createElement("div"); d.className="toast "+(type||""); d.textContent=msg;
@@ -396,8 +396,6 @@ function log(msg){
 let BUSY=0;
 function busy(on){ BUSY=Math.max(0,BUSY+(on?1:-1)); const b=$("busy"); if(b) b.classList.toggle("hide", BUSY<=0); }
 function esc(s){ return (s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
-function clearCreds(){ localStorage.removeItem("pgw_url"); localStorage.removeItem("pgw_token");
-  $("url").value=""; $("token").value=""; $("app").classList.add("hide"); $("login").classList.remove("hide"); $("conn").textContent="已清除"; }
 
 async function api(path, method, body) {
   const post = method && method !== "GET";
@@ -432,25 +430,7 @@ async function mutate(path, body, label, reload) {
   } finally { busy(false); }
 }
 function refreshState(){ loadStatus(); loadRules(); }
-
-async function connect() {
-  BASE = $("url").value.trim().replace(/\/+$/,"");
-  TOKEN = $("token").value.trim();
-  if (!BASE || !TOKEN) { $("conn").textContent="请填写地址和令牌"; return; }
-  $("conn").textContent = "连接中…";
-  try {
-    await fetch(BASE+"/api/health").then(r=>r.json());
-    await api("/api/status");
-    localStorage.setItem("pgw_url", BASE); localStorage.setItem("pgw_token", TOKEN);
-    $("login").classList.add("hide"); $("app").classList.remove("hide");
-    $("brandDot").classList.add("on"); $("sideUrl").textContent = BASE;
-    loadStatus(); loadRules();
-    showSection(localStorage.getItem("pgw_sec")||"dash");
-    $("autoref").checked = localStorage.getItem("pgw_auto")==="1"; toggleAuto();
-  } catch(e) {
-    $("conn").textContent = "连接失败：" + e.message + "（检查地址/端口/证书/令牌）";
-  }
-}
+function refreshAll(){ loadStatus(); loadTraffic(); loadRules(); }
 
 function gb(mb){ return ((mb||0)/1024).toFixed(1); }
 function fmtUptime(s){ s=s||0; const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);
