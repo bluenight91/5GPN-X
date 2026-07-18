@@ -242,6 +242,27 @@ class MihomoApiTests(unittest.TestCase):
             self.api.CLASH_ADDR = old_addr
             listener.close()
 
+    def test_static_path_traversal_blocked(self):
+        self.assertIsNone(self.api.static_path("../install.sh"))
+        self.assertIsNone(self.api.static_path("../../etc/passwd"))
+        self.assertIsNone(self.api.static_path("/etc/passwd"))
+
+    def test_static_path_resolution(self):
+        root = tempfile.mkdtemp()
+        self.api.MIHOMO_STATIC_DIR = root
+        with open(os.path.join(root, "index.html"), "w") as f:
+            f.write("<html>xd</html>")
+        os.makedirs(os.path.join(root, "assets"))
+        with open(os.path.join(root, "assets", "app.js"), "w") as f:
+            f.write("js")
+        self.assertTrue(self.api.static_path("").endswith("index.html"))
+        self.assertTrue(self.api.static_path("assets/app.js").endswith("assets/app.js"))
+        # SPA fallback
+        self.assertTrue(self.api.static_path("some/route").endswith("index.html"))
+        # no index -> None
+        os.unlink(os.path.join(root, "index.html"))
+        self.assertIsNone(self.api.static_path("missing.js"))
+
 class ProxyHandlerTests(unittest.TestCase):
     """Handler-level tests for the mihomo reverse proxy (real HTTP server)."""
     @classmethod

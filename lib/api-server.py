@@ -280,6 +280,28 @@ def mihomo_overview():
             "top_rules": [{"rule": k, "count": v} for k, v in top5]}, None
 
 
+MIME = {".html": "text/html", ".js": "text/javascript", ".css": "text/css",
+        ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png",
+        ".woff2": "font/woff2", ".woff": "font/woff", ".map": "application/json",
+        ".ico": "image/x-icon", ".webmanifest": "application/manifest+json"}
+
+
+def static_path(sub):
+    """Resolve a /mihomo/* URL path to a file under MIHOMO_STATIC_DIR.
+    Returns None for traversal attempts or missing files (with SPA fallback)."""
+    sub = sub.split("?", 1)[0].lstrip("/") or "index.html"
+    norm = os.path.normpath(sub)
+    if norm.startswith("..") or os.path.isabs(norm):
+        return None
+    full = os.path.join(MIHOMO_STATIC_DIR, norm)
+    if os.path.isfile(full):
+        return full
+    fallback = os.path.join(MIHOMO_STATIC_DIR, "index.html")
+    if os.path.isfile(fallback):
+        return fallback
+    return None
+
+
 def read_file(path):
     try:
         with open(path, encoding="utf-8") as f:
@@ -939,6 +961,18 @@ class Handler(BaseHTTPRequestHandler):
                                             ctype=self.headers.get("Content-Type"))
         return self._send_raw(status, data, ctype)
 
+    def _serve_mihomo_static(self, sub):
+        full = static_path(sub)
+        if not full:
+            return self._send(404, {"ok": False, "error": "metacubexd 未安装（运行 install.sh --setup-api）或路径无效"})
+        ext = os.path.splitext(full)[1].lower()
+        try:
+            with open(full, "rb") as f:
+                data = f.read()
+        except OSError:
+            return self._send(404, {"ok": False, "error": "not found"})
+        return self._send_raw(200, data, MIME.get(ext, "application/octet-stream"))
+
     def _dispatch(self, method):
         """PUT/PATCH/DELETE are only routed to the mihomo reverse proxy."""
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
@@ -985,6 +1019,8 @@ class Handler(BaseHTTPRequestHandler):
             sub = self.path.split("/api/mihomo/proxy/", 1)[1]
             status, ctype, data = clash_request("GET", sub)
             return self._send_raw(status, data, ctype)
+        if path.startswith("/mihomo"):
+            return self._serve_mihomo_static(self.path[len("/mihomo"):])
         if path == "/api/status":
             exits, cur = list_exits()
             services = {s: run(["systemctl", "is-active", s], timeout=5)[0] for s in SERVICES}
