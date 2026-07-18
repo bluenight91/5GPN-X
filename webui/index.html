@@ -69,6 +69,10 @@
   button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
   button.danger { border-color:var(--danger); color:var(--danger); }
   button:disabled { opacity:.5; cursor:not-allowed; }
+  a.btn { display:inline-block; text-decoration:none; cursor:pointer; background:var(--btn-bg);
+    border:1px solid var(--btn-line); border-radius:10px; min-height:44px; padding:12px 16px;
+    color:var(--text); font-size:14px; touch-action:manipulation; }
+  a.btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
 
   /* ---- 登录页 ---- */
   .login { min-height:100vh; min-height:100dvh; display:flex; align-items:center; justify-content:center; padding:16px; }
@@ -344,8 +348,9 @@
       </div>
       <div class="card">
         <h2>完整面板（metacubexd）</h2>
-        <div class="muted small" style="margin-bottom:8px" id="xdhint">完整面板后端地址填 <span class="mono">https://&lt;你的域名&gt;:8444/api/mihomo/proxy</span>，secret 填你的 API 令牌（与登录控制台相同）。</div>
+        <div class="muted small" style="margin-bottom:8px" id="xdhint">完整面板后端地址填 <span class="mono">https://&lt;你的域名&gt;:8444/api/mihomo/proxy</span>，<b>secret 留空</b>（面板与 API 同源，首次打开后浏览器自动携带会话 cookie）。控制台跨站托管时面板在新标签页打开。</div>
         <iframe class="mihomo" id="xdframe" data-src="/mihomo/index.html" title="mihomo 面板"></iframe>
+        <a class="btn primary" id="xdtab" hidden target="_blank" rel="noopener" href="#">↗ 新标签页打开完整面板</a>
       </div>
     </section>
 
@@ -512,11 +517,27 @@ async function loadMihomoOverview(){
   }
 }
 
-/* ---- metacubexd iframe：懒加载 + query token 鉴权（api-server 仅对 /mihomo 与
-   WS 白名单接受 query token；文档响应会种同源会话 cookie 供子资源鉴权） ---- */
+/* ---- metacubexd 面板：同源内嵌 iframe / 跨源新标签 ----
+   同源：iframe 懒加载 + query token 鉴权（文档响应种 Path=/ 的 pgw_mihomo 会话
+   cookie，子资源与 /api/mihomo/* 面板调用均走 cookie，secret 留空）。
+   跨源（控制台托管在 Pages/file://）：iframe 属第三方上下文，iOS Safari 会拦
+   第三方 cookie，故不渲染 iframe，改为顶层新标签打开——query token 认证后种
+   下的 cookie 是第一方，子资源与后续 API 调用均携带。 */
 function loadXdFrame(){
-  const f=$("xdframe"); if(!f || f.getAttribute("src")) return;
-  f.src = BASE + f.dataset.src + "?token=" + encodeURIComponent(TOKEN);
+  const f=$("xdframe"), tab=$("xdtab"); if(!f || !tab) return;
+  const panelUrl = BASE + f.dataset.src + "?token=" + encodeURIComponent(TOKEN);
+  let same = false;
+  try { same = new URL(BASE).origin === location.origin; } catch(e) {}
+  if(same){
+    tab.hidden = true;
+    f.hidden = false;
+    if(!f.getAttribute("src")) f.src = panelUrl;
+  }else{
+    f.hidden = true;
+    f.removeAttribute("src");
+    tab.href = panelUrl;
+    tab.hidden = false;
+  }
 }
 
 /* ---- 登录 / 登出（Bearer 令牌模型不变） ---- */
@@ -541,6 +562,7 @@ function clearCreds(){ localStorage.removeItem("pgw_url"); localStorage.removeIt
   if(liveTimer){clearInterval(liveTimer);liveTimer=null;}
   if(autoTimer){clearInterval(autoTimer);autoTimer=null;}
   const xf=$("xdframe"); if(xf) xf.removeAttribute("src");   // 下次登录用新令牌重新懒加载
+  const xt=$("xdtab"); if(xt){ xt.hidden=true; xt.removeAttribute("href"); }
   $("url").value=""; $("token").value=""; $("app").classList.add("hide"); $("login").classList.remove("hide"); $("conn").textContent="已清除"; }
 
 /* ================================================================================

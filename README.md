@@ -167,9 +167,9 @@ sudo ./install.sh --setup-api   # 生成令牌并启用 HTTP 控制 API（默认
 
 ### mihomo 监控
 
-`--setup-api` 会安装 metacubexd（固定版本 1.269.0），并在 smart 实例上启用仅回环的 Clash API（`127.0.0.1:9090`，不对公网开放，经 api-server 8444 反代访问）。控制台「监控」页内嵌完整面板（上半为概览摘要，下半为 metacubexd）；首次打开完整面板时，在其设置里把后端地址填 `https://<你的域名>:8444/api/mihomo/proxy`，secret 填**你的 API 令牌**（与登录控制台相同；api-server 会在服务端注入真实的 Clash secret，浏览器不接触它）。
+`--setup-api` 会安装 metacubexd（固定版本 1.269.0），并在 smart 实例上启用仅回环的 Clash API（`127.0.0.1:9090`，不对公网开放，经 api-server 8444 反代访问）。控制台「监控」页提供完整面板（上半为概览摘要，下半为 metacubexd）：**控制台与 API 同源时面板内嵌显示；控制台跨站托管（Cloudflare Pages、本地 file:// 等）时改为「新标签页打开」**——顶层导航下认证 cookie 属第一方，iOS Safari 可靠。首次打开完整面板时，在其设置里把后端地址填 `https://<你的域名>:8444/api/mihomo/proxy`，**secret 留空**（面板与 API 同源，浏览器自动携带 `pgw_mihomo` 会话 cookie 完成认证；api-server 在服务端注入真实的 Clash secret，浏览器不接触它）。
 
-**安全说明**：控制台与 mihomo 面板均必须经 **HTTPS** 访问。鉴权沿用 Bearer 令牌；由于浏览器无法给 iframe/WS 子请求加自定义头，mihomo 静态资源改用一次性 `?token=` 完成首次鉴权并种下同源会话 cookie（`HttpOnly; Secure; SameSite=Strict`，后续子资源走 cookie），WS 流（仅限 traffic/logs/connections/memory 白名单）经 `?token=` 鉴权，其余路径一律不认 query token。令牌等同控制台全部权限，不要分享给他人；泄露后立即在 `/opt/5gpn/etc/api.env` 更换并 `systemctl restart 5gpn-api`。
+**安全说明**：控制台与 mihomo 面板均必须经 **HTTPS** 访问。鉴权沿用 Bearer 令牌；由于浏览器无法给 iframe/WS 子请求加自定义头，mihomo 静态资源改用一次性 `?token=` 完成首次鉴权并种下 `pgw_mihomo` 同源会话 cookie（`Path=/; HttpOnly; Secure; SameSite=Strict`）——后续静态子资源与 `/api/mihomo/*` 面板调用（含写方法与 WS 白名单流）走该 cookie，其他 `/api/*` 仍仅认 Bearer；放行写方法的前提是 SameSite=Strict（跨站请求不带 cookie，CSRF 不可行）与 HttpOnly（JS 读不到），请勿放宽。令牌等同控制台全部权限，不要分享给他人；泄露后立即在 `/opt/5gpn/etc/api.env` 更换并 `systemctl restart 5gpn-api`。
 
 令牌保存在 `/opt/5gpn/etc/api.env`（权限 600）。注意：默认 `FIREWALL_MODE=preserve` 不接管防火墙，需自行放行 TCP 8444；8443 已被回环 sniproxy 占用，故 API 默认用 8444。
 
