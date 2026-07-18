@@ -18,6 +18,8 @@ fail() { echo "$1" >&2; exit 1; }
 [[ "${ui}" == *'apple-mobile-web-app-capable'* ]] || fail "must be add-to-homescreen capable"
 [[ "${ui}" == *'tap-highlight-color'* ]] || fail "must disable tap highlight"
 [[ "${ui}" == *'font-size:16px'* || "${ui}" == *'font-size: 16px'* ]] || fail "inputs must be >=16px to prevent focus zoom"
+# textarea 的 mono 规则不得把字号覆盖回 <16px（iOS 聚焦缩放回归）
+[[ "${ui}" != *'font-family:var(--mono); font-size:14px'* && "${ui}" != *'font-family:var(--mono);font-size:14px'* && "${ui}" != *'font-family: var(--mono); font-size: 14px'* && "${ui}" != *'font-family:var(--mono); font-size:13px'* && "${ui}" != *'font-family:var(--mono);font-size:13px'* ]] || fail "textarea must stay 16px on iOS"
 
 # --- responsive layout: sidebar on desktop, bottom tabs on mobile -------------
 [[ "${ui}" == *'@media'*'768px'* ]] || fail "must have a 768px breakpoint"
