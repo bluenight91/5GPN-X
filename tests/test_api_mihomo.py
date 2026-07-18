@@ -7,6 +7,7 @@ import os
 import socket
 import tempfile
 import threading
+import time
 import unittest
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -194,6 +195,52 @@ class MihomoApiTests(unittest.TestCase):
             listener.close()
         self.assertIn(b"GET /traffic HTTP/1.1", got["req"])
         self.assertIn(b"Authorization: Bearer s3cr3t-test-token", got["req"])
+
+    def test_ws_relay_flushes_pending_on_upstream_close(self):
+        # Regression: upstream answers 101, sends a trailing payload after a
+        # beat, then closes immediately. The relay must forward the payload
+        # before honoring the FIN instead of dropping buffered bytes.
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        head = b"HTTP/1.1 101 Switching Protocols\r\n\r\n"
+        payload = b"tail-bytes-" + bytes(range(256)) * 4
+
+        def serve():
+            conn, _ = listener.accept()
+            req = b""
+            while b"\r\n\r\n" not in req:
+                req += conn.recv(4096)
+            conn.sendall(head)
+            time.sleep(0.3)          # let the relay settle, then race FIN
+            conn.sendall(payload)
+            conn.close()
+
+        threading.Thread(target=serve, daemon=True).start()
+        old_addr = self.api.CLASH_ADDR
+        self.api.CLASH_ADDR = "127.0.0.1:%d" % listener.getsockname()[1]
+        try:
+            a, b = socket.socketpair()
+            a.settimeout(10)
+            relay = threading.Thread(target=self.api.ws_relay,
+                                     args=(b, "traffic", {"Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ=="}),
+                                     daemon=True)
+            relay.start()
+            want = head + payload
+            got = b""
+            while len(got) < len(want):
+                chunk = a.recv(65536)
+                if not chunk:
+                    break
+                got += chunk
+            self.assertEqual(got, want)   # 101 head + full trailing payload
+            a.close()
+            relay.join(timeout=5)
+            self.assertFalse(relay.is_alive())
+            b.close()
+        finally:
+            self.api.CLASH_ADDR = old_addr
+            listener.close()
 
 class ProxyHandlerTests(unittest.TestCase):
     """Handler-level tests for the mihomo reverse proxy (real HTTP server)."""

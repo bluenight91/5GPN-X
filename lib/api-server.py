@@ -193,32 +193,56 @@ def ws_relay(client_sock, sub, client_headers):
         # rfile has no buffered client bytes here.
         peer = {client_sock: upstream, upstream: client_sock}
         pending = {client_sock: bytearray(), upstream: bytearray()}
+        # Sides that sent EOF (or errored on read) / were shut for writing.
+        # A FIN right after a final payload must not drop buffered bytes: we
+        # stop reading the closed side, flush pending[peer], then propagate a
+        # half-close (SHUT_WR) so the peer sees EOF too.
+        closed_read = set()
+        closed_write = set()
         # Transient non-blocking conditions: SSLWantRead/WantWrite on the TLS
         # client socket, BlockingIOError on the plain upstream socket.
         WANT = (ssl.SSLWantReadError, ssl.SSLWantWriteError, BlockingIOError)
+        MAX_PENDING = 4 * 1024 * 1024   # tear down if a stalled peer piles up
         while True:
-            r, w, x = select.select(list(pending),
-                                    [s for s in pending if pending[s]],
-                                    list(pending), 300)
+            for s in pending:
+                p = peer[s]
+                if s in closed_read and p not in closed_write and not pending[p]:
+                    try:
+                        p.shutdown(socket.SHUT_WR)
+                    except (OSError, ValueError):
+                        pass
+                    closed_write.add(p)
+            if len(closed_write) == 2:
+                return                  # both directions fully closed
+            readers = [s for s in pending if s not in closed_read]
+            writers = [s for s in pending if pending[s]]
+            if not readers and not writers:
+                return                  # both sides done and buffers drained
+            r, w, x = select.select(readers, writers, list(pending), 300)
             if x:
                 return
+            if not r and not w and not readers:
+                return                  # flush-only mode stalled for 300s
             for s in r:
                 try:
                     data = s.recv(65536)
                 except WANT:
                     continue            # TLS record not complete yet; retry
                 except OSError:
-                    return
+                    data = b""          # read error: treat like EOF
                 if not data:
-                    return
+                    closed_read.add(s)  # stop reading; flush pending[peer[s]]
+                    continue
                 pending[peer[s]] += data
+                if len(pending[peer[s]]) > MAX_PENDING:
+                    return
             for s in w:
                 try:
                     n = s.send(pending[s])
                 except WANT:
                     continue            # retry the SAME bytes once writable
                 except OSError:
-                    return
+                    return              # write failed: nothing more we can do
                 if n <= 0:
                     return
                 del pending[s][:n]      # drop only what was actually sent
