@@ -243,13 +243,21 @@ class MihomoApiTests(unittest.TestCase):
             listener.close()
 
     def test_static_path_traversal_blocked(self):
+        # Own static root WITHOUT index.html, so the SPA fallback can't mask a
+        # traversal miss — independent of the machine's real MIHOMO_STATIC_DIR.
+        root = tempfile.mkdtemp()
+        old = self.api.MIHOMO_STATIC_DIR
+        self.api.MIHOMO_STATIC_DIR = root
+        self.addCleanup(setattr, self.api, "MIHOMO_STATIC_DIR", old)
         self.assertIsNone(self.api.static_path("../install.sh"))
         self.assertIsNone(self.api.static_path("../../etc/passwd"))
         self.assertIsNone(self.api.static_path("/etc/passwd"))
 
     def test_static_path_resolution(self):
         root = tempfile.mkdtemp()
+        old = self.api.MIHOMO_STATIC_DIR
         self.api.MIHOMO_STATIC_DIR = root
+        self.addCleanup(setattr, self.api, "MIHOMO_STATIC_DIR", old)
         with open(os.path.join(root, "index.html"), "w") as f:
             f.write("<html>xd</html>")
         os.makedirs(os.path.join(root, "assets"))

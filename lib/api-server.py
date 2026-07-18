@@ -293,10 +293,16 @@ def static_path(sub):
     norm = os.path.normpath(sub)
     if norm.startswith("..") or os.path.isabs(norm):
         return None
-    full = os.path.join(MIHOMO_STATIC_DIR, norm)
+    root = os.path.realpath(MIHOMO_STATIC_DIR)
+    full = os.path.realpath(os.path.join(root, norm))
+    try:
+        if os.path.commonpath((root, full)) != root:
+            return None          # symlink inside the static root pointing out
+    except ValueError:
+        return None              # unresolvable/mixed paths: reject
     if os.path.isfile(full):
         return full
-    fallback = os.path.join(MIHOMO_STATIC_DIR, "index.html")
+    fallback = os.path.join(root, "index.html")
     if os.path.isfile(fallback):
         return fallback
     return None
@@ -1019,7 +1025,7 @@ class Handler(BaseHTTPRequestHandler):
             sub = self.path.split("/api/mihomo/proxy/", 1)[1]
             status, ctype, data = clash_request("GET", sub)
             return self._send_raw(status, data, ctype)
-        if path.startswith("/mihomo"):
+        if path == "/mihomo" or path.startswith("/mihomo/"):
             return self._serve_mihomo_static(self.path[len("/mihomo"):])
         if path == "/api/status":
             exits, cur = list_exits()
