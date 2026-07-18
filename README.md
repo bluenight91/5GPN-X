@@ -160,10 +160,16 @@ sudo ./install.sh --setup-tgbot
 ## 网页控制台（可选）
 
 ```bash
-sudo ./install.sh --setup-api   # 生成令牌并启用 HTTP 控制 API（默认端口 8444）
+sudo ./install.sh --setup-api   # 生成令牌并启用 HTTP 控制 API（默认端口 8444），同时安装 mihomo 监控面板
 ```
 
-执行后会打印 **API 地址** 与 **令牌**。打开仓库里的 `webui/index.html`（纯静态单文件，可本地双击打开，或托管到任意静态托管 / Cloudflare Pages，见 `webui/README.md`），填入地址和令牌即可在网页上查看实时状态与流量曲线、管理出口与分流规则、更新规则集、备份/恢复配置——与 Telegram Bot 调用同一后端，实时同步。面板还支持绑定你自己的 OpenAI 兼容接口，用自然语言生成分流方案（人工确认后才生效）。
+执行后会打印 **API 地址** 与 **令牌**。打开仓库里的 `webui/index.html`（纯静态单文件，可本地双击打开，或托管到任意静态托管 / Cloudflare Pages，见 `webui/README.md`），填入地址和令牌即可使用——与 Telegram Bot 调用同一后端，实时同步。控制台共六页：**仪表盘**（实时状态、流量/延迟曲线、mihomo 概览）、**出口管理**、**分流规则**、**mihomo 监控**、**AI 助手**（绑定你自己的 OpenAI 兼容接口，自然语言生成分流方案，人工确认后才生效）、**设置**（更新规则集、备份/恢复、主题切换）。界面支持深浅双主题跟随系统（可手动锁定），移动端为底部标签栏布局，已适配 iOS Safari（可「添加到主屏幕」）。
+
+### mihomo 监控
+
+`--setup-api` 会安装 metacubexd（固定版本 1.269.0），并在 smart 实例上启用仅回环的 Clash API（`127.0.0.1:9090`，不对公网开放，经 api-server 8444 反代访问）。控制台「监控」页内嵌完整面板（上半为概览摘要，下半为 metacubexd）；首次打开完整面板时，在其设置里把后端地址填 `https://<你的域名>:8444/api/mihomo/proxy`，secret 填**你的 API 令牌**（与登录控制台相同；api-server 会在服务端注入真实的 Clash secret，浏览器不接触它）。
+
+**安全说明**：控制台与 mihomo 面板均必须经 **HTTPS** 访问。鉴权沿用 Bearer 令牌；由于浏览器无法给 iframe/WS 子请求加自定义头，mihomo 静态资源改用一次性 `?token=` 完成首次鉴权并种下同源会话 cookie（`HttpOnly; Secure; SameSite=Strict`，后续子资源走 cookie），WS 流（仅限 traffic/logs/connections/memory 白名单）经 `?token=` 鉴权，其余路径一律不认 query token。令牌等同控制台全部权限，不要分享给他人；泄露后立即在 `/opt/5gpn/etc/api.env` 更换并 `systemctl restart 5gpn-api`。
 
 令牌保存在 `/opt/5gpn/etc/api.env`（权限 600）。注意：默认 `FIREWALL_MODE=preserve` 不接管防火墙，需自行放行 TCP 8444；8443 已被回环 sniproxy 占用，故 API 默认用 8444。
 
@@ -201,6 +207,7 @@ tests/            # 策略测试
 | 853 | TCP | 公网 | DNS over TLS |
 | 8111 | TCP | 公网 | iOS 描述文件下载 |
 | 8444 | TCP | 公网 | HTTP 控制 API（可选，`--setup-api` 后；注意 8443 已被回环 sniproxy 占用） |
+| 9090 | TCP | 仅 127.0.0.1 | mihomo Clash API（smart 实例回环；经 api-server 8444 反代访问，不对公网开放） |
 
 ### 环境变量
 

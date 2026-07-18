@@ -468,6 +468,7 @@ function showSection(sec){
 }
 /* 进入各 section 时按需加载数据（monitor 的 iframe 懒加载在 Part C 接线） */
 function onEnter(sec){
+  if(sec!=="dashboard") stopAuto();   // 离开首页即停 2s/20s 轮询；回首页由 startAuto() 按 autoref 偏好恢复
   if(sec==="dashboard"){ loadStatus(); loadTraffic(); loadLatency(); loadLive(); startAuto(); loadMihomoOverview(); }
   else if(sec==="exits"){ loadStatus(); }
   else if(sec==="rules"){ loadStatus(); loadRules(); }
@@ -620,7 +621,7 @@ async function loadStatus() {
       tile("硬盘", gb(r.disk_used_mb)+" GB", diskPct, "共 "+gb(r.disk_total_mb)+" GB") +
       tile("运行时间", fmtUptime(r.uptime_sec), null, "");
     $("services").innerHTML = Object.entries(s.services||{}).map(([k,v])=>
-      `<span class="pill ${v?'on':'off'}">${k} ${v?'●':'○'}</span>`).join("");
+      `<span class="pill ${v?'on':'off'}">${esc(k)} ${v?'●':'○'}</span>`).join("");
     $("connPill").className = "pill on"; $("connPill").textContent = "● 在线";
     renderExits(s.exits, s.current);
     renderPolicy(s.policy, s.exits);
@@ -906,6 +907,10 @@ function updateRules(){ mutate("/api/update-rules",{},"更新 GFWList/ChinaList"
 
 /* ---- live dashboard (auto-refresh) ---- */
 let autoTimer=null, liveTimer=null;
+function stopAuto(){
+  if(liveTimer){clearInterval(liveTimer);liveTimer=null;}
+  if(autoTimer){clearInterval(autoTimer);autoTimer=null;}
+}
 function fmtBps(bytes){ const b=(bytes||0)*8; return b>=1e6?(b/1e6).toFixed(1)+" Mbps":b>=1e3?(b/1e3).toFixed(0)+" Kbps":b.toFixed(0)+" bps"; }
 async function loadLive(){ try{ const d=await api("/api/live");
   $("live").innerHTML = `<span>↓ <b>${fmtBps(d.server.rx)}</b></span><span>↑ <b>${fmtBps(d.server.tx)}</b></span>`+
