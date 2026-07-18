@@ -123,3 +123,13 @@ mihomo router（smart 实例）：配置新增 external-controller 127.0.0.1:909
 - `lib/mihomo-router-config.py`：+约 15 行；
 - `install.sh`：+约 80 行；
 - 测试：2 个新文件。
+
+---
+
+## 实现调整记录（2026-07-17，经用户批准）
+
+实现与多轮代码审查后，对原设计做以下两处正式调整：
+
+1. **metacubexd 完整面板打开方式**：原设计为"控制台内 iframe 内嵌"。审查发现控制台跨站托管（Pages / file://）时，`SameSite=Strict` 会话 cookie 不会在第三方 iframe 的子资源请求中携带（iOS Safari ITP 下任何 iframe cookie 方案均不可靠）。调整为 **同源内嵌 / 跨源新标签页打开**：控制台与网关同源时保持 iframe；跨站托管时监控页显示"新标签页打开完整面板"（顶层导航 + `?token=` 一次性认证 + 第一方会话 cookie，iOS 可靠）。
+2. **metacubexd secret 真正留空**：`pgw_mihomo` 会话 cookie（`Path=/; HttpOnly; Secure; SameSite=Strict`）的认证范围扩大到 `/api/mihomo/*`（全部方法，含 WS Upgrade）。面板与 API 同源，浏览器自动携带 cookie，因此 secret 配置**留空**，API 令牌不再进入第三方 JS 的 localStorage。其他 `/api/*` 路径仍只接受 Bearer。CSRF 由 SameSite=Strict 保证，令牌保密由 HttpOnly 保证。
+3. **反代鲁棒性增强**（审查驱动）：`normalize_sub` 统一处理路径（percent-decode、CJK 代理名、`..` 拒绝、query allowlist 防 SSRF 滥用 delay 端点）；支持 PUT/PATCH/DELETE（面板控制功能）；WS 中继实现 SSL-Want 容错、对端 FIN 时冲刷滞留数据、4MB 缓冲上限；静态服务加 realpath + commonpath 防 symlink 逃逸。
