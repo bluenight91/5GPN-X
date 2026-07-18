@@ -903,10 +903,18 @@ def restore_backup(b64):
     return True, "已恢复 %d 个文件，并重建路由。如需重建劫持名单可再执行『更新规则集』。" % len(members)
 
 
+def _tok_eq(a, b):
+    """hmac.compare_digest that rejects non-ASCII input instead of raising."""
+    try:
+        return hmac.compare_digest(a, b)
+    except TypeError:
+        return False
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "pgw-api"
 
-    def log_message(self, *a):  # keep the journal quiet
+    def log_message(self, *a):  # keep the journal quiet — request lines may carry ?token= credentials
         pass
 
     def _cors(self):
@@ -926,12 +934,15 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:  # noqa: BLE001
             pass
 
-    def _send_raw(self, code, data, ctype="application/json"):
+    def _send_raw(self, code, data, ctype="application/json", extra=None):
         self.send_response(code)
         if "charset" not in ctype and ctype.startswith(("text/", "application/json")):
             ctype += "; charset=utf-8"
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
+        if extra:
+            for k, v in extra:
+                self.send_header(k, v)
         self._cors()
         self.end_headers()
         try:
@@ -940,8 +951,36 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
     def _auth(self):
+        """Bearer 是主凭据。浏览器无法给 iframe/WS 子请求加自定义头，因此
+        额外接受 ?token= query 凭据，但仅限两类 GET 请求：
+          (a) /mihomo 静态文件（iframe 文档及其资源）；
+          (b) /api/mihomo/proxy/ 下且属 WS 白名单的 Upgrade 请求。
+        其余路径一律不认 query token。query 鉴权成功的 /mihomo 响应会种一个
+        同源会话 cookie，让 iframe 内相对路径子资源（无法携带 query）也能鉴权。"""
+        self._via_query = False
         h = self.headers.get("Authorization", "")
-        return h.startswith("Bearer ") and hmac.compare_digest(h[7:], TOKEN)
+        if h.startswith("Bearer ") and _tok_eq(h[7:], TOKEN):
+            return True
+        if self.command != "GET":
+            return False
+        path = self.path.split("?", 1)[0].rstrip("/") or "/"
+        is_static = path == "/mihomo" or path.startswith("/mihomo/")
+        is_ws = False
+        if not is_static and path.startswith("/api/mihomo/proxy/") and \
+                self.headers.get("Upgrade", "").lower() == "websocket":
+            sub = normalize_sub(path.split("/api/mihomo/proxy/", 1)[1])
+            is_ws = bool(sub) and sub.split("?", 1)[0] in CLASH_WS_PATHS
+        if not (is_static or is_ws):
+            return False
+        tok = urllib.parse.parse_qs(self.path.partition("?")[2]).get("token", [""])[0]
+        if tok and _tok_eq(tok, TOKEN):
+            self._via_query = True
+            return True
+        if is_static:
+            m = re.search(r"(?:^|;\s*)pgw_mihomo=([^;]*)", self.headers.get("Cookie", ""))
+            if m and _tok_eq(urllib.parse.unquote(m.group(1)), TOKEN):
+                return True
+        return False
 
     def _json_body(self):
         try:
@@ -965,7 +1004,7 @@ class Handler(BaseHTTPRequestHandler):
         body = self.rfile.read(n) if n > 0 else None
         status, ctype, data = clash_request(self.command, sub, body=body,
                                             ctype=self.headers.get("Content-Type"))
-        return self._send_raw(status, data, ctype)
+        return self._send_raw(status, data, ctype, extra=(("Referrer-Policy", "same-origin"),))
 
     def _serve_mihomo_static(self, sub):
         full = static_path(sub)
@@ -977,7 +1016,12 @@ class Handler(BaseHTTPRequestHandler):
                 data = f.read()
         except OSError:
             return self._send(404, {"ok": False, "error": "not found"})
-        return self._send_raw(200, data, MIME.get(ext, "application/octet-stream"))
+        extra = [("Referrer-Policy", "same-origin")]
+        if getattr(self, "_via_query", False):
+            # iframe 内的相对路径资源带不了 ?token=；种同源会话 cookie 供子资源鉴权。
+            extra.append(("Set-Cookie", "pgw_mihomo=%s; Path=/mihomo; HttpOnly; Secure; SameSite=Strict"
+                          % urllib.parse.quote(TOKEN, safe="")))
+        return self._send_raw(200, data, MIME.get(ext, "application/octet-stream"), extra=extra)
 
     def _dispatch(self, method):
         """PUT/PATCH/DELETE are only routed to the mihomo reverse proxy."""
@@ -1024,7 +1068,7 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/mihomo/proxy/"):
             sub = self.path.split("/api/mihomo/proxy/", 1)[1]
             status, ctype, data = clash_request("GET", sub)
-            return self._send_raw(status, data, ctype)
+            return self._send_raw(status, data, ctype, extra=(("Referrer-Policy", "same-origin"),))
         if path == "/mihomo" or path.startswith("/mihomo/"):
             return self._serve_mihomo_static(self.path[len("/mihomo"):])
         if path == "/api/status":

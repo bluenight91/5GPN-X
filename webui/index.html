@@ -344,7 +344,7 @@
       </div>
       <div class="card">
         <h2>完整面板（metacubexd）</h2>
-        <div class="muted small" style="margin-bottom:8px" id="xdhint">完整面板后端地址填同源 <span class="mono">/api/mihomo/proxy</span>。</div>
+        <div class="muted small" style="margin-bottom:8px" id="xdhint">完整面板后端地址填 <span class="mono">https://&lt;你的域名&gt;:8444/api/mihomo/proxy</span>，secret 填你的 API 令牌（与登录控制台相同）。</div>
         <iframe class="mihomo" id="xdframe" data-src="/mihomo/index.html" title="mihomo 面板"></iframe>
       </div>
     </section>
@@ -471,7 +471,7 @@ function onEnter(sec){
   if(sec==="dashboard"){ loadStatus(); loadTraffic(); loadLatency(); loadLive(); startAuto(); loadMihomoOverview(); }
   else if(sec==="exits"){ loadStatus(); }
   else if(sec==="rules"){ loadStatus(); loadRules(); }
-  else if(sec==="monitor"){ loadMihomoOverview(); }
+  else if(sec==="monitor"){ loadMihomoOverview(); loadXdFrame(); }
   else if(sec==="ai"){ aiLoadConfig(); }
   else if(sec==="settings"){ fillSettings(); }
 }
@@ -511,6 +511,13 @@ async function loadMihomoOverview(){
   }
 }
 
+/* ---- metacubexd iframe：懒加载 + query token 鉴权（api-server 仅对 /mihomo 与
+   WS 白名单接受 query token；文档响应会种同源会话 cookie 供子资源鉴权） ---- */
+function loadXdFrame(){
+  const f=$("xdframe"); if(!f || f.getAttribute("src")) return;
+  f.src = BASE + f.dataset.src + "?token=" + encodeURIComponent(TOKEN);
+}
+
 /* ---- 登录 / 登出（Bearer 令牌模型不变） ---- */
 async function connect() {
   BASE = $("url").value.trim().replace(/\/+$/,"");
@@ -532,6 +539,7 @@ async function connect() {
 function clearCreds(){ localStorage.removeItem("pgw_url"); localStorage.removeItem("pgw_token");
   if(liveTimer){clearInterval(liveTimer);liveTimer=null;}
   if(autoTimer){clearInterval(autoTimer);autoTimer=null;}
+  const xf=$("xdframe"); if(xf) xf.removeAttribute("src");   // 下次登录用新令牌重新懒加载
   $("url").value=""; $("token").value=""; $("app").classList.add("hide"); $("login").classList.remove("hide"); $("conn").textContent="已清除"; }
 
 /* ================================================================================

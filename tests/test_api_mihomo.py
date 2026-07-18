@@ -277,6 +277,24 @@ class ProxyHandlerTests(unittest.TestCase):
     def setUpClass(cls):
         cls.api = load_api()
         cls.api.TOKEN = "t" * 16
+        # A real static root so /mihomo/* resolves regardless of the machine.
+        cls.static = tempfile.mkdtemp()
+        with open(os.path.join(cls.static, "index.html"), "w", encoding="utf-8") as f:
+            f.write("<html>xd</html>")
+        os.makedirs(os.path.join(cls.static, "_nuxt"))
+        with open(os.path.join(cls.static, "_nuxt", "app.js"), "w", encoding="utf-8") as f:
+            f.write("js")
+        cls.old_static = cls.api.MIHOMO_STATIC_DIR
+        cls.api.MIHOMO_STATIC_DIR = cls.static
+        # Known Clash secret for the WS relay tests; dead port for HTTP proxy tests.
+        cls.secret = tempfile.NamedTemporaryFile(delete=False)
+        cls.secret.write(b"s3cr3t-test-token"); cls.secret.close()
+        cls.old_secret_file = cls.api.CLASH_SECRET_FILE
+        cls.api.CLASH_SECRET_FILE = cls.secret.name
+        s = socket.socket(); s.bind(("127.0.0.1", 0))
+        cls.old_addr = cls.api.CLASH_ADDR
+        cls.api.CLASH_ADDR = "127.0.0.1:%d" % s.getsockname()[1]
+        s.close()
         cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), cls.api.Handler)
         threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
         cls.port = cls.srv.server_address[1]
@@ -285,9 +303,22 @@ class ProxyHandlerTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.srv.shutdown()
         cls.srv.server_close()
+        cls.api.MIHOMO_STATIC_DIR = cls.old_static
+        cls.api.CLASH_SECRET_FILE = cls.old_secret_file
+        cls.api.CLASH_ADDR = cls.old_addr
+        os.unlink(cls.secret.name)
 
     def _conn(self):
         return http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+
+    def _get(self, path, headers=None):
+        conn = self._conn()
+        conn.request("GET", path, headers=headers or {})
+        resp = conn.getresponse()
+        status, hdrs = resp.status, dict(resp.getheaders())
+        resp.read()
+        conn.close()
+        return status, hdrs
 
     def test_proxy_payload_too_large_413(self):
         conn = self._conn()
@@ -321,6 +352,104 @@ class ProxyHandlerTests(unittest.TestCase):
             self.assertIn(m, allow)
         resp.read()
         conn.close()
+
+    # --- query-token auth for iframe static + WS streams --------------------
+    def test_static_query_token_ok_sets_cookie(self):
+        status, hdrs = self._get("/mihomo/index.html?token=" + self.api.TOKEN)
+        self.assertEqual(status, 200)
+        self.assertEqual(hdrs.get("Referrer-Policy"), "same-origin")
+        sc = hdrs.get("Set-Cookie", "")
+        self.assertIn("pgw_mihomo=", sc)
+        self.assertIn("Path=/mihomo", sc)
+        self.assertIn("HttpOnly", sc)
+        self.assertIn("Secure", sc)
+        self.assertIn("SameSite=Strict", sc)
+
+    def test_static_wrong_and_missing_token_401(self):
+        status, _ = self._get("/mihomo/index.html?token=wrong")
+        self.assertEqual(status, 401)
+        status, _ = self._get("/mihomo/index.html")
+        self.assertEqual(status, 401)
+
+    def test_static_cookie_auth_for_assets(self):
+        # iframe 内相对路径子资源带不了 ?token=；文档响应种下的 cookie 供其鉴权
+        status, _ = self._get("/mihomo/_nuxt/app.js",
+                              {"Cookie": "pgw_mihomo=" + self.api.TOKEN})
+        self.assertEqual(status, 200)
+        status, _ = self._get("/mihomo/_nuxt/app.js", {"Cookie": "pgw_mihomo=wrong"})
+        self.assertEqual(status, 401)
+        status, _ = self._get("/mihomo/_nuxt/app.js")
+        self.assertEqual(status, 401)
+
+    def test_query_token_rejected_on_plain_api_paths(self):
+        status, _ = self._get("/api/status?token=" + self.api.TOKEN)
+        self.assertEqual(status, 401)
+
+    def test_proxy_http_still_requires_bearer(self):
+        # 非 Upgrade 的反代路径不认 query token
+        status, _ = self._get("/api/mihomo/proxy/traffic?token=" + self.api.TOKEN)
+        self.assertEqual(status, 401)
+        # Bearer 仍走 HTTP 反代（测试环境无 mihomo -> 502）
+        status, hdrs = self._get("/api/mihomo/proxy/traffic",
+                                 {"Authorization": "Bearer " + self.api.TOKEN})
+        self.assertEqual(status, 502)
+        self.assertEqual(hdrs.get("Referrer-Policy"), "same-origin")
+
+    def test_ws_upgrade_query_token_scope(self):
+        hdrs = {"Upgrade": "websocket", "Connection": "Upgrade",
+                "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ=="}
+        # 错误 token -> 401
+        status, _ = self._get("/api/mihomo/proxy/traffic?token=wrong", hdrs)
+        self.assertEqual(status, 401)
+        # 正确 token 但非白名单路径 -> query token 不生效 -> 401
+        status, _ = self._get("/api/mihomo/proxy/configs?token=" + self.api.TOKEN, hdrs)
+        self.assertEqual(status, 401)
+        # Bearer + 非白名单 Upgrade -> 过了鉴权，被白名单挡下 -> 403
+        status, _ = self._get("/api/mihomo/proxy/configs",
+                              dict(hdrs, Authorization="Bearer " + self.api.TOKEN))
+        self.assertEqual(status, 403)
+
+    def test_ws_upgrade_query_token_end_to_end(self):
+        # Fake upstream: validate the rebuilt upgrade request, answer 101.
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        got = {}
+
+        def serve():
+            conn, _ = listener.accept()
+            req = b""
+            while b"\r\n\r\n" not in req:
+                chunk = conn.recv(4096)
+                if not chunk:
+                    break
+                req += chunk
+            got["req"] = req
+            conn.sendall(b"HTTP/1.1 101 Switching Protocols\r\n\r\n")
+            time.sleep(0.2)
+            conn.close()
+
+        threading.Thread(target=serve, daemon=True).start()
+        old_addr = self.api.CLASH_ADDR
+        self.api.CLASH_ADDR = "127.0.0.1:%d" % listener.getsockname()[1]
+        try:
+            conn = self._conn()
+            conn.putrequest("GET", "/api/mihomo/proxy/traffic?token=" + self.api.TOKEN)
+            conn.putheader("Upgrade", "websocket")
+            conn.putheader("Connection", "Upgrade")
+            conn.putheader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+            conn.putheader("Sec-WebSocket-Version", "13")
+            conn.endheaders()
+            resp = conn.getresponse()
+            self.assertEqual(resp.status, 101)
+            conn.close()
+        finally:
+            self.api.CLASH_ADDR = old_addr
+            listener.close()
+        # query token 被剥掉，服务端注入真实 Clash secret
+        self.assertIn(b"GET /traffic HTTP/1.1", got["req"])
+        self.assertNotIn(b"token=", got["req"])
+        self.assertIn(b"Authorization: Bearer s3cr3t-test-token", got["req"])
 
 if __name__ == "__main__":
     unittest.main()
