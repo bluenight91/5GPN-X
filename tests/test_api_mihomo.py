@@ -360,7 +360,8 @@ class ProxyHandlerTests(unittest.TestCase):
         self.assertEqual(hdrs.get("Referrer-Policy"), "same-origin")
         sc = hdrs.get("Set-Cookie", "")
         self.assertIn("pgw_mihomo=", sc)
-        self.assertIn("Path=/mihomo", sc)
+        self.assertIn("Path=/;", sc)          # Path=/ 覆盖 /mihomo 与 /api/mihomo/*
+        self.assertNotIn("Path=/mihomo", sc)  # 不再局限于静态目录
         self.assertIn("HttpOnly", sc)
         self.assertIn("Secure", sc)
         self.assertIn("SameSite=Strict", sc)
@@ -380,6 +381,74 @@ class ProxyHandlerTests(unittest.TestCase):
         self.assertEqual(status, 401)
         status, _ = self._get("/mihomo/_nuxt/app.js")
         self.assertEqual(status, 401)
+
+    # --- pgw_mihomo cookie 放行 /api/mihomo/*（面板 secret 留空） --------------
+    def test_mihomo_api_cookie_auth_get_put_delete(self):
+        ck = {"Cookie": "pgw_mihomo=" + self.api.TOKEN}
+        # GET：cookie 通过鉴权 -> 反代到死端口 -> 502（而非 401）
+        status, _ = self._get("/api/mihomo/proxy/configs", ck)
+        self.assertEqual(status, 502)
+        # PUT：写方法同样放行
+        conn = self._conn()
+        conn.request("PUT", "/api/mihomo/proxy/configs", body=b'{"mode":"global"}',
+                     headers=dict(ck, **{"Content-Type": "application/json"}))
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 502)
+        resp.read(); conn.close()
+        # DELETE：同为 502 而非 401
+        conn = self._conn()
+        conn.request("DELETE", "/api/mihomo/proxy/connections", headers=ck)
+        resp = conn.getresponse()
+        self.assertEqual(resp.status, 502)
+        resp.read(); conn.close()
+
+    def test_mihomo_api_cookie_wrong_value_401(self):
+        status, _ = self._get("/api/mihomo/proxy/configs",
+                              {"Cookie": "pgw_mihomo=wrong"})
+        self.assertEqual(status, 401)
+
+    def test_mihomo_cookie_not_accepted_on_other_api(self):
+        # 最小权限：cookie 不越权到主控制台路径
+        status, _ = self._get("/api/status",
+                              {"Cookie": "pgw_mihomo=" + self.api.TOKEN})
+        self.assertEqual(status, 401)
+
+    def test_ws_upgrade_cookie_auth_end_to_end(self):
+        # WS 白名单路径：cookie（无 ?token=、无 Bearer）通过鉴权 -> 101
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+
+        def serve():
+            conn, _ = listener.accept()
+            req = b""
+            while b"\r\n\r\n" not in req:
+                chunk = conn.recv(4096)
+                if not chunk:
+                    break
+                req += chunk
+            conn.sendall(b"HTTP/1.1 101 Switching Protocols\r\n\r\n")
+            time.sleep(0.2)
+            conn.close()
+
+        threading.Thread(target=serve, daemon=True).start()
+        old_addr = self.api.CLASH_ADDR
+        self.api.CLASH_ADDR = "127.0.0.1:%d" % listener.getsockname()[1]
+        try:
+            conn = self._conn()
+            conn.putrequest("GET", "/api/mihomo/proxy/traffic")
+            conn.putheader("Upgrade", "websocket")
+            conn.putheader("Connection", "Upgrade")
+            conn.putheader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+            conn.putheader("Sec-WebSocket-Version", "13")
+            conn.putheader("Cookie", "pgw_mihomo=" + self.api.TOKEN)
+            conn.endheaders()
+            resp = conn.getresponse()
+            self.assertEqual(resp.status, 101)
+            conn.close()
+        finally:
+            self.api.CLASH_ADDR = old_addr
+            listener.close()
 
     def test_query_token_rejected_on_plain_api_paths(self):
         status, _ = self._get("/api/status?token=" + self.api.TOKEN)

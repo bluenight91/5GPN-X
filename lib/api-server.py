@@ -956,15 +956,23 @@ class Handler(BaseHTTPRequestHandler):
           (a) /mihomo 静态文件（iframe 文档及其资源）；
           (b) /api/mihomo/proxy/ 下且属 WS 白名单的 Upgrade 请求。
         其余路径一律不认 query token。query 鉴权成功的 /mihomo 响应会种一个
-        同源会话 cookie，让 iframe 内相对路径子资源（无法携带 query）也能鉴权。"""
+        pgw_mihomo 同源会话 cookie；该 cookie 放行 /mihomo 静态与
+        /api/mihomo/*（全部方法，含 WS Upgrade 与写方法），不覆盖其他 /api/*
+        （最小权限，主控制台仍仅 Bearer）。放行写方法的两个前提，改动 cookie
+        属性时必须保持：SameSite=Strict —— 跨站请求不携带 cookie，CSRF 不可行；
+        HttpOnly —— JS 读不到 cookie 值，XSS 偷不走。"""
         self._via_query = False
         h = self.headers.get("Authorization", "")
         if h.startswith("Bearer ") and _tok_eq(h[7:], TOKEN):
             return True
-        if self.command != "GET":
-            return False
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
         is_static = path == "/mihomo" or path.startswith("/mihomo/")
+        if is_static or path.startswith("/api/mihomo/"):
+            m = re.search(r"(?:^|;\s*)pgw_mihomo=([^;]*)", self.headers.get("Cookie", ""))
+            if m and _tok_eq(urllib.parse.unquote(m.group(1)), TOKEN):
+                return True
+        if self.command != "GET":
+            return False
         is_ws = False
         if not is_static and path.startswith("/api/mihomo/proxy/") and \
                 self.headers.get("Upgrade", "").lower() == "websocket":
@@ -976,10 +984,6 @@ class Handler(BaseHTTPRequestHandler):
         if tok and _tok_eq(tok, TOKEN):
             self._via_query = True
             return True
-        if is_static:
-            m = re.search(r"(?:^|;\s*)pgw_mihomo=([^;]*)", self.headers.get("Cookie", ""))
-            if m and _tok_eq(urllib.parse.unquote(m.group(1)), TOKEN):
-                return True
         return False
 
     def _json_body(self):
@@ -1018,8 +1022,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(404, {"ok": False, "error": "not found"})
         extra = [("Referrer-Policy", "same-origin")]
         if getattr(self, "_via_query", False):
-            # iframe 内的相对路径资源带不了 ?token=；种同源会话 cookie 供子资源鉴权。
-            extra.append(("Set-Cookie", "pgw_mihomo=%s; Path=/mihomo; HttpOnly; Secure; SameSite=Strict"
+            # iframe 内相对路径资源与面板 API 调用带不了 ?token=；种同源会话
+            # cookie（Path=/ 覆盖 /mihomo 与 /api/mihomo/*）供其鉴权。
+            extra.append(("Set-Cookie", "pgw_mihomo=%s; Path=/; HttpOnly; Secure; SameSite=Strict"
                           % urllib.parse.quote(TOKEN, safe="")))
         return self._send_raw(200, data, MIME.get(ext, "application/octet-stream"), extra=extra)
 
