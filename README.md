@@ -35,13 +35,13 @@
 一键安装（自动拉取仓库到 `/opt/5gpn`）：
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/Xiuyixx/5GPN-X/main/install.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/bluenight91/5GPN-X/main/install.sh)"
 ```
 
 手动安装：
 
 ```bash
-git clone https://github.com/Xiuyixx/5GPN-X.git
+git clone https://github.com/bluenight91/5GPN-X.git
 cd 5GPN-X
 sudo ./install.sh
 ```

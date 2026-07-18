@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-REPO_URL="https://github.com/Xiuyixx/5GPN-X.git"
+REPO_URL="https://github.com/bluenight91/5GPN-X.git"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SCRIPT_PATH="${SCRIPT_DIR}/$(basename "$0")"
 LIB_DIR="${SCRIPT_DIR}/lib"

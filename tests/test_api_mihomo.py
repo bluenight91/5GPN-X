@@ -34,31 +34,39 @@ class FakeClash(BaseHTTPRequestHandler):
     def do_GET(self):
         FakeClash.last_auth = self.headers.get("Authorization")
         path = urllib.parse.unquote(self.path.split("?", 1)[0])
-        if path == "/version": return self._j({"version": "1.19.28"})
-        if path == "/memory": return self._j({"inuse": 123456, "oslimit": 0})
+        if path == "/version":
+            return self._j({"version": "1.19.28"})
+        if path == "/memory":
+            return self._j({"inuse": 123456, "oslimit": 0})
         if path == "/connections":
             return self._j({"downloadTotal": 1000, "uploadTotal": 500, "connections": [
                 {"id": "1", "rule": "DomainSuffix", "chains": ["jp"]},
                 {"id": "2", "rule": "DomainSuffix", "chains": ["jp"]},
                 {"id": "3", "rule": "GeoIP", "chains": ["direct"]}]})
-        if path == "/configs": return self._j({"mode": "rule"})
-        if path == "/proxies/日本/delay": return self._j({"delay": 42})
-        self.send_response(404); self.end_headers()
+        if path == "/configs":
+            return self._j({"mode": "rule"})
+        if path == "/proxies/日本/delay":
+            return self._j({"delay": 42})
+        self.send_response(404)
+        self.end_headers()
     def do_PUT(self):
         FakeClash.last_auth = self.headers.get("Authorization")
         n = int(self.headers.get("Content-Length", "0") or 0)
         FakeClash.last_body = self.rfile.read(n)
-        self.send_response(204); self.end_headers()
+        self.send_response(204)
+        self.end_headers()
     def do_DELETE(self):
         FakeClash.last_auth = self.headers.get("Authorization")
-        self.send_response(204); self.end_headers()
+        self.send_response(204)
+        self.end_headers()
 
 class MihomoApiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.api = load_api()
         cls.secret = tempfile.NamedTemporaryFile(delete=False)
-        cls.secret.write(b"s3cr3t-test-token"); cls.secret.close()
+        cls.secret.write(b"s3cr3t-test-token")
+        cls.secret.close()
         cls.api.CLASH_SECRET_FILE = cls.secret.name
         cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), FakeClash)
         cls.api.CLASH_ADDR = "127.0.0.1:%d" % cls.srv.server_address[1]
@@ -66,7 +74,8 @@ class MihomoApiTests(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        cls.srv.shutdown(); os.unlink(cls.secret.name)
+        cls.srv.shutdown()
+        os.unlink(cls.secret.name)
 
     def test_clash_request_injects_secret(self):
         status, _, data = self.api.clash_request("GET", "configs")
@@ -288,10 +297,12 @@ class ProxyHandlerTests(unittest.TestCase):
         cls.api.MIHOMO_STATIC_DIR = cls.static
         # Known Clash secret for the WS relay tests; dead port for HTTP proxy tests.
         cls.secret = tempfile.NamedTemporaryFile(delete=False)
-        cls.secret.write(b"s3cr3t-test-token"); cls.secret.close()
+        cls.secret.write(b"s3cr3t-test-token")
+        cls.secret.close()
         cls.old_secret_file = cls.api.CLASH_SECRET_FILE
         cls.api.CLASH_SECRET_FILE = cls.secret.name
-        s = socket.socket(); s.bind(("127.0.0.1", 0))
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
         cls.old_addr = cls.api.CLASH_ADDR
         cls.api.CLASH_ADDR = "127.0.0.1:%d" % s.getsockname()[1]
         s.close()
@@ -394,13 +405,15 @@ class ProxyHandlerTests(unittest.TestCase):
                      headers=dict(ck, **{"Content-Type": "application/json"}))
         resp = conn.getresponse()
         self.assertEqual(resp.status, 502)
-        resp.read(); conn.close()
+        resp.read()
+        conn.close()
         # DELETE：同为 502 而非 401
         conn = self._conn()
         conn.request("DELETE", "/api/mihomo/proxy/connections", headers=ck)
         resp = conn.getresponse()
         self.assertEqual(resp.status, 502)
-        resp.read(); conn.close()
+        resp.read()
+        conn.close()
 
     def test_mihomo_api_cookie_wrong_value_401(self):
         status, _ = self._get("/api/mihomo/proxy/configs",

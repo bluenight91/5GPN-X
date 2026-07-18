@@ -12,7 +12,7 @@
 #
 set -euo pipefail
 
-REPO="Xiuyixx/5GPN-X"
+REPO="bluenight91/5GPN-X"
 BRANCH="${PGW_BRANCH:-main}"
 DIR="${PGW_SRC_DIR:-/opt/5gpn}"
 
