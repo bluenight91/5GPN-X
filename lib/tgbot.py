@@ -235,6 +235,15 @@ def _chunks(text, size):
         yield text[i : i + size]
 
 
+def mono_text(text):
+    """HTML-escape THEN truncate, so the <pre> always closes within Telegram's
+    4096-char limit. Truncating before escaping lets entity expansion (every "
+    becomes &quot;) push the closing tag past the limit — quote-heavy logs
+    (e.g. mosdns's JSON lines) were rejected by Telegram and never showed."""
+    esc = html.escape((text or "").strip() or "(no output)")
+    return "<pre>" + esc[:3800] + "</pre>"
+
+
 def edit_message(chat_id, message_id, text, keyboard=None, mono=False):
     """editMessageText without a callback_query. Returns True when the message
     now shows the requested content ("message is not modified" counts as
@@ -242,7 +251,7 @@ def edit_message(chat_id, message_id, text, keyboard=None, mono=False):
     if chat_id is None or message_id is None:
         return False
     if mono:
-        text = "<pre>" + html.escape(((text or "").strip() or "(no output)")[:3800]) + "</pre>"
+        text = mono_text(text)
     params = {
         "chat_id": chat_id, "message_id": message_id, "text": (text or "")[:4096],
         "parse_mode": "HTML", "disable_web_page_preview": True,
@@ -308,7 +317,7 @@ def edit(cb, text, keyboard=None, mono=False):
     chat_id = msg.get("chat", {}).get("id")
     mid = msg.get("message_id")
     if mono:
-        text = "<pre>" + html.escape(((text or "").strip() or "(no output)")[:3800]) + "</pre>"
+        text = mono_text(text)
     params = {
         "chat_id": chat_id, "message_id": mid, "text": (text or "")[:4096],
         "parse_mode": "HTML", "disable_web_page_preview": True,
