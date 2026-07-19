@@ -38,7 +38,16 @@ class FakeClash(BaseHTTPRequestHandler):
         if path == "/version":
             return self._j({"version": "1.19.28"})
         if path == "/memory":
-            return self._j({"inuse": 123456, "oslimit": 0})
+            # mihomo's real /memory is an infinite one-object-per-second stream
+            # whose first object is always inuse=0; emulate two ticks then EOF.
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"inuse": 0, "oslimit": 0}).encode() + b"\n")
+            self.wfile.flush()
+            self.wfile.write(json.dumps({"inuse": 123456, "oslimit": 0}).encode() + b"\n")
+            self.wfile.flush()
+            return
         if path == "/connections":
             return self._j({"downloadTotal": 1000, "uploadTotal": 500, "connections": [
                 {"id": "1", "rule": "DomainSuffix", "chains": ["jp"]},

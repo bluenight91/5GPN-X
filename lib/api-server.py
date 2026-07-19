@@ -262,9 +262,24 @@ def mihomo_overview():
         req.add_header("Authorization", "Bearer " + secret)
         with urllib.request.urlopen(req, timeout=8) as r:
             return json.loads(r.read().decode())
+
+    def get_memory():
+        # mihomo's /memory is an INFINITE one-object-per-second stream (plain
+        # HTTP included), and its first object is always inuse=0 by design.
+        # Reading to EOF would hang forever — take the first two lines instead.
+        req = urllib.request.Request("http://%s/memory" % CLASH_ADDR)
+        req.add_header("Authorization", "Bearer " + secret)
+        with urllib.request.urlopen(req, timeout=6) as r:
+            first = json.loads((r.readline() or b"{}").decode() or "{}")
+            try:
+                second = json.loads((r.readline() or b"{}").decode() or "{}")
+            except Exception:  # noqa: BLE001
+                second = {}
+            return second if second.get("inuse") else first
+
     try:
         conns = get("/connections")
-        mem = get("/memory")
+        mem = get_memory()
         ver = get("/version")
     except Exception as e:  # noqa: BLE001
         return None, "mihomo 不可达（smart 出口未启用？）: %s" % e
