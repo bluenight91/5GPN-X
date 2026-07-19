@@ -58,4 +58,17 @@ for bad_url in "https://user:pass@example.com/dns-query" "https://example.com/dn
     fi
 done
 
+# 6. sniproxy nameserver rendering: DoH-by-domain must fall back to plain IPs
+#    (an empty resolver block makes sniproxy fail to start).
+eval "$(sed -n '/^render_sniproxy_dns_nameservers() {/,/^}/p' "$install")"
+out="$(render_sniproxy_dns_nameservers "https://doh-a.example.com/api/camo1")"
+[[ "$out" == *'nameserver 1.1.1.1'* ]] \
+    || fail "DoH-only upstream must fall back to plain IP nameservers (got: $out)"
+out="$(render_sniproxy_dns_nameservers "9.9.9.9")"
+[[ "$out" == *'nameserver 9.9.9.9'* && "$out" != *'1.1.1.1'* ]] \
+    || fail "plain IP nameserver not preserved (got: $out)"
+out="$(render_sniproxy_dns_nameservers "https://doh-a.example.com/api/camo1 9.9.9.9")"
+[[ "$out" == *'nameserver 9.9.9.9'* && "$out" != *'1.1.1.1'* ]] \
+    || fail "mixed upstreams must keep the plain IP one (got: $out)"
+
 echo "DNS upstream configuration and URL validation OK"

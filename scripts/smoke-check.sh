@@ -91,7 +91,7 @@ nft list table inet pgw_exit >/dev/null 2>&1 && ok "pgw_exit 打标表存在" ||
 if [[ -f "${CONF_DIR}/api.env" ]]; then
     echo "----- 控制 API -----"
     health="$(curl -m 5 -sk https://127.0.0.1:8444/api/health 2>/dev/null || true)"
-    [[ "$health" == *'"ok":true'* ]] && ok "API 健康检查通过" || bad "API 健康检查失败: ${health:-无响应}"
+    [[ "$health" == *'"ok": true'* || "$health" == *'"ok":true'* ]] && ok "API 健康检查通过" || bad "API 健康检查失败: ${health:-无响应}"
     sec="$(sudo cat /etc/5gpn/mihomo-api-secret 2>/dev/null || true)"
     if [[ -n "$sec" ]]; then
         ver="$(curl -m 5 -s -H "Authorization: Bearer $sec" http://127.0.0.1:9090/version 2>/dev/null || true)"

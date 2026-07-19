@@ -16,6 +16,7 @@ body="$(cat "${smoke}")"
 [[ "${body}" == *'127.0.0.1:9090'* ]] || fail "smoke must verify the Clash API is loopback-only"
 [[ "${body}" == *'fwmark 0x1 lookup 100'* ]] || fail "smoke must verify fwmark rules exist and count them"
 [[ "${body}" == *'/api/health'* ]] || fail "smoke must hit the API health endpoint"
+[[ "${body}" == *'"ok": true'* ]] || fail "smoke health check must tolerate json spacing (\"ok\": true)"
 [[ "${body}" == *'+tls'* ]] || fail "smoke must verify DoT answers"
 [[ "${body}" == *'人工步骤'* ]] || fail "smoke must end with manual verification steps"
 

@@ -83,7 +83,7 @@ ensure_repo_checkout
 render_sniproxy_dns_nameservers() {
     local input="${1:-}"
     local dns_list=()
-    local item
+    local item rendered=""
     if [[ -z "$input" ]]; then
         dns_list=("${DEFAULT_REMOTE_DNS[@]}")
     else
@@ -110,8 +110,17 @@ PYEOF
             warn "Skipping invalid sniproxy DNS address: $item"
             continue
         fi
-        printf '    nameserver %s\n' "$item"
+        rendered+=$(printf '    nameserver %s\n' "$item")
     done
+    if [[ -z "$rendered" ]]; then
+        # sniproxy's C config only accepts IP-literal nameservers; a DoH/DoT
+        # upstream (by domain) can't be expressed, so fall back to plain IPs
+        # instead of rendering an empty resolver block that kills sniproxy.
+        for item in "${DEFAULT_REMOTE_DNS[@]}"; do
+            rendered+=$(printf '    nameserver %s\n' "$item")
+        done
+    fi
+    printf '%s' "$rendered"
 }
 first_plain_dns() {
     local rendered
