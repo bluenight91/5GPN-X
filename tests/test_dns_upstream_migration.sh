@@ -49,9 +49,13 @@ LOCAL_DNS="https://223.5.5.5/dns-query"
 configure_dns_upstreams </dev/null
 [[ "$REMOTE_DNS" == "https://1.1.1.1/dns-query" ]] || fail "DoH URL not preserved (got: $REMOTE_DNS)"
 
-# 5. Malformed URLs must fail closed.
-if (normalize_dns_upstreams "https://example.com/not-dns-query") >/dev/null 2>&1; then
-    fail "invalid DoH URL was accepted"
-fi
+# 5. Camouflaged DoH paths are accepted; malformed URLs must fail closed.
+(normalize_dns_upstreams "https://example.com/api/camo1") >/dev/null 2>&1 \
+    || fail "camouflaged DoH path was rejected"
+for bad_url in "https://user:pass@example.com/dns-query" "https://example.com/dns-query#frag" "ftp://example.com/x" "udp://dns.example.com"; do
+    if (normalize_dns_upstreams "$bad_url") >/dev/null 2>&1; then
+        fail "invalid URL was accepted: $bad_url"
+    fi
+done
 
 echo "DNS upstream configuration and URL validation OK"
