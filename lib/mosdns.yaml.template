@@ -58,13 +58,13 @@ __LOCAL_SECONDARY_UPSTREAMS__
   - tag: local_primary
     type: sequence
     args:
-      - exec: ecs 139.226.48.1
+      - exec: ecs __ECS_HOST__
       - exec: $local_primary_forward
 
   - tag: local_secondary
     type: sequence
     args:
-      - exec: ecs 139.226.48.1
+      - exec: ecs __ECS_HOST__
       - exec: $local_secondary_forward
 
   - tag: local_overseas_fallback

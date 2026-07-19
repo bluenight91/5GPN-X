@@ -148,11 +148,17 @@ yaml_upstreams() {
     python3 - "$input" "$fallback" "$mode" "$protocol" <<'PY'
 import ipaddress
 import sys
+from urllib.parse import urlsplit
 
 items = list(dict.fromkeys(sys.argv[1].replace(",", " ").split()))
 fallbacks = sys.argv[2].split()
 mode = sys.argv[3]
 protocol = sys.argv[4] if len(sys.argv) > 4 else "udp"
+bootstrap = "223.5.5.5"
+
+
+def urlsplit_host(value):
+    return urlsplit(value).hostname or ""
 if mode == "primary":
     selected = items[:1] if items else fallbacks[:1]
 elif mode == "secondary":
@@ -165,9 +171,14 @@ else:
 if not selected:
     selected = fallbacks
 for item in selected:
-    # If it is already a scheme URL, emit as-is.
+    # If it is already a scheme URL, emit as-is; hostname URLs (e.g. a DoH
+    # endpoint by domain) additionally need a bootstrap resolver.
     if "://" in item:
         print(f"        - addr: {item}")
+        try:
+            ipaddress.ip_address(urlsplit_host(item))
+        except ValueError:
+            print(f"          bootstrap: {bootstrap}")
         continue
     if item.count(":") > 1:
         try:
@@ -193,13 +204,34 @@ render_config() {
     local_dns=$(cat "$BASE_DIR/.local_dns" 2>/dev/null || printf '%s ' "${DEFAULT_LOCAL_DNS[@]}")
     cache_size=$(cat "$BASE_DIR/.cache_size" 2>/dev/null || echo 500000)
     [[ "$cache_size" =~ ^[0-9]+$ ]] || cache_size=500000
+    # ECS for the China chain (default 139.226.48.0/24; overridable via .ecs,
+    # set at install time with PGW_ECS or later with --set-ecs).
+    local ecs ecs_host
+    ecs=$(cat "$BASE_DIR/.ecs" 2>/dev/null || echo "139.226.48.0/24")
+    ecs_host=$(python3 - "$ecs" <<'PY'
+import ipaddress
+import sys
+try:
+    value = sys.argv[1].strip()
+    if "/" in value:
+        net = ipaddress.ip_network(value, strict=False)
+        if net.version != 4 or net.prefixlen > 30:
+            raise ValueError
+        print(net.network_address + 1)
+    else:
+        ipaddress.ip_address(value)
+        print(value)
+except (ValueError, TypeError):
+    print("139.226.48.1")
+PY
+)
     remote_primary=$(yaml_upstreams "$remote_dns" "1.1.1.1 8.8.8.8 9.9.9.9" primary udp)
     remote_secondary=$(yaml_upstreams "$remote_dns" "9.9.9.9 1.0.0.1" secondary udp)
     local_primary=$(yaml_upstreams "$local_dns" "101.226.4.6 218.30.118.6 180.76.76.76 119.29.29.29" all udp)
     local_secondary=$(yaml_upstreams "$local_dns" "101.226.4.6 218.30.118.6 180.76.76.76 119.29.29.29" all tcp)
 
     python3 - "$MOSDNS_TEMPLATE" "$MOSDNS_CONF.tmp" "$server_ip" "$cache_size" \
-        "$remote_primary" "$remote_secondary" "$local_primary" "$local_secondary" <<'PY'
+        "$remote_primary" "$remote_secondary" "$local_primary" "$local_secondary" "$ecs_host" <<'PY'
 import sys
 
 template, output, server_ip, cache_size = sys.argv[1:5]
@@ -212,6 +244,7 @@ replacements = {
     "__REMOTE_SECONDARY_UPSTREAMS__": sys.argv[6],
     "__LOCAL_PRIMARY_UPSTREAMS__": sys.argv[7],
     "__LOCAL_SECONDARY_UPSTREAMS__": sys.argv[8],
+    "__ECS_HOST__": sys.argv[9],
 }
 for marker, value in replacements.items():
     content = content.replace(marker, value)

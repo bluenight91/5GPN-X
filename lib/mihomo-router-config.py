@@ -29,6 +29,7 @@ DNS_LOCAL = _dns_servers("MIHOMO_DNS_LOCAL", "223.5.5.5 119.29.29.29 180.76.76.7
 DNS_REMOTE = _dns_servers("MIHOMO_DNS_REMOTE", "1.1.1.1 8.8.8.8 9.9.9.9")
 DNS_CONFIG = {"enable": True, "ipv6": False,
               "nameserver": DNS_LOCAL + DNS_REMOTE, "fallback": DNS_REMOTE,
+              "default-nameserver": (DNS_LOCAL[:2] or ["223.5.5.5", "119.29.29.29"]),
               "proxy-server-nameserver": DNS_LOCAL + DNS_REMOTE}
 DEFAULT_TARGET = os.environ.get("PGW_DEFAULT_TARGET", "direct")
 INTERVAL = int(os.environ.get("PGW_RULESET_INTERVAL", "86400"))

@@ -20,7 +20,7 @@
 
 ## 主要功能
 
-- DNS + DoT：客户端通过 TCP/UDP 53（仅 `172.22.0.0/16`）或 DoT 853（所有来源）接入；来源 IP 按段区分解析策略，海外 DNS 池 `1.1.1.1`、`8.8.8.8`、`9.9.9.9`，ChinaList 查询携带 ECS `139.226.48.0/24`，全局不返回 AAAA。
+- DNS + DoT：客户端通过 TCP/UDP 53（仅 `172.22.0.0/16`）或 DoT 853（所有来源）接入；来源 IP 按段区分解析策略，海外 DNS 池 `1.1.1.1`、`8.8.8.8`、`9.9.9.9`，ChinaList 查询携带 ECS（默认 `139.226.48.0/24`，可用 `--set-ecs` 修改），全局不返回 AAAA。
 - iOS WhatsApp Patch：wa-shim 监听 TCP 443，仅分流客户端网段内 `ED`/`WA` 开头的无 SNI Noise 连接，其余 fail-open 交给 sniproxy。
 - 智能分流：mihomo `smart` 出口按域名 / IP / GEOSITE / GEOIP / RULE-SET 分流，远程规则集自动更新。
 - Telegram Bot：状态、出口管理、分流规则、DNS/DoT 设置、日志、iOS 二维码。
@@ -74,6 +74,7 @@ sudo ./install.sh --update-rules        # 更新 GFWList/ChinaList 并重载 mos
 sudo ./install.sh --renew-cert          # 续期证书
 sudo ./install.sh --set-dot-domain dns.example.com
 sudo ./install.sh --set-dns "1.1.1.1 8.8.8.8" "223.5.5.5 119.29.29.29"
+sudo ./install.sh --set-ecs 112.96.54.0/24   # 设置国内链查询携带的 ECS（默认 139.226.48.0/24）
 sudo ./install.sh -ios                  # 重新生成 iOS 描述文件和二维码
 sudo ./install.sh --list-exits          # 列出出口
 sudo ./install.sh --check-exits         # 检测出口连通性
@@ -220,6 +221,7 @@ DOMAIN="dns.example.com"        # DoT 域名（必需）
 EMAIL="admin@example.com"       # ACME 邮箱
 REMOTE_DNS="1.1.1.1,8.8.8.8,9.9.9.9"     # 海外 DNS 池
 LOCAL_DNS="101.226.4.6,218.30.118.6,180.76.76.76,119.29.29.29"  # 国内 DNS 竞速池（4路 UDP 并发）
+PGW_ECS="139.226.48.0/24"         # 国内链查询携带的 ECS（可用 --set-ecs 随时改）
 LOWMEM=1                        # 强制低内存模式（≤1GB 自动启用）
 MIHOMO_VERSION="1.19.28"        # 可覆盖锁定版，建议保持默认
 TG_BOT_TOKEN="123456:ABC"
@@ -229,6 +231,18 @@ PGW_TUNING=essential            # essential(默认)/performance 内核调优档�
 ```
 
 旧兼容变量 `DNS_UPSTREAMS`、`OVERSEAS_DNS`、`PRIVATE_OVERSEAS_DNS`、`SNIPROXY_DNS` 等同于 `REMOTE_DNS`。也支持 `https://`、`tls://`、`udp://`、`tcp://` 协议前缀。
+
+`https://` / `tls://` 上游**支持域名**（`udp://`、`tcp://` 仍须 IP 字面量），域名由内置
+bootstrap 解析器解析。因此可以把上游指向自己的 DoH 服务器，例如自建的 AdGuard Home：
+
+```bash
+# 海外与国内池都换成自建 AGH 的 DoH（国内链仍会携带 ECS，AGH 的上游按 ECS 返回最优结果）
+sudo ./install.sh --set-dns "https://agh-tokyo.example.com/dns-query https://agh-hk.example.com/dns-query" \
+                          "https://agh-tokyo.example.com/dns-query"
+sudo ./install.sh --set-ecs 112.96.54.0/24
+```
+
+注意：DoH 证书需为公网可信证书；建议在 AGH 侧按来源 IP 限流/白名单，避免开放给全网。
 
 ### 防火墙与内核调优
 
@@ -263,7 +277,7 @@ sudo bash /opt/5gpn/scripts/smoke-check.sh
 
 **为什么内网客户端不返回 IPv6？** 透明代理路径按 IPv4 设计；只有 `172.22.0.0/16` 来源的 AAAA 返回 NOERROR/NODATA。Wi-Fi、公网及其他来源正常返回 IPv6。
 
-**为什么国内网站直连？** ChinaList 域名由 mosdns 转发到 4 路国内 DNS 竞速代理（携带 ECS `139.226.48.0/24`），获得更适合大陆访问的结果。UDP 150ms 无响应后自动切 TCP，都不通才走海外兜底（含 `22.22.22.22`），避免单一国内 DNS 故障卡住页面。
+**为什么国内网站直连？** ChinaList 域名由 mosdns 转发到 4 路国内 DNS 竞速代理（携带 ECS，默认 `139.226.48.0/24`，可用 `--set-ecs` 修改），获得更适合大陆访问的结果。UDP 150ms 无响应后自动切 TCP，都不通才走海外兜底（含 `22.22.22.22`），避免单一国内 DNS 故障卡住页面。
 
 **如何更新 DNS 规则？**
 

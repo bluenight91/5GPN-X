@@ -149,6 +149,7 @@ normalize_dns_upstreams() {
         if [[ "$item" == *://* ]]; then
             python3 - "$item" <<'PYEOF' || { err "Invalid DNS upstream URL: $item"; exit 1; }
 import ipaddress
+import re
 import sys
 from urllib.parse import urlsplit
 
@@ -161,7 +162,11 @@ if not parsed.hostname or parsed.username or parsed.password or parsed.query or 
 try:
     ipaddress.ip_address(parsed.hostname)
 except ValueError:
-    raise SystemExit(1)
+    # DoH/DoT endpoints may use a domain (bootstrap resolver handles it);
+    # plain udp/tcp upstreams must stay IP literals.
+    if parsed.scheme not in {"https", "tls"} or \
+            not re.fullmatch(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*", parsed.hostname):
+        raise SystemExit(1)
 if parsed.port is not None and not 1 <= parsed.port <= 65535:
     raise SystemExit(1)
 if parsed.scheme == "https" and parsed.path != "/dns-query":
@@ -333,7 +338,11 @@ Options:
   --set-dns <remote-dns> [local-dns]
                  Set primary/fallback DNS upstreams and reload mosdns/sniproxy.
                  remote is used for international/proxy-side resolution; local
-                 is used for ChinaList direct resolution.
+                 is used for ChinaList direct resolution. https/tls upstreams
+                 may use domains (e.g. your own DoH server).
+  --set-ecs <a.b.c.d[/24]>
+                 Set the ECS subnet carried in China-chain DNS queries
+                 (default 139.226.48.0/24; takes effect immediately).
   --list-exits   List configured egress exits and which one is active
   --check-exits  Test reachability of each exit's upstream node (UP/DOWN)
   --add-exit <name> [wg.conf | proxy-uri]
@@ -1108,6 +1117,7 @@ install_mosdns() {
     echo "$REMOTE_DNS" > /etc/mosdns/.overseas_private_dns
     echo "$REMOTE_DNS" > /etc/mosdns/.overseas_public_dns
     echo "$REMOTE_DNS" > /etc/mosdns/.sniproxy_dns
+    echo "${PGW_ECS:-139.226.48.0/24}" > /etc/mosdns/.ecs
     echo "${PACKET_CACHE_SIZE:-500000}" > /etc/mosdns/.cache_size
     touch /etc/mosdns/gfwlist.txt /etc/mosdns/chinalist.txt /etc/mosdns/gfwlist-extra-local.txt
     chown -R mosdns:mosdns /etc/mosdns
@@ -2966,6 +2976,25 @@ force_set_dot_domain() {
     warn "DoT domain forcibly updated without issuing a new certificate. Run --renew-cert after fixing certbot/port 80 issues."
     ok "DoT domain forcibly updated: $DOMAIN"
 }
+set_ecs() {
+    local ecs="${1:-}"
+    [[ -n "$ecs" ]] || { err "Usage: $0 --set-ecs <a.b.c.d[/24]>"; exit 1; }
+    python3 - "$ecs" <<'PY' || { err "无效的 ECS（需为 IPv4 地址或 IPv4/前缀，如 112.96.54.0/24）"; exit 1; }
+import ipaddress
+import sys
+value = sys.argv[1]
+if "/" in value:
+    net = ipaddress.ip_network(value, strict=False)
+    if net.version != 4 or net.prefixlen > 30:
+        raise SystemExit(1)
+else:
+    ipaddress.ip_address(value)
+PY
+    mkdir -p /etc/mosdns
+    echo "$ecs" > /etc/mosdns/.ecs
+    /usr/local/bin/update-mosdns-rules.sh >/dev/null 2>&1 || warn "配置刷新失败，请手动运行 $0 --update-rules"
+    ok "ECS 已设置为 $ecs 并生效"
+}
 set_custom_dns() {
     local remote_dns local_dns backup_dir sniproxy_backup=""
     [[ -n "${1:-}" ]] || { err "Usage: $0 --set-dns <remote-dns> [local-dns]"; exit 1; }
@@ -3154,6 +3183,10 @@ case "${1:-}" in
     --set-dns)
         check_root
         set_custom_dns "${2:-}" "${3:-}" "${4:-}"
+        ;;
+    --set-ecs)
+        check_root
+        set_ecs "${2:-}"
         ;;
     --setup-whatsapp)
         check_root
