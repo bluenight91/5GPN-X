@@ -249,6 +249,16 @@ PGW_TUNING=essential            # essential(默认)/performance 内核调优档�
 `rp_filter`、可用时启用 BBR）；`PGW_TUNING=performance` 使用旧版激进吞吐调优
 （大连接表、短超时等）。旧版本升级时沿用 performance，不会悄悄改变内核行为。
 
+## 冒烟检查（每次安装/更新后）
+
+```bash
+sudo bash /opt/5gpn/scripts/smoke-check.sh
+```
+
+只读、约一分钟：服务状态、端口监听、DNS/DoT 应答、TUN 链路（含 `--interface pgw-smart`
+实际出网探测）、fwmark 规则健康度、API 健康、证书有效期，结尾附人工核对步骤。
+有失败项时按提示逐项排查（参考常见问题）。
+
 ## 常见问题
 
 **为什么内网客户端不返回 IPv6？** 透明代理路径按 IPv4 设计；只有 `172.22.0.0/16` 来源的 AAAA 返回 NOERROR/NODATA。Wi-Fi、公网及其他来源正常返回 IPv6。
