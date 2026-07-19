@@ -2761,6 +2761,9 @@ do_update() {
         systemctl restart 5gpn-tgbot 2>/dev/null || true
     fi
     [[ -f "${RULES_FILE}" ]] && { ( regen_smart ) || warn "smart 配置重建失败；可稍后手动 --set-rules"; }
+    # A crash loop (e.g. bad config earlier) trips systemd's start limit; clear
+    # it or restart is refused even with the config fixed.
+    systemctl reset-failed mosdns sniproxy wa-shim quic-proxy 2>/dev/null || true
     systemctl restart mosdns sniproxy wa-shim quic-proxy 2>/dev/null || true
     ok "更新完成"
 }

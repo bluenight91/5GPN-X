@@ -87,5 +87,9 @@ if [[ "${update_body}" != *'get_public_ip'* || "${update_body}" != *'DOMAIN="${D
     echo "do_update must restore PUBLIC_IP/DOMAIN for generate_ios_profile." >&2
     exit 1
 fi
+if [[ "${update_body}" != *'systemctl reset-failed'* ]]; then
+    echo "do_update must reset-failed services before restart (start-limit-hit after crash loops)." >&2
+    exit 1
+fi
 
 echo "install entrypoint policy OK"
