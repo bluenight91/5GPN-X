@@ -422,7 +422,7 @@ def parse_check(out):
     res = []
     for line in out.splitlines():
         p = line.split()
-        if len(p) >= 2 and p[-1] in ("UP", "DOWN", "n/a"):
+        if len(p) >= 2 and p[-1] in ("UP", "DOWN", "n/a", "udp"):
             res.append({"name": p[0], "server": p[1] if len(p) >= 3 else "", "state": p[-1]})
     return res
 

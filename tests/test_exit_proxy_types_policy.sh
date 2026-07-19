@@ -132,4 +132,8 @@ for scheme in vmess trojan vless hysteria2 tuic anytls socks http; do
 done
 [[ "${install_body}" == *'[[ $current_removed -eq 1 ]]'* ]] || fail "migration must preserve an active WireGuard exit"
 
+# --- check_exits must not TCP-probe UDP transports (hysteria2/tuic) -----------
+[[ "${install_body}" == *'"$typ" == "hysteria2" || "$typ" == "tuic"'* ]] || fail "check_exits must skip TCP probe for hysteria2/tuic"
+[[ "${install_body}" == *'state="udp"'* ]] || fail "UDP exits must report state udp instead of DOWN"
+
 echo "exit proxy types policy OK"

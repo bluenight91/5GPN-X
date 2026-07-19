@@ -1422,7 +1422,7 @@ def _targets():
 
 
 def _format_check_exit_row(name, endpoint, state):
-    mapping = {"UP": "✅", "DOWN": "❌", "N/A": "➖", "N/A?": "➖", "n/a": "➖"}
+    mapping = {"UP": "✅", "DOWN": "❌", "N/A": "➖", "N/A?": "➖", "n/a": "➖", "UDP": "🔌"}
     mark = mapping.get(state.upper() if state else "", "➖")
     detail = "<code>%s</code>" % html.escape(endpoint) if endpoint and endpoint != "-" else "<i>n/a</i>"
     return "%s <b>%s</b>  %s" % (mark, html.escape(name), detail)

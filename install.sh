@@ -1563,13 +1563,16 @@ preflight_exit() {
     fi
 }
 check_exits() {
-    local n hp host port state
+    local n hp host port state typ
     while IFS= read -r n; do
         [[ -z "$n" ]] && continue
-        [[ "$(exit_type "$n")" == "router" ]] && continue   # router targets listed individually
+        typ="$(exit_type "$n")"
+        [[ "$typ" == "router" ]] && continue   # router targets listed individually
         hp="$(exit_server "$n")"; host="${hp%% *}"; port="${hp##* }"
         if [[ -z "$host" ]]; then
             state="n/a"
+        elif [[ "$typ" == "hysteria2" || "$typ" == "tuic" ]]; then
+            state="udp"    # UDP transport: TCP probe is not applicable
         elif exit_reachable "$host" "$port"; then
             state="UP"
         else
