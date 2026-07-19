@@ -2474,6 +2474,10 @@ setup_api() {
     local port="${API_PORT:-${API_PORT_DEFAULT}}"
     port="$(printf '%s' "$port" | tr -dc '0-9')"; [[ -n "$port" ]] || port="${API_PORT_DEFAULT}"
 
+    # Reuse the existing token on re-runs (upgrades must not rotate it).
+    if [[ -z "$token" && -f "${CONF_DIR}/api.env" ]]; then
+        token="$(sed -n 's/^API_TOKEN=//p' "${CONF_DIR}/api.env" | head -n1)"
+    fi
     if [[ -z "$token" ]]; then
         token="$(openssl rand -hex 24 2>/dev/null || head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
     fi
