@@ -35,4 +35,9 @@ done
 # --- auth model unchanged ------------------------------------------------------
 [[ "${ui}" == *'Bearer'* ]] || fail "panel must keep bearer-token auth"
 
+# --- mobile tabbar: auto-hide on scroll down + horizontal overflow scroll -------
+[[ "${ui}" == *'.tabbar.hide'* ]] || fail "tabbar must support auto-hide"
+[[ "${ui}" == *'passive:true'* ]] || fail "tabbar scroll listener must be passive for iOS"
+[[ "${ui}" == *'overflow-x:auto'* ]] || fail "tabbar must allow horizontal overflow scrolling"
+
 echo "test_webui_policy: OK"

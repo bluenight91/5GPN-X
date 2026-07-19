@@ -163,8 +163,11 @@
     .sidebar { display:none; }
     .tabbar { display:flex; position:fixed; left:0; right:0; bottom:0; z-index:50;
       background:var(--card); border-top:1px solid var(--border);
-      padding:6px 2px calc(6px + env(safe-area-inset-bottom)); }
-    .tabbar a { flex:1; text-align:center; color:var(--sub); font-size:10px; padding:4px 0;
+      padding:6px 2px calc(6px + env(safe-area-inset-bottom));
+      overflow-x:auto; scrollbar-width:none; transition:transform .25s ease; }
+    .tabbar::-webkit-scrollbar { display:none; }
+    .tabbar.hide { transform:translateY(100%); }
+    .tabbar a { flex:1 0 auto; min-width:64px; text-align:center; color:var(--sub); font-size:10px; padding:4px 0;
       min-height:44px; cursor:pointer; user-select:none; }
     .tabbar a .ic { display:block; font-size:18px; line-height:1.7; }
     .tabbar a.on { color:var(--accent); }
@@ -456,6 +459,19 @@ function setTheme(t){ localStorage.setItem(THEME_KEY,t); applyTheme(t); syncThem
 function syncThemeSel(){ const t=localStorage.getItem(THEME_KEY)||"system";
   ["themeSel","themeSelM","themeSelS"].forEach(id=>{ const el=$(id); if(el) el.value=t; }); }
 function cssVar(n){ return getComputedStyle(document.body).getPropertyValue(n).trim() || "#888"; }
+
+/* 移动端底栏自动隐藏：向下滚动阅读时收起，向上回滚时出现（iOS 友好 passive 监听） */
+(function(){
+  const m=document.querySelector("main"), bar=document.querySelector(".tabbar");
+  if(!m||!bar) return;
+  let last=0;
+  m.addEventListener("scroll",()=>{
+    const y=m.scrollTop;
+    if(y>60 && y>last+4) bar.classList.add("hide");
+    else if(y<last-4) bar.classList.remove("hide");
+    last=y;
+  },{passive:true});
+})();
 
 /* ===================== Task 6：壳导航（六 section + 移动端「更多」） ===================== */
 const SEC_TITLE = { dashboard:"首页", exits:"出口", rules:"规则", monitor:"监控", ai:"AI 助手", settings:"设置" };
