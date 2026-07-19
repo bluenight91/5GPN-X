@@ -51,10 +51,37 @@ fi
 # ---------- 3. DNS 应答 ----------
 echo "----- DNS 应答 -----"
 if command -v dig >/dev/null 2>&1; then
-    a_answer="$(dig +time=3 +tries=1 +short @127.0.0.1 -p 53 example.com A 2>/dev/null | head -1)"
-    [[ -n "$a_answer" ]] && ok "mosdns UDP/53 应答正常 ($a_answer)" || bad "mosdns UDP/53 无应答"
-    dot_answer="$(dig +time=3 +tries=1 +tls +short @"$(cat "${CONF_DIR}/.domain" 2>/dev/null || echo 127.0.0.1)" -p 853 example.com A 2>/dev/null | head -1)"
-    [[ -n "$dot_answer" ]] && ok "DoT 853 应答正常 ($dot_answer)" || note "DoT 853 无应答（域名/证书问题？）"
+    # 任何带 status 的回答都证明 mosdns 活着（REFUSED 多半是上游/客户端策略，不是 mosdns 死了）
+    dns_out="$(dig +time=3 +tries=1 @127.0.0.1 -p 53 example.com A 2>&1 || true)"
+    if [[ "$dns_out" == *"status:"* ]]; then
+        st="$(sed -n 's/.*status: \([A-Za-z]*\).*/\1/p' <<< "$dns_out" | head -1)"
+        if [[ "$st" == "REFUSED" ]]; then
+            note "mosdns 应答 REFUSED：上游拒绝。检查上游（AGH）客户端访问控制/限流，或 --set-dns 的上游是否可达"
+        else
+            ok "mosdns UDP/53 应答正常 (status: $st)"
+        fi
+    else
+        bad "mosdns UDP/53 无应答（超时）"
+    fi
+    # DoT：只看 TLS 握手与证书有效性（不依赖 DNS 解析结果）
+    domain="$(cat "${CONF_DIR}/.domain" 2>/dev/null || true)"
+    if [[ -n "$domain" ]] && command -v openssl >/dev/null 2>&1; then
+        tls_out="$(echo | openssl s_client -connect 127.0.0.1:853 -servername "$domain" 2>/dev/null || true)"
+        [[ "$tls_out" == *"Verify return code: 0 (ok)"* ]] && ok "DoT 853 TLS 握手与证书正常" || bad "DoT 853 TLS 握手/证书异常"
+    fi
+    # 若海外上游是域名 DoH（如自建 AGH），直连测一次 wire-format 查询
+    doh_url="$(grep -m1 -o 'https://[^ ]*' /etc/mosdns/.remote_dns 2>/dev/null || true)"
+    if [[ -n "$doh_url" ]]; then
+        code="$(printf '\x00\x00\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x07example\x03com\x00\x00\x01\x00\x01' \
+            | curl -sm 8 -X POST "$doh_url" -H "content-type: application/dns-message" -H "accept: application/dns-message" \
+                  --data-binary @- -o /tmp/.doh-smoke.bin -w '%{http_code}' 2>/dev/null || echo 000)"
+        if [[ "$code" == "200" ]]; then
+            ok "DoH 上游 ($doh_url) wire-format 查询正常"
+        else
+            note "DoH 上游 ($doh_url) 返回 HTTP $code（认证/路径/客户端策略问题？）"
+        fi
+        rm -f /tmp/.doh-smoke.bin
+    fi
 else
     note "无 dig 命令，跳过 DNS 应答检查"
 fi
