@@ -15,6 +15,21 @@ WG_DIR = os.environ.get("WG_DIR", "/etc/wireguard")
 CACHE_DIR = os.environ.get("PGW_RULESET_CACHE", "/etc/5gpn/rulesets")
 POLICY_MAP_FILE = os.environ.get("PGW_POLICY_MAP", "/etc/5gpn/policy-map.conf")
 SECRET_FILE = os.environ.get("MIHOMO_API_SECRET_FILE", "/etc/5gpn/mihomo-api-secret")
+
+
+def _dns_servers(env_name, default):
+    raw = os.environ.get(env_name, default).replace(",", " ")
+    return [x for x in raw.split() if x]
+
+
+# mihomo's internal DNS client is strict about refused/ip-version answers and
+# breaks against the gateway's own AAAA-rejecting resolver path; give it real
+# upstreams instead of relying on the system resolver.
+DNS_LOCAL = _dns_servers("MIHOMO_DNS_LOCAL", "223.5.5.5 119.29.29.29 180.76.76.76")
+DNS_REMOTE = _dns_servers("MIHOMO_DNS_REMOTE", "1.1.1.1 8.8.8.8 9.9.9.9")
+DNS_CONFIG = {"enable": True, "ipv6": False,
+              "nameserver": DNS_LOCAL + DNS_REMOTE, "fallback": DNS_REMOTE,
+              "proxy-server-nameserver": DNS_LOCAL + DNS_REMOTE}
 DEFAULT_TARGET = os.environ.get("PGW_DEFAULT_TARGET", "direct")
 INTERVAL = int(os.environ.get("PGW_RULESET_INTERVAL", "86400"))
 GEOSITE_MRS = "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/%s.mrs"
@@ -259,7 +274,8 @@ def main():
               "sniffer": {"enable": True, "force-dns-mapping": True, "parse-pure-ip": True,
                           "override-destination": True,
                           "sniff": {"TLS": {"ports": [443, 8443]}, "HTTP": {"ports": [80, "8080-8880"]}}},
-              "proxies": proxies, "rule-providers": providers, "rules": rules}
+              "proxies": proxies, "rule-providers": providers, "rules": rules,
+              "dns": DNS_CONFIG}
     secret = ""
     try:
         with open(SECRET_FILE, encoding="utf-8") as fh:

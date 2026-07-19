@@ -1623,8 +1623,10 @@ if command -v nft >/dev/null 2>&1 && [[ -f /etc/5gpn/pgw-exit.nft ]]; then
 fi
 
 # Marked traffic consults the dedicated table; an empty table falls through to
-# the main table, i.e. direct egress ("local").
-ip rule add fwmark "${MARK}" table "${TABLE}" 2>/dev/null || true
+# the main table, i.e. direct egress ("local"). Dedupe first: repeated applies
+# must not stack duplicate fwmark rules.
+while ip rule del fwmark "${MARK}" table "${TABLE}" 2>/dev/null; do :; done
+ip rule add fwmark "${MARK}" table "${TABLE}"
 
 exit_iface() {
     local name="$1"
@@ -1783,6 +1785,7 @@ PYNAME
         rm -f "$tmp"
         [[ -f "${MIHOMO_CFG_GEN}" ]] || { err "Config generator missing: ${MIHOMO_CFG_GEN}"; exit 1; }
         ensure_mihomo || exit 1
+        mihomo_dns_env
         local yaml gen_err
         yaml="$(exit_mihomo_conf "$name")"
         if ! gen_err="$(PGW_USER="$px_user" PGW_PASS="$px_pass" PGW_REMOTE_DNS="$px_rdns" python3 "${MIHOMO_CFG_GEN}" "$name" "$uri" 2>&1 >"${yaml}.tmp")"; then
@@ -2035,7 +2038,8 @@ set_exit() {
     [[ -z "$name" ]] && { err "Usage: $0 --set-exit <name|local>"; exit 1; }
     ensure_proxy_user
     [[ -x /usr/local/bin/5gpn-apply-exit.sh ]] || setup_exit_switching >/dev/null
-    ip rule add fwmark "${EXIT_MARK}" table "${EXIT_TABLE}" 2>/dev/null || true
+    while ip rule del fwmark "${EXIT_MARK}" table "${EXIT_TABLE}" 2>/dev/null; do :; done
+    ip rule add fwmark "${EXIT_MARK}" table "${EXIT_TABLE}"
     local prev="local"
     [[ -f "${CONF_DIR}/current-exit" ]] && prev="$(cat "${CONF_DIR}/current-exit" 2>/dev/null || echo local)"
     if [[ "$name" == "local" ]]; then
@@ -2074,6 +2078,11 @@ set_exit() {
     info "Verify the public exit IP with:"
     info "  curl --interface ${iface} -4 -s https://api.ipify.org; echo"
 }
+mihomo_dns_env() {
+    MIHOMO_DNS_LOCAL="$(cat /etc/mosdns/.local_dns 2>/dev/null || cat "${CONF_DIR}/.local_dns" 2>/dev/null || echo "${DEFAULT_LOCAL_DNS[*]}")"
+    MIHOMO_DNS_REMOTE="$(cat /etc/mosdns/.remote_dns 2>/dev/null || cat "${CONF_DIR}/.remote_dns" 2>/dev/null || echo "${DEFAULT_REMOTE_DNS[*]}")"
+    export MIHOMO_DNS_LOCAL MIHOMO_DNS_REMOTE
+}
 regen_smart() {
     [[ -f "${RULES_FILE}" ]] || { err "No rules yet. Use --set-rules or --import-rules first."; exit 1; }
     [[ -f "${MIHOMO_ROUTER_GEN}" ]] || { err "Router generator missing: ${MIHOMO_ROUTER_GEN}"; exit 1; }
@@ -2082,6 +2091,7 @@ regen_smart() {
     [[ -x /usr/local/bin/5gpn-apply-exit.sh ]] || setup_exit_switching >/dev/null
     ensure_mihomo || exit 1
     install_mihomo_unit
+    mihomo_dns_env
     info "Building smart mihomo config and rule providers..."
     local eff; eff="$(mktemp)"
     [[ -f "${RULES_DEFAULT}" ]] && cat "${RULES_DEFAULT}" >> "$eff"
@@ -2713,6 +2723,14 @@ do_update() {
     apply_lowmem_go_limits
     setup_schedules
     install -m 0755 "${SCRIPT_PATH}" "${BASE_DIR}/bin/5gpn-ctl"
+    # Rebuild URI exit configs from the stored links (generator may have changed).
+    local f n
+    shopt -s nullglob
+    for f in "${EXITS_DIR}"/*.uri; do
+        n="$(basename "$f" .uri)"
+        edit_exit "$n" < "$f" >/dev/null 2>&1 || warn "重建出口 $n 失败，可手动 --edit-exit $n"
+    done
+    shopt -u nullglob
     [[ -f "${CONF_DIR}/api.env" ]] && setup_api
     if [[ -f "${CONF_DIR}/tgbot.env" ]]; then
         install -m 0755 "${LIB_DIR}/tgbot.py" "${BASE_DIR}/bin/tgbot.py"

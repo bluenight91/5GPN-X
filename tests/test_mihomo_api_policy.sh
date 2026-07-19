@@ -3,6 +3,7 @@
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 gen="$(cat "${root}/lib/mihomo-router-config.py")"
+exitgen="$(cat "${root}/lib/mihomo-exit-config.py")"
 install_body="$(cat "${root}/install.sh")"
 fail() { echo "$1" >&2; exit 1; }
 
@@ -24,5 +25,17 @@ fail() { echo "$1" >&2; exit 1; }
 [[ "${install_body}" == *'${BASE_DIR}/webui/mihomo'* ]] || fail "metacubexd must unpack to \${BASE_DIR}/webui/mihomo"
 [[ "${install_body}" == *'( regen_smart )'* ]] || fail "setup_api must rebuild the smart config in a subshell"
 [[ "${install_body}" == *'install -m 0755 "${LIB_DIR}/mihomo-router-config.py" "${MIHOMO_ROUTER_GEN}"'* ]] || fail "setup_api must refresh the installed router generator before regen"
+
+# --- mihomo configs carry an explicit dns section (system resolver is unreliable here)
+for g in "${gen}" "${exitgen}"; do
+  [[ "$g" == *'"dns": DNS_CONFIG'* ]] || fail "mihomo configs must include the dns section"
+  [[ "$g" == *'proxy-server-nameserver'* ]] || fail "dns section must set proxy-server-nameserver"
+  [[ "$g" == *'MIHOMO_DNS_LOCAL'* && "$g" == *'MIHOMO_DNS_REMOTE'* ]] || fail "dns servers must come from MIHOMO_DNS_* env"
+done
+[[ "${install_body}" == *'mihomo_dns_env() {'* ]] || fail "install.sh must define mihomo_dns_env()"
+
+# --- fwmark ip rules must be deduplicated, and --update rebuilds URI exits -----
+[[ "${install_body}" == *'while ip rule del fwmark "${EXIT_MARK}" table "${EXIT_TABLE}"'* ]] || fail "set_exit must dedupe fwmark ip rules"
+[[ "${install_body}" == *'edit_exit "$n" < "$f"'* ]] || fail "do_update must rebuild URI exits from stored links"
 
 echo "test_mihomo_api_policy: OK"

@@ -18,6 +18,21 @@ def die(message):
     raise SystemExit(1)
 
 
+def _dns_servers(env_name, default):
+    raw = os.environ.get(env_name, default).replace(",", " ")
+    return [x for x in raw.split() if x]
+
+
+# mihomo's internal DNS client is strict about refused/ip-version answers and
+# breaks against the gateway's own AAAA-rejecting resolver path; give it real
+# upstreams instead of relying on the system resolver.
+DNS_LOCAL = _dns_servers("MIHOMO_DNS_LOCAL", "223.5.5.5 119.29.29.29 180.76.76.76")
+DNS_REMOTE = _dns_servers("MIHOMO_DNS_REMOTE", "1.1.1.1 8.8.8.8 9.9.9.9")
+DNS_CONFIG = {"enable": True, "ipv6": False,
+              "nameserver": DNS_LOCAL + DNS_REMOTE, "fallback": DNS_REMOTE,
+              "proxy-server-nameserver": DNS_LOCAL + DNS_REMOTE}
+
+
 def b64decode_any(value):
     value = value.strip()
     pad = "=" * (-len(value) % 4)
@@ -279,7 +294,7 @@ def main():
         "tun": {"enable": True, "stack": os.environ.get("MIHOMO_STACK", "gvisor"),
                 "device": interface_name(name), "auto-route": False, "auto-redirect": False,
                 "strict-route": False, "mtu": mtu},
-        "proxies": [proxy], "rules": ["MATCH,out"],
+        "proxies": [proxy], "rules": ["MATCH,out"], "dns": DNS_CONFIG,
     }
     if remote_dns:
         config["sniffer"] = {"enable": True, "force-dns-mapping": True, "parse-pure-ip": True,
