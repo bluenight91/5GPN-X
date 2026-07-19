@@ -12,6 +12,7 @@ fail() { echo "$1" >&2; exit 1; }
 # --- DoH by domain: validation allows https/tls hostnames ----------------------
 [[ "${install_body}" == *'parsed.scheme not in {"https", "tls"}'* ]] || fail "normalize must special-case https/tls"
 [[ "${install_body}" == *'plain udp/tcp upstreams must stay IP literals'* ]] || fail "normalize must keep udp/tcp IP-only"
+[[ "${install_body}" != *'parsed.path != "/dns-query"'* ]] || fail "https DoH must allow camouflaged paths, not just /dns-query"
 
 # --- bootstrap resolver for hostname upstreams ----------------------------------
 [[ "${rules}" == *'bootstrap: {bootstrap}'* ]] || fail "yaml_upstreams must emit bootstrap for hostname URLs"

@@ -157,7 +157,9 @@ value = sys.argv[1]
 parsed = urlsplit(value)
 if parsed.scheme not in {"https", "tls", "udp", "tcp"}:
     raise SystemExit(1)
-if not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+if not parsed.hostname or parsed.username or parsed.password or parsed.fragment:
+    raise SystemExit(1)
+if parsed.query and parsed.scheme != "https":
     raise SystemExit(1)
 try:
     ipaddress.ip_address(parsed.hostname)
@@ -169,7 +171,9 @@ except ValueError:
         raise SystemExit(1)
 if parsed.port is not None and not 1 <= parsed.port <= 65535:
     raise SystemExit(1)
-if parsed.scheme == "https" and parsed.path != "/dns-query":
+# DoH is just an HTTP endpoint: any path is fine (camouflaged DoH servers
+# commonly hide behind custom paths like /api/<id> instead of /dns-query).
+if parsed.scheme == "https" and parsed.path and not parsed.path.startswith("/"):
     raise SystemExit(1)
 if parsed.scheme != "https" and parsed.path not in {"", "/"}:
     raise SystemExit(1)
