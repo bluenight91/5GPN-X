@@ -419,26 +419,15 @@
     </section>
   </main>
 
-  <!-- 移动端底部标签栏 -->
+  <!-- 移动端底部标签栏（可左右滑动） -->
   <nav class="tabbar">
     <a data-section="dashboard" class="on"><span class="ic">📊</span>首页</a>
     <a data-section="exits"><span class="ic">🌐</span>出口</a>
     <a data-section="rules"><span class="ic">🧭</span>规则</a>
     <a data-section="monitor"><span class="ic">📈</span>监控</a>
-    <a data-section="more"><span class="ic">⋯</span>更多</a>
+    <a data-section="ai"><span class="ic">🤖</span>AI 助手</a>
+    <a data-section="settings"><span class="ic">⚙️</span>设置</a>
   </nav>
-  <div id="moreSheet" class="moresheet hide">
-    <a data-section="ai"><span class="ic">🤖</span> AI 助手</a>
-    <a data-section="settings"><span class="ic">⚙️</span> 设置</a>
-    <div class="row" style="padding:8px 12px 4px">
-      <span class="muted small grow">主题</span>
-      <select id="themeSelM" onchange="setTheme(this.value)">
-        <option value="system">跟随系统</option>
-        <option value="dark">深色</option>
-        <option value="light">浅色</option>
-      </select>
-    </div>
-  </div>
 </div>
 <div id="toasts"></div>
 
@@ -473,18 +462,16 @@ function cssVar(n){ return getComputedStyle(document.body).getPropertyValue(n).t
   },{passive:true});
 })();
 
-/* ===================== Task 6：壳导航（六 section + 移动端「更多」） ===================== */
+/* ===================== Task 6：壳导航（六 section + 移动端可滑动底栏） ===================== */
 const SEC_TITLE = { dashboard:"首页", exits:"出口", rules:"规则", monitor:"监控", ai:"AI 助手", settings:"设置" };
 function showSection(sec){
   if(!SEC_TITLE[sec]) sec="dashboard";
   document.querySelectorAll('main section[id^="sec-"]').forEach(s=>{ s.hidden = (s.id !== "sec-"+sec); });
   document.querySelectorAll('[data-section]').forEach(n=>{
-    const ds=n.dataset.section;
-    n.classList.toggle('on', ds===sec || (ds==="more" && (sec==="ai"||sec==="settings")));
+    n.classList.toggle('on', n.dataset.section===sec);
   });
   $("secTitle").textContent = SEC_TITLE[sec];
   localStorage.setItem("pgw_sec", sec);
-  closeMore();
   onEnter(sec);
 }
 /* 进入各 section 时按需加载数据（monitor 的 iframe 懒加载在 Part C 接线） */
@@ -498,12 +485,8 @@ function onEnter(sec){
   else if(sec==="settings"){ fillSettings(); }
 }
 document.querySelectorAll('[data-section]').forEach(el=>el.addEventListener('click',()=>{
-  const s=el.dataset.section;
-  if(s==="more"){ toggleMore(); return; }
-  showSection(s);
+  showSection(el.dataset.section);
 }));
-function toggleMore(){ const m=$("moreSheet"); if(m) m.classList.toggle("hide"); }
-function closeMore(){ const m=$("moreSheet"); if(m) m.classList.add("hide"); }
 
 /* ---- mihomo 概览（/api/mihomo/overview）：dashboard 紧凑卡 + monitor 展开卡 ---- */
 function mihomoPills(d){
