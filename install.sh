@@ -67,21 +67,17 @@ info()  { echo -e "${BLUE}[INFO]${NC} $*"; }
 ok()    { echo -e "${GREEN}[OK]${NC}   $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 err()   { echo -e "${RED}[ERR]${NC}  $*" >&2; }
-# Turn ${BASE_DIR} into a git checkout of this project (idempotent), so the
-# gateway can be managed and upgraded in place:
-#   cd /opt/5gpn && sudo git pull && sudo ./install.sh <command>
-# Runtime dirs (bin/ etc/ src/ www/ webui/mihomo) stay untracked and untouched.
+# Idempotently make ${BASE_DIR} a git checkout for in-place management/upgrades.
 ensure_repo_checkout() {
     [[ -d "${BASE_DIR}/.git" ]] && return 0
     command -v git >/dev/null 2>&1 || return 0
     mkdir -p "${BASE_DIR}"
-    (
-        cd "${BASE_DIR}"
-        git init -q -b main 2>/dev/null || git init -q
-        git remote add origin "${REPO_URL}" 2>/dev/null || git remote set-url origin "${REPO_URL}"
-        git fetch -q --depth 1 origin main
-        git reset --hard -q origin/main
-        git branch --set-upstream-to=origin/main main 2>/dev/null || true
+    ( cd "${BASE_DIR}"
+      git init -q -b main 2>/dev/null || git init -q
+      git remote add origin "${REPO_URL}" 2>/dev/null || git remote set-url origin "${REPO_URL}"
+      git fetch -q --depth 1 origin main
+      git reset --hard -q origin/main
+      git branch --set-upstream-to=origin/main main 2>/dev/null || true
     ) || warn "无法把 ${BASE_DIR} 初始化为 git 仓库（不影响本次运行）"
 }
 ensure_repo_checkout
@@ -328,6 +324,7 @@ Usage: $0 [OPTION]
 Options:
   (none)         Full interactive installation
   --status       Show service status
+  --update       Self-update from git and redeploy the runtime (config kept)
   --update-rules Update GFWList/ChinaList and reload mosdns
   --renew-cert   Force renew certificates and reload services
   --set-dot-domain <domain>
@@ -354,9 +351,8 @@ Options:
   --del-exit <name>
                  Remove a configured exit.
   --edit-exit <name>
-                 Replace an existing exit's config in place (reads the new
-                 wg.conf / proxy URI from stdin; validates before replacing,
-                 re-activates if it is the active exit).
+                 Replace an exit's config in place (reads new wg.conf / proxy
+                 URI from stdin; validates before replacing, re-activates if active).
   --set-rules [file]
                  Install routing rules (file/stdin/paste) for the
                  'smart' exit: route domains to exits / direct / block, with
@@ -378,10 +374,8 @@ Options:
   --show-policy  Print the category -> target policy map.
   --setup-tgbot  Install/enable the Telegram control bot (uses TG_BOT_TOKEN /
                  TG_ADMIN_IDS env vars, or prompts interactively).
-  --setup-api    Install/enable the HTTP control API + web panel (uses API_TOKEN
-                 / API_PORT env vars, or generates a token). Prints the panel
-                 URL and token; does NOT open the firewall port for you in the
-                 default preserve mode.
+  --setup-api    Install/enable the HTTP control API + web panel (env API_TOKEN
+                 / API_PORT, or generates a token; reuses existing token).
   --setup-whatsapp
                  Install/repair the iOS WhatsApp no-SNI TCP/443 shim.
   --uninstall    Remove all installed components
@@ -2495,7 +2489,7 @@ setup_api() {
     local port="${API_PORT:-${API_PORT_DEFAULT}}"
     port="$(printf '%s' "$port" | tr -dc '0-9')"; [[ -n "$port" ]] || port="${API_PORT_DEFAULT}"
 
-    # Reuse the existing token on re-runs (upgrades must not rotate it).
+    # Reuse the existing token on re-runs.
     if [[ -z "$token" && -f "${CONF_DIR}/api.env" ]]; then
         token="$(sed -n 's/^API_TOKEN=//p' "${CONF_DIR}/api.env" | head -n1)"
     fi
@@ -2526,7 +2520,6 @@ setup_api() {
     fi
     install -m 0755 "${LIB_DIR}/api-server.py" "${BASE_DIR}/bin/api-server.py"
     install -m 0755 "${SCRIPT_PATH}" "${BASE_DIR}/bin/5gpn-ctl"
-    # Bundle the web panel so it can be served/copied from the box if wanted.
     if [[ -f "${SCRIPT_DIR}/webui/index.html" ]]; then
         mkdir -p "${BASE_DIR}/webui"
         install -m 0644 "${SCRIPT_DIR}/webui/index.html" "${BASE_DIR}/webui/index.html"
@@ -2569,9 +2562,7 @@ EOF
 
     systemctl daemon-reload
     systemctl enable 5gpn-api.service
-    # restart (not enable --now): re-running --setup-api must pick up the newly
-    # installed api-server.py on an already-running service.
-    systemctl restart 5gpn-api.service
+    systemctl restart 5gpn-api.service   # plain restart: must pick up new code on re-runs
 
     echo ""
     ok "HTTP 控制 API 已启用。"
@@ -2581,12 +2572,11 @@ EOF
     echo "  网页面板:            打开仓库里的 webui/index.html，填入上面的地址和令牌即可。"
     echo "  令牌存放:            ${CONF_DIR}/api.env (chmod 600)"
     warn "API 可控制出口/分流，务必保管好令牌；只用 HTTPS 访问。"
-    warn "默认不接管主机防火墙（FIREWALL_MODE=preserve）：请自行放行 TCP ${port}；"
-    warn "或重装/升级时用 FIREWALL_MODE=auto 让安装器增量放行。"
+    warn "默认不接管主机防火墙：请自行放行 TCP ${port}（或重装时 FIREWALL_MODE=auto 增量放行）。"
 }
 
-# Optional during the main install flow: enable the HTTP API/web panel only if
-# the user opts in (env API_SETUP=1 / API_TOKEN set, or an interactive yes).
+# Enable the HTTP API/web panel during install only if the user opts in
+# (env API_SETUP=1 / API_TOKEN set, or an interactive yes).
 maybe_setup_api() {
     local want="${API_SETUP:-}"
     [[ -z "$want" && -n "${API_TOKEN:-}" ]] && want=1
@@ -2688,6 +2678,46 @@ show_status() {
         echo "Mem profile: $([[ "$cs" -le 50000 ]] 2>/dev/null && echo low-memory || echo standard) (mosdns cache=${cs})"
     fi
     echo "=========================================="
+}
+do_update() {
+    check_root
+    info "更新 5GPN-X（保留全部配置）..."
+    if [[ -z "${G5PNX_UPDATED:-}" ]]; then
+        info "拉取最新代码..."
+        if git -C "${BASE_DIR}" fetch -q origin main 2>/dev/null; then
+            if [[ "$(git -C "${BASE_DIR}" rev-parse HEAD 2>/dev/null || true)" != \
+                  "$(git -C "${BASE_DIR}" rev-parse origin/main 2>/dev/null || true)" ]]; then
+                git -C "${BASE_DIR}" reset --hard -q origin/main
+                export G5PNX_UPDATED=1
+                exec bash "${BASE_DIR}/install.sh" --update
+            fi
+            ok "代码已是最新"
+        else
+            warn "git fetch 失败（网络问题？），将使用当前代码更新运行时"
+        fi
+    fi
+    install_deps
+    cur_ns="$(cat /etc/mosdns/.remote_dns 2>/dev/null || cat "${CONF_DIR}/.remote_dns" 2>/dev/null || echo "${DEFAULT_REMOTE_DNS[*]}")"
+    REMOTE_DNS="$cur_ns" install_sniproxy   # re-render conf with current DNS, not defaults
+    install_whatsapp_shim
+    cmp -s "${LIB_DIR}/quic-proxy.go" "${SRC_DIR}/quic-proxy.go" 2>/dev/null || rm -f "${BASE_DIR}/bin/quic-proxy"
+    install_quic_proxy
+    install_mosdns_binary
+    cp "${LIB_DIR}/mosdns.yaml.template" /etc/mosdns/config.yaml.template
+    install -m 0755 "${LIB_DIR}/update-rules.sh" /usr/local/bin/update-mosdns-rules.sh
+    setup_exit_switching
+    generate_ios_profile
+    apply_lowmem_go_limits
+    setup_schedules
+    install -m 0755 "${SCRIPT_PATH}" "${BASE_DIR}/bin/5gpn-ctl"
+    [[ -f "${CONF_DIR}/api.env" ]] && setup_api
+    if [[ -f "${CONF_DIR}/tgbot.env" ]]; then
+        install -m 0755 "${LIB_DIR}/tgbot.py" "${BASE_DIR}/bin/tgbot.py"
+        systemctl restart 5gpn-tgbot 2>/dev/null || true
+    fi
+    [[ -f "${RULES_FILE}" ]] && { ( regen_smart ) || warn "smart 配置重建失败；可稍后手动 --set-rules"; }
+    systemctl restart mosdns sniproxy wa-shim quic-proxy 2>/dev/null || true
+    ok "更新完成。可用 $0 --status 查看运行状态。"
 }
 do_uninstall() {
     warn "This will remove sniproxy, quic-proxy, mosdns configs, and rules."
@@ -3082,6 +3112,9 @@ case "${1:-}" in
     --status)
         get_public_ip 2>/dev/null || true
         show_status
+        ;;
+    --update)
+        do_update
         ;;
     --update-rules)
         /usr/local/bin/update-mosdns-rules.sh

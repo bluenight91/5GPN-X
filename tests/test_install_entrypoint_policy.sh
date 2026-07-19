@@ -66,4 +66,19 @@ if [[ "${install_body}" != *'ensure_repo_checkout'* ]]; then
     exit 1
 fi
 
+if [[ "${install_body}" != *'do_update() {'* || "${install_body}" != *'--update)'* ]]; then
+    echo "install.sh must provide --update for one-command upgrades." >&2
+    exit 1
+fi
+
+if [[ "${install_body}" != *'G5PNX_UPDATED'* || "${install_body}" != *'exec bash "${BASE_DIR}/install.sh" --update'* ]]; then
+    echo "--update must self-update the checkout and re-exec once on the new code." >&2
+    exit 1
+fi
+
+if [[ "${install_body}" != *'REMOTE_DNS="$cur_ns" install_sniproxy'* ]]; then
+    echo "--update must re-render sniproxy.conf with the user's current DNS, not defaults." >&2
+    exit 1
+fi
+
 echo "install entrypoint policy OK"
