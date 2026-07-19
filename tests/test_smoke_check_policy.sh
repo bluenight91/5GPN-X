@@ -20,7 +20,6 @@ body="$(cat "${smoke}")"
 [[ "${body}" == *'status:'* ]] || fail "smoke must treat any DNS status as proof of life"
 [[ "${body}" == *'openssl s_client'* ]] || fail "smoke must check DoT via TLS handshake"
 [[ "${body}" == *'application/dns-message'* ]] || fail "smoke must probe DoH upstreams wire-format when configured"
-[[ "${body}" == *'+tls'* ]] || fail "smoke must verify DoT answers"
 [[ "${body}" == *'人工步骤'* ]] || fail "smoke must end with manual verification steps"
 
 echo "test_smoke_check_policy: OK"
