@@ -81,4 +81,14 @@ if [[ "${install_body}" != *'REMOTE_DNS="$cur_ns" install_sniproxy'* ]]; then
     exit 1
 fi
 
+update_body="$(sed -n '/^do_update()/,/^}/p' "${install}")"
+if [[ "${update_body}" != *'detect_os'* || "${update_body}" != *'detect_memory_profile'* ]]; then
+    echo "do_update must run detect_os/detect_memory_profile before install_deps (PKG_MGR et al)." >&2
+    exit 1
+fi
+if [[ "${update_body}" != *'get_public_ip'* || "${update_body}" != *'DOMAIN="${DOMAIN:-$(cat'* ]]; then
+    echo "do_update must restore PUBLIC_IP/DOMAIN for generate_ios_profile." >&2
+    exit 1
+fi
+
 echo "install entrypoint policy OK"

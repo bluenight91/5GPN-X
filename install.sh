@@ -67,7 +67,6 @@ info()  { echo -e "${BLUE}[INFO]${NC} $*"; }
 ok()    { echo -e "${GREEN}[OK]${NC}   $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 err()   { echo -e "${RED}[ERR]${NC}  $*" >&2; }
-# Idempotently make ${BASE_DIR} a git checkout for in-place management/upgrades.
 ensure_repo_checkout() {
     [[ -d "${BASE_DIR}/.git" ]] && return 0
     command -v git >/dev/null 2>&1 || return 0
@@ -1746,7 +1745,7 @@ if name in ("local", "smart") or not re.match(r"^[\w\-\u4e00-\u9fff]{1,16}$", na
     raise SystemExit(1)
 PYNAME
     [[ "$name" == "local" || "$name" == "smart" ]] && { err "'$name' is a reserved exit name (smart = rule-based router; use --set-rules)"; exit 1; }
-    # edit_exit sets PGW_EXIT_OVERWRITE=1 to replace an existing exit's config.
+    # edit_exit sets PGW_EXIT_OVERWRITE=1 to replace config.
     if [[ "${PGW_EXIT_OVERWRITE:-0}" != "1" ]]; then
         exit_exists "$name" && { err "Exit '$name' already exists"; exit 1; }
     fi
@@ -1846,7 +1845,7 @@ edit_exit() {
     fi
     info "Modifying exit '$name' (new config is validated before replacing)..."
     PGW_EXIT_OVERWRITE=1 add_exit "$name"        # reads new config from stdin
-    # Drop stale artifacts when the exit type changed (wireguard <-> URI).
+    # Drop stale artifacts on type change (wg <-> URI).
     local new_type; new_type="$(cat "$(exit_type_file "$name")" 2>/dev/null || echo "")"
     if [[ "$new_type" == "wireguard" ]]; then
         rm -f "$(exit_mihomo_conf "$name")" "${EXITS_DIR}/${name}.uri"
@@ -2562,7 +2561,7 @@ EOF
 
     systemctl daemon-reload
     systemctl enable 5gpn-api.service
-    systemctl restart 5gpn-api.service   # plain restart: must pick up new code on re-runs
+    systemctl restart 5gpn-api.service   # plain restart: re-runs must pick up new code
 
     echo ""
     ok "HTTP 控制 API 已启用。"
@@ -2575,8 +2574,7 @@ EOF
     warn "默认不接管主机防火墙：请自行放行 TCP ${port}（或重装时 FIREWALL_MODE=auto 增量放行）。"
 }
 
-# Enable the HTTP API/web panel during install only if the user opts in
-# (env API_SETUP=1 / API_TOKEN set, or an interactive yes).
+# Opt-in API + web panel during install (API_SETUP=1 / API_TOKEN set / prompt).
 maybe_setup_api() {
     local want="${API_SETUP:-}"
     [[ -z "$want" && -n "${API_TOKEN:-}" ]] && want=1
@@ -2681,6 +2679,11 @@ show_status() {
 }
 do_update() {
     check_root
+    detect_os
+    detect_memory_profile
+    get_public_ip 2>/dev/null || true
+    DOMAIN="${DOMAIN:-$(cat "${CONF_DIR}/.domain" 2>/dev/null || cat /etc/mosdns/.domain 2>/dev/null || true)}"
+    PUBLIC_IP="${PUBLIC_IP:-$(cat /etc/mosdns/.public_ip 2>/dev/null || true)}"
     info "更新 5GPN-X（保留全部配置）..."
     if [[ -z "${G5PNX_UPDATED:-}" ]]; then
         info "拉取最新代码..."
@@ -2717,7 +2720,7 @@ do_update() {
     fi
     [[ -f "${RULES_FILE}" ]] && { ( regen_smart ) || warn "smart 配置重建失败；可稍后手动 --set-rules"; }
     systemctl restart mosdns sniproxy wa-shim quic-proxy 2>/dev/null || true
-    ok "更新完成。可用 $0 --status 查看运行状态。"
+    ok "更新完成"
 }
 do_uninstall() {
     warn "This will remove sniproxy, quic-proxy, mosdns configs, and rules."
