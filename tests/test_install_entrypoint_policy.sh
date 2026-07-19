@@ -11,13 +11,10 @@ if [[ ! -x "${install}" ]]; then
     exit 1
 fi
 
-# `bash -c "$(curl .../install.sh)"` passes the complete script as one Linux
-# argument. Linux limits one argument to 128 KiB (MAX_ARG_STRLEN).
-install_size="$(wc -c < "${install}")"
-if (( install_size >= 131072 )); then
-    echo "install.sh must stay below 128 KiB for the documented bash -c installer (${install_size} bytes)." >&2
-    exit 1
-fi
+# The documented one-liner downloads the script to a file first
+# (`curl -fsSL ... -o /tmp/5gpnx-install.sh && sudo bash ...`), so there is no
+# single-argument size limit (the old `bash -c "$(curl ...)"` form capped us at
+# 128 KiB MAX_ARG_STRLEN). No size assertion needed.
 
 first_three="$(head -c 3 "${install}" | od -An -tx1 | tr -d ' \n')"
 if [[ "${first_three}" == "efbbbf" ]]; then

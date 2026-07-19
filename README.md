@@ -35,7 +35,7 @@
 一键安装（自动拉取仓库到 `/opt/5gpn`）：
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/bluenight91/5GPN-X/main/install.sh)"
+curl -fsSL https://raw.githubusercontent.com/bluenight91/5GPN-X/main/install.sh -o /tmp/5gpnx-install.sh && sudo bash /tmp/5gpnx-install.sh
 ```
 
 手动安装：
