@@ -71,6 +71,32 @@ CLASH_SECRET_FILE = os.environ.get("MIHOMO_API_SECRET_FILE", "/etc/5gpn/mihomo-a
 MIHOMO_STATIC_DIR = os.environ.get("MIHOMO_STATIC_DIR", "/opt/5gpn/webui/mihomo")
 CLASH_WS_PATHS = {"traffic", "logs", "connections", "memory"}
 
+# CSP for the vendored metacubexd (same-origin app; frames allowed same-origin
+# so our console can embed it, everything else locked down).
+XD_CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+          "img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; "
+          "worker-src 'self' blob:; frame-ancestors 'self'; base-uri 'self'; form-action 'self'")
+
+# Per-source-IP token bucket for /api/* (brute-force and abuse protection).
+RATE_MAX = 30.0          # burst tokens
+RATE_REFILL = 10.0       # tokens per second
+_rate_lock = threading.Lock()
+_rate = {}               # ip -> [tokens, last]
+
+
+def rate_ok(ip):
+    now = time.monotonic()
+    with _rate_lock:
+        ent = _rate.setdefault(ip, [RATE_MAX, now])
+        ent[0] = min(RATE_MAX, ent[0] + (now - ent[1]) * RATE_REFILL)
+        ent[1] = now
+        if len(_rate) > 4096:      # bound memory under spoofed-source floods
+            _rate.clear()
+        if ent[0] < 1.0:
+            return False
+        ent[0] -= 1.0
+        return True
+
 
 def run(argv, inp=None, timeout=180):
     try:
@@ -970,11 +996,18 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 
+    def _sec_headers(self):
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "SAMEORIGIN")
+        self.send_header("Strict-Transport-Security", "max-age=31536000")
+        self.send_header("Referrer-Policy", "same-origin")
+
     def _send(self, code, obj):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        self._sec_headers()
         self._cors()
         self.end_headers()
         try:
@@ -988,6 +1021,7 @@ class Handler(BaseHTTPRequestHandler):
             ctype += "; charset=utf-8"
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
+        self._sec_headers()
         if extra:
             for k, v in extra:
                 self.send_header(k, v)
@@ -1056,7 +1090,7 @@ class Handler(BaseHTTPRequestHandler):
         body = self.rfile.read(n) if n > 0 else None
         status, ctype, data = clash_request(self.command, sub, body=body,
                                             ctype=self.headers.get("Content-Type"))
-        return self._send_raw(status, data, ctype, extra=(("Referrer-Policy", "same-origin"),))
+        return self._send_raw(status, data, ctype)
 
     def _serve_mihomo_static(self, sub):
         full = static_path(sub)
@@ -1068,7 +1102,7 @@ class Handler(BaseHTTPRequestHandler):
                 data = f.read()
         except OSError:
             return self._send(404, {"ok": False, "error": "not found"})
-        extra = [("Referrer-Policy", "same-origin")]
+        extra = [("Content-Security-Policy", XD_CSP)]
         if getattr(self, "_via_query", False):
             # iframe 内相对路径资源与面板 API 调用带不了 ?token=；种同源会话
             # cookie（Path=/ 覆盖 /mihomo 与 /api/mihomo/*）供其鉴权。
@@ -1079,6 +1113,8 @@ class Handler(BaseHTTPRequestHandler):
     def _dispatch(self, method):
         """PUT/PATCH/DELETE are only routed to the mihomo reverse proxy."""
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
+        if path.startswith("/api/") and not rate_ok(self.client_address[0]):
+            return self._send(429, {"ok": False, "error": "请求过于频繁，请稍后再试"})
         if not self._auth():
             return self._send(401, {"ok": False, "error": "unauthorized"})
         if path.startswith("/api/mihomo/proxy/"):
@@ -1101,6 +1137,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
+        if path.startswith("/api/") and not rate_ok(self.client_address[0]):
+            return self._send(429, {"ok": False, "error": "请求过于频繁，请稍后再试"})
         if path == "/api/health":
             return self._send(200, {"ok": True, "service": "5gpn-api"})
         if not self._auth():
@@ -1121,7 +1159,7 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/mihomo/proxy/"):
             sub = self.path.split("/api/mihomo/proxy/", 1)[1]
             status, ctype, data = clash_request("GET", sub)
-            return self._send_raw(status, data, ctype, extra=(("Referrer-Policy", "same-origin"),))
+            return self._send_raw(status, data, ctype)
         if path == "/mihomo" or path.startswith("/mihomo/"):
             return self._serve_mihomo_static(self.path[len("/mihomo"):])
         if path == "/api/status":
@@ -1177,6 +1215,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
+        if path.startswith("/api/") and not rate_ok(self.client_address[0]):
+            return self._send(429, {"ok": False, "error": "请求过于频繁，请稍后再试"})
         if not self._auth():
             return self._send(401, {"ok": False, "error": "unauthorized"})
         if path.startswith("/api/mihomo/proxy/"):

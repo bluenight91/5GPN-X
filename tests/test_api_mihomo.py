@@ -584,5 +584,37 @@ class ProxyHandlerTests(unittest.TestCase):
         self.assertNotIn(b"token=", got["req"])
         self.assertIn(b"Authorization: Bearer s3cr3t-test-token", got["req"])
 
+    def test_security_headers_on_api_and_static(self):
+        status, hdrs = self._get("/api/status", {"Authorization": "Bearer " + self.api.TOKEN})
+        self.assertEqual(status, 200)
+        self.assertEqual(hdrs.get("X-Content-Type-Options"), "nosniff")
+        self.assertEqual(hdrs.get("X-Frame-Options"), "SAMEORIGIN")
+        self.assertEqual(hdrs.get("Strict-Transport-Security"), "max-age=31536000")
+        self.assertEqual(hdrs.get("Referrer-Policy"), "same-origin")
+        status, hdrs = self._get("/mihomo/index.html?token=" + self.api.TOKEN)
+        self.assertEqual(status, 200)
+        csp = hdrs.get("Content-Security-Policy") or ""
+        self.assertIn("frame-ancestors 'self'", csp)
+        self.assertIn("default-src 'self'", csp)
+        self.assertEqual(hdrs.get("X-Frame-Options"), "SAMEORIGIN")
+
+    def test_rate_limit_429(self):
+        self.api._rate.clear()
+        try:
+            codes = [self._get("/api/health")[0] for _ in range(40)]
+            self.assertIn(429, codes)
+            self.assertEqual(codes[0], 200)
+        finally:
+            self.api._rate.clear()
+
+    def test_log_message_silent(self):
+        # PII: the request log must never print anything (token, query, client addr).
+        import io
+        import contextlib
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            self.api.Handler.log_message(object(), "%s %s", "GET /api/x?token=abc", "200")
+        self.assertEqual(buf.getvalue(), "")
+
 if __name__ == "__main__":
     unittest.main()

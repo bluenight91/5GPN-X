@@ -53,6 +53,11 @@ api_body="$(cat "${api}")"
 [[ "${install_body}" == *'systemctl restart 5gpn-api.service'* ]] || fail "setup_api must restart the api service so upgrades take effect"
 [[ "${install_body}" == *'s/^API_TOKEN=//p'* ]] || fail "setup_api must reuse an existing API token on re-run"
 [[ "${api_body}" == *'"UP", "DOWN", "n/a", "udp"'* ]] || fail "api parse_check must accept the udp state"
+
+# --- security hardening (borrowed from moooyo/5gpn review) ---------------------
+[[ "${api_body}" == *'def _sec_headers'* && "${api_body}" == *'Strict-Transport-Security'* && "${api_body}" == *'X-Frame-Options'* ]] || fail "api must send security headers (HSTS/XFO/nosniff)"
+[[ "${api_body}" == *'Content-Security-Policy'* && "${api_body}" == *"frame-ancestors 'self'"* ]] || fail "static hosting must send CSP"
+[[ "${api_body}" == *'def rate_ok('* && "${api_body}" == *'429'* ]] || fail "api must rate-limit per source ip"
 [[ "${install_body}" == *'API_PORT_DEFAULT=8444'* ]] || fail "install.sh must default API_PORT_DEFAULT=8444"
 [[ "${install_body}" == *'${BASE_DIR}/bin/5gpn-ctl'* ]] || fail "api.env must point MGMT at 5gpn-ctl"
 [[ "${install_body}" == *'/etc/mosdns/certs/fullchain.pem'* ]] || fail "setup_api must use the mosdns certs"
