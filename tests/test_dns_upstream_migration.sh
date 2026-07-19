@@ -64,6 +64,10 @@ eval "$(sed -n '/^render_sniproxy_dns_nameservers() {/,/^}/p' "$install")"
 out="$(render_sniproxy_dns_nameservers "https://doh-a.example.com/api/camo1")"
 [[ "$out" == *'nameserver 1.1.1.1'* ]] \
     || fail "DoH-only upstream must fall back to plain IP nameservers (got: $out)"
+[[ "$out" != *'[WARN]'* ]] \
+    || fail "warnings must not leak into rendered nameservers (got: $out)"
+[[ "$(grep -c nameserver <<< "$out")" -eq 3 ]] \
+    || fail "fallback nameservers must be one per line (got: $out)"
 out="$(render_sniproxy_dns_nameservers "9.9.9.9")"
 [[ "$out" == *'nameserver 9.9.9.9'* && "$out" != *'1.1.1.1'* ]] \
     || fail "plain IP nameserver not preserved (got: $out)"
