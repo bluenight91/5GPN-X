@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Unit tests for the api-server mihomo (Clash API) integration."""
+import base64
 import http.client
 import importlib.util
 import json
@@ -140,6 +141,47 @@ class MihomoApiTests(unittest.TestCase):
         self.assertIn("Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==", req)
         self.assertIn("Authorization: Bearer s3cr3t-test-token", req)
         self.assertTrue(req.endswith("\r\n\r\n"))
+
+    def test_exit_endpoint_uri_and_wireguard(self):
+        exits = tempfile.mkdtemp()
+        wg = tempfile.mkdtemp()
+        old_exits, old_wg = self.api.EXITS_DIR, self.api.WG_DIR
+        self.addCleanup(setattr, self.api, "EXITS_DIR", old_exits)
+        self.addCleanup(setattr, self.api, "WG_DIR", old_wg)
+        self.api.EXITS_DIR, self.api.WG_DIR = exits, wg
+
+        def mkexit(name, typ, uri=None):
+            with open(os.path.join(exits, name + ".type"), "w") as f:
+                f.write(typ)
+            if uri:
+                with open(os.path.join(exits, name + ".uri"), "w") as f:
+                    f.write(uri + "\n")
+
+        # SIP002 ss URI
+        mkexit("jp", "shadowsocks", "ss://bWV0aG9kOnBhc3M=@1.2.3.4:8388#x")
+        self.assertEqual(self.api.exit_endpoint("jp"), ("1.2.3.4", 8388))
+        # vless without explicit port -> default 443
+        mkexit("hk", "vless", "vless://uuid@hk.example.com?security=reality#x")
+        self.assertEqual(self.api.exit_endpoint("hk"), ("hk.example.com", 443))
+        # trojan with explicit port
+        mkexit("us", "trojan", "trojan://pw@us.example.com:8443#x")
+        self.assertEqual(self.api.exit_endpoint("us"), ("us.example.com", 8443))
+        # legacy ss (fully base64-encoded payload)
+        raw = "aes-128-gcm:pw@9.9.9.9:8080"
+        mkexit("sg", "shadowsocks", "ss://" + base64.b64encode(raw.encode()).decode() + "#x")
+        self.assertEqual(self.api.exit_endpoint("sg"), ("9.9.9.9", 8080))
+        # vmess (base64-encoded json share object)
+        raw = '{"add":"vm.example.com","port":"443","id":"uuid"}'
+        mkexit("vm", "vmess", "vmess://" + base64.b64encode(raw.encode()).decode())
+        self.assertEqual(self.api.exit_endpoint("vm"), ("vm.example.com", 443))
+        # wireguard endpoint from the wg conf
+        mkexit("uswg", "wireguard")
+        with open(os.path.join(wg, "pgw-uswg.conf"), "w") as f:
+            f.write("[Peer]\nEndpoint = 5.6.7.8:51820\n")
+        self.assertEqual(self.api.exit_endpoint("uswg"), ("5.6.7.8", 51820))
+        # router (smart) has no upstream node
+        mkexit("smart", "router")
+        self.assertEqual(self.api.exit_endpoint("smart"), (None, None))
 
     def test_delete_and_cjk_proxy_name(self):
         status, _, _ = self.api.clash_request("DELETE", "connections")

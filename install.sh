@@ -2543,7 +2543,10 @@ WantedBy=multi-user.target
 EOF
 
     systemctl daemon-reload
-    systemctl enable --now 5gpn-api.service 2>/dev/null || systemctl restart 5gpn-api.service
+    systemctl enable 5gpn-api.service
+    # restart (not enable --now): re-running --setup-api must pick up the newly
+    # installed api-server.py on an already-running service.
+    systemctl restart 5gpn-api.service
 
     echo ""
     ok "HTTP 控制 API 已启用。"

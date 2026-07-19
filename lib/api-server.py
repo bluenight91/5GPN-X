@@ -548,18 +548,51 @@ def traffic_loop():
 _lat_lock = threading.Lock()
 
 
+def _uri_host_port(uri):
+    """Best-effort (host, port) from a proxy URI (SIP002 / standard forms)."""
+    try:
+        u = urllib.parse.urlsplit(uri)
+    except ValueError:
+        return None, None
+    if u.scheme == "ss" and "@" not in u.netloc:
+        # legacy ss://base64(method:pass@host:port)#tag
+        try:
+            dec = base64.b64decode(u.netloc + "===").decode("utf-8", "ignore")
+            m = re.search(r"@([^@:/]+):(\d+)$", dec)
+            if m:
+                return m.group(1), int(m.group(2))
+        except Exception:  # noqa: BLE001
+            pass
+        return None, None
+    if u.scheme == "vmess" and "@" not in u.netloc:
+        # vmess://base64(json share object)
+        try:
+            o = json.loads(base64.b64decode(u.netloc + "===").decode("utf-8", "ignore"))
+            host = o.get("add") or o.get("host")
+            return host, int(o.get("port") or 443) if host else (None, None)
+        except Exception:  # noqa: BLE001
+            return None, None
+    if u.hostname:
+        try:
+            port = u.port
+        except ValueError:
+            port = None
+        return u.hostname, port or (80 if u.scheme == "http" else 443)
+    return None, None
+
+
 def exit_endpoint(name):
     """(host, port) of an exit's upstream node, or (None, None)."""
     t = read_file(EXITS_DIR + "/%s.type" % name).strip()
-    if t in ("socks", "shadowsocks"):
-        try:
-            o = json.load(open(EXITS_DIR + "/%s.json" % name))["outbounds"][0]
-            return o.get("server"), int(o.get("server_port") or 0)
-        except Exception:  # noqa: BLE001
-            return None, None
-    m = re.search(r"(?im)^\s*Endpoint\s*=\s*(.+):(\d+)\s*$", read_file(WG_DIR + "/pgw-%s.conf" % name))
-    if m:
-        return m.group(1), int(m.group(2))
+    if t == "wireguard":
+        m = re.search(r"(?im)^\s*Endpoint\s*=\s*(.+):(\d+)\s*$", read_file(WG_DIR + "/pgw-%s.conf" % name))
+        if m:
+            return m.group(1), int(m.group(2))
+        return None, None
+    # URI exits keep the original link in <name>.uri (mihomo TUN engine)
+    first = read_file(EXITS_DIR + "/%s.uri" % name).strip().splitlines()
+    if first:
+        return _uri_host_port(first[0].strip())
     return None, None
 
 
