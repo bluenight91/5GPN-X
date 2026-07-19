@@ -5,3 +5,9 @@ __pycache__/
 .ruff_cache/
 .superpowers/
 docs/superpowers/
+# Server runtime dirs (created by the installer inside /opt/5gpn)
+/bin/
+/etc/
+/src/
+/www/
+/webui/mihomo/

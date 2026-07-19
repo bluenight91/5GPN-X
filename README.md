@@ -64,7 +64,11 @@ sudo ./install.sh
 
 ## 管理命令
 
+安装后 `/opt/5gpn` 自动成为本仓库的 git 检出（运行时目录 `bin/`、`etc/` 等不受影响），所有管理命令都在该目录下执行，升级就是 `git pull`：
+
 ```bash
+cd /opt/5gpn
+sudo git pull                          # 升级到最新版（幂等，可随时执行）
 sudo ./install.sh --status              # 查看状态
 sudo ./install.sh --update-rules        # 更新 GFWList/ChinaList 并重载 mosdns
 sudo ./install.sh --renew-cert          # 续期证书

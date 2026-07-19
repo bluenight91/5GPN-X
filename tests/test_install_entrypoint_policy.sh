@@ -56,4 +56,14 @@ if [[ "${install_body}" != *'systemd-resolved.service'* ]]; then
     exit 1
 fi
 
+if [[ "${install_body}" != *'ensure_repo_checkout() {'* || "${install_body}" != *'git reset --hard -q origin/main'* ]]; then
+    echo "install.sh must turn BASE_DIR into a git checkout for in-place upgrades." >&2
+    exit 1
+fi
+
+if [[ "${install_body}" != *'ensure_repo_checkout'* ]]; then
+    echo "install.sh must call ensure_repo_checkout so /opt/5gpn becomes a repo." >&2
+    exit 1
+fi
+
 echo "install entrypoint policy OK"

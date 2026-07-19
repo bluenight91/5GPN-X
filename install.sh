@@ -67,6 +67,24 @@ info()  { echo -e "${BLUE}[INFO]${NC} $*"; }
 ok()    { echo -e "${GREEN}[OK]${NC}   $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 err()   { echo -e "${RED}[ERR]${NC}  $*" >&2; }
+# Turn ${BASE_DIR} into a git checkout of this project (idempotent), so the
+# gateway can be managed and upgraded in place:
+#   cd /opt/5gpn && sudo git pull && sudo ./install.sh <command>
+# Runtime dirs (bin/ etc/ src/ www/ webui/mihomo) stay untracked and untouched.
+ensure_repo_checkout() {
+    [[ -d "${BASE_DIR}/.git" ]] && return 0
+    command -v git >/dev/null 2>&1 || return 0
+    mkdir -p "${BASE_DIR}"
+    (
+        cd "${BASE_DIR}"
+        git init -q -b main 2>/dev/null || git init -q
+        git remote add origin "${REPO_URL}" 2>/dev/null || git remote set-url origin "${REPO_URL}"
+        git fetch -q --depth 1 origin main
+        git reset --hard -q origin/main
+        git branch --set-upstream-to=origin/main main 2>/dev/null || true
+    ) || warn "无法把 ${BASE_DIR} 初始化为 git 仓库（不影响本次运行）"
+}
+ensure_repo_checkout
 render_sniproxy_dns_nameservers() {
     local input="${1:-}"
     local dns_list=()
