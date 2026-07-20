@@ -58,21 +58,25 @@ for bad_url in "https://user:pass@example.com/dns-query" "https://example.com/dn
     fi
 done
 
-# 6. sniproxy nameserver rendering: DoH-by-domain must fall back to plain IPs
-#    (an empty resolver block makes sniproxy fail to start).
+# 6. sniproxy nameserver rendering: DoH/DoT upstreams resolve via loopback mosdns.
 eval "$(sed -n '/^render_sniproxy_dns_nameservers() {/,/^}/p' "$install")"
-out="$(render_sniproxy_dns_nameservers "https://doh-a.example.com/api/camo1")"
-[[ "$out" == *'nameserver 1.1.1.1'* ]] \
-    || fail "DoH-only upstream must fall back to plain IP nameservers (got: $out)"
-[[ "$out" != *'[WARN]'* ]] \
-    || fail "warnings must not leak into rendered nameservers (got: $out)"
-[[ "$(grep -c nameserver <<< "$out")" -eq 3 ]] \
-    || fail "fallback nameservers must be one per line (got: $out)"
+
+# DoH-only upstreams -> nameserver 127.0.0.1 (local mosdns), exactly once, no warnings.
+out="$(render_sniproxy_dns_nameservers "https://doh-a.example.com/api/camo1 https://doh-b.example.com/api/camo1")"
+[[ "$out" == *'nameserver 127.0.0.1'* ]] \
+    || fail "DoH upstreams must use loopback mosdns (got: $out)"
+[[ "$(grep -c 'nameserver 127.0.0.1' <<< "$out")" -eq 1 ]] \
+    || fail "loopback nameserver must appear exactly once (got: $out)"
+[[ "$out" != *'[WARN]'* ]] || fail "rendered output must not contain warnings (got: $out)"
+
+# plain IP input is preserved.
 out="$(render_sniproxy_dns_nameservers "9.9.9.9")"
-[[ "$out" == *'nameserver 9.9.9.9'* && "$out" != *'1.1.1.1'* ]] \
+[[ "$out" == *'nameserver 9.9.9.9'* && "$out" != *'127.0.0.1'* ]] \
     || fail "plain IP nameserver not preserved (got: $out)"
-out="$(render_sniproxy_dns_nameservers "https://doh-a.example.com/api/camo1 9.9.9.9")"
-[[ "$out" == *'nameserver 9.9.9.9'* && "$out" != *'1.1.1.1'* ]] \
-    || fail "mixed upstreams must keep the plain IP one (got: $out)"
+
+# mixed: plain IP kept + loopback added once.
+out="$(render_sniproxy_dns_nameservers "https://doh-a.example.com/api/camo1 8.8.8.8")"
+[[ "$out" == *'nameserver 8.8.8.8'* && "$out" == *'nameserver 127.0.0.1'* ]] \
+    || fail "mixed upstreams must keep plain IP plus loopback (got: $out)"
 
 echo "DNS upstream configuration and URL validation OK"

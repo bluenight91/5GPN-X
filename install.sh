@@ -83,7 +83,7 @@ ensure_repo_checkout
 render_sniproxy_dns_nameservers() {
     local input="${1:-}"
     local dns_list=()
-    local item count=0
+    local item count=0 used_loopback=0
     if [[ -z "$input" ]]; then
         dns_list=("${DEFAULT_REMOTE_DNS[@]}")
     else
@@ -93,13 +93,15 @@ render_sniproxy_dns_nameservers() {
     for item in "${dns_list[@]}"; do
         [[ -z "$item" ]] && continue
         if [[ "$item" == *://* ]]; then
-            item=$(python3 - "$item" <<'PYEOF'
-import sys
-from urllib.parse import urlsplit
-
-print(urlsplit(sys.argv[1]).hostname or "")
-PYEOF
-)
+            # DoH/DoT upstream: sniproxy only speaks plain DNS. Point it at the
+            # local mosdns on loopback — it resolves via the full configured
+            # chain (including these DoH upstreams) with caching, so sniproxy
+            # gets the same answers with zero extra latency and no warnings.
+            [[ "$used_loopback" == "1" ]] && continue
+            used_loopback=1
+            printf '    nameserver 127.0.0.1\n'
+            count=$((count+1))
+            continue
         elif [[ "$item" == \[*\]:* ]]; then
             item="${item#\[}"
             item="${item%%\]:*}"
@@ -107,20 +109,13 @@ PYEOF
             item="${item%:*}"
         fi
         if [[ ! "$item" =~ ^[0-9A-Fa-f:.]+$ ]]; then
-            # stderr: warnings must NOT pollute the rendered output
-            warn "Skipping invalid sniproxy DNS address: $item" >&2
             continue
         fi
         printf '    nameserver %s\n' "$item"
         count=$((count+1))
     done
     if [[ "$count" -eq 0 ]]; then
-        # sniproxy's C config only accepts IP-literal nameservers; a DoH/DoT
-        # upstream (by domain) can't be expressed, so fall back to plain IPs
-        # instead of rendering an empty resolver block that kills sniproxy.
-        for item in "${DEFAULT_REMOTE_DNS[@]}"; do
-            printf '    nameserver %s\n' "$item"
-        done
+        printf '    nameserver 127.0.0.1\n'
     fi
 }
 first_plain_dns() {
