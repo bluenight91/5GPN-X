@@ -2,12 +2,14 @@
 
 服务器端透明代理网关：mosdns DoT + SNI/QUIC 透明代理 + 可切换多协议出口。客户端只需把 DNS/DoT 指向服务器域名，无需安装任何代理客户端。
 
+本仓库在 Xiuyixx/5GPN-X 基础上增强了管理与运维能力：网页控制台（含 mihomo 监控面板）、`--update` 一键更新、git 检出式 `/opt/5gpn`、冒烟检查、域名 DoH 上游与可配置 ECS、API 安全加固。
+
 ## 工作原理
 
 面向 5G NPN / N6 互通、私网终端出海和轻量透明代理场景：
 
 - `172.22.0.0/16` 私网客户端把 DNS/DoT 指向网关。
-- ChinaList 域名（所有来源）走国内 DNS 竞速代理（4 路 UDP 并发 + TCP fallback + 海外兜底含 `22.22.22.22`），保持本地访问体验。
+- ChinaList 域名（所有来源）走国内 DNS 竞速（4 路并发 + TCP fallback + 海外兜底含 `22.22.22.22`），保持本地访问体验。
 - 内网来源非 ChinaList 的 A 查询返回服务器 IP，流量进入 TCP/QUIC 代理。
 - 其他来源：被墙域名不劫持，正常海外解析；其他域名也正常海外解析。
 - wa-shim / sniproxy / quic-proxy 负责 WhatsApp Noise、SNI/Host 和 QUIC 转发，出站由当前出口控制。
@@ -20,11 +22,26 @@
 
 ## 主要功能
 
-- DNS + DoT：客户端通过 TCP/UDP 53（仅 `172.22.0.0/16`）或 DoT 853（所有来源）接入；来源 IP 按段区分解析策略，海外 DNS 池 `1.1.1.1`、`8.8.8.8`、`9.9.9.9`，ChinaList 查询携带 ECS（默认 `139.226.48.0/24`，可用 `--set-ecs` 修改），全局不返回 AAAA。
-- iOS WhatsApp Patch：wa-shim 监听 TCP 443，仅分流客户端网段内 `ED`/`WA` 开头的无 SNI Noise 连接，其余 fail-open 交给 sniproxy。
+**网关核心**
+
+- DNS + DoT：客户端通过 TCP/UDP 53（仅 `172.22.0.0/16`）或 DoT 853（所有来源）接入；来源 IP 按段区分解析策略；上游支持纯 IP 与 `https://`/`tls://`（**域名 DoH/DoT**，如自建 AdGuard Home）；ChinaList 查询携带 ECS（可配置）；全局不返回 AAAA。
 - 智能分流：mihomo `smart` 出口按域名 / IP / GEOSITE / GEOIP / RULE-SET 分流，远程规则集自动更新。
-- Telegram Bot：状态、出口管理、分流规则、DNS/DoT 设置、日志、iOS 二维码。
+- iOS WhatsApp Patch：wa-shim 监听 TCP 443，仅分流客户端网段内 `ED`/`WA` 开头的无 SNI Noise 连接，其余 fail-open 交给 sniproxy。
 - 低内存模式：≤ 1 GB 内存自动降低缓存与内核参数，512 MB VPS 可运行。
+
+**管理与控制台**
+
+- 网页控制台（可选）：六页静态控制台——仪表盘、出口管理、分流规则、mihomo 监控、AI 助手、设置；深浅双主题跟随系统，移动端底部标签栏（可滑动、滚动自动隐藏），适配 iOS Safari。
+- mihomo 监控面板：metacubexd 经 api-server 同源反代接入，secret 不出服务端；支持连接查看、延迟测试、断开连接、规则集刷新。
+- Telegram Bot：状态、出口管理、分流规则、DNS/DoT 设置、日志、iOS 二维码。
+- AI 助手：绑定自己的 OpenAI 兼容接口，自然语言生成分流方案，人工确认后才生效。
+
+**运维**
+
+- `--update` 一键更新：git 自更新 + 重部署运行时（保留全部配置）。
+- `/opt/5gpn` 自动成为 git 检出，管理命令全部在该目录执行。
+- 冒烟检查脚本：安装/更新后一分钟只读体检。
+- API 安全加固：全响应安全响应头（HSTS/XFO/nosniff/CSP）、每源 IP 限流（429）、PII 静默日志。
 
 ## 环境要求
 
@@ -56,6 +73,14 @@ sudo ./install.sh
 
 安装前请先把域名 A 记录指向服务器公网 IP；脚本在申请 Let's Encrypt 证书前会验证解析（最长等待 120 秒）。
 
+## 升级
+
+```bash
+cd /opt/5gpn && sudo ./install.sh --update
+```
+
+一条命令完成：`git fetch + reset --hard origin/main` 自更新（有新代码则以新代码 re-exec）→ 重部署运行时——重渲染 sniproxy 配置（保留当前 DNS）、按需重编译 quic-proxy、刷新 mosdns/mihomo 二进制与生成器、从保存的 `.uri` 链接重建出口配置、刷新 api-server/metacubexd/tgbot（**令牌不变**）、重建 smart 配置并重启服务（先 `reset-failed` 清除启动频率限制）。防火墙、内核调优、DNS 设置、出口、分流规则、证书全部保持原样。
+
 ## 客户端配置
 
 - Android：`设置 -> 网络和互联网 -> 私人 DNS`，填入安装时配置的域名。
@@ -68,7 +93,7 @@ sudo ./install.sh
 
 ```bash
 cd /opt/5gpn
-sudo ./install.sh --update             # 一键更新到最新版（自更新代码并重部署运行时，保留全部配置）
+sudo ./install.sh --update             # 一键更新到最新版（保留全部配置）
 sudo ./install.sh --status              # 查看状态
 sudo ./install.sh --update-rules        # 更新 GFWList/ChinaList 并重载 mosdns
 sudo ./install.sh --renew-cert          # 续期证书
@@ -83,6 +108,8 @@ sudo ./install.sh --setup-api           # 启用 HTTP 控制 API + 网页控制�
 sudo ./install.sh --uninstall           # 卸载
 ```
 
+出口与分流相关子命令见下两节；其余子命令（`--show-rules`、`--show-policy`、`--import-rules`、`--proxy-domain`、`--setup-whatsapp` 等）可用 `sudo ./install.sh --help` 查看。
+
 ## 出口管理
 
 默认出口为 `local`（本机公网 IP 直出）。
@@ -94,6 +121,9 @@ sudo ./install.sh --add-exit us us.conf
 # URI 出口
 sudo ./install.sh --add-exit jp 'socks5://user:pass@1.2.3.4:1080'
 sudo ./install.sh --add-exit hk 'ss://2022-blake3-aes-128-gcm:PASSWORD@5.6.7.8:443'
+
+# 原地修改已有出口（读取新配置，校验通过后替换，活动出口自动重新激活）
+sudo ./install.sh --edit-exit jp < new-config.txt
 
 # 切换 / 验证
 sudo ./install.sh --set-exit hk
@@ -148,6 +178,22 @@ sudo ./install.sh --import-rules /path/to/rule.conf
 sudo ./install.sh --set-policy Netflix hk
 ```
 
+## 网页控制台与 mihomo 监控（可选）
+
+```bash
+sudo ./install.sh --setup-api   # 生成令牌并启用 HTTP 控制 API（默认端口 8444），同时安装 mihomo 监控面板
+```
+
+执行后会打印 **API 地址** 与 **令牌**。打开仓库里的 `webui/index.html`（纯静态单文件，可本地双击打开，或托管到任意静态托管 / Cloudflare Pages，见 `webui/README.md`），填入地址和令牌即可使用——与 Telegram Bot 调用同一后端，实时同步。
+
+**控制台六页**：仪表盘（实时状态、流量/延迟曲线、mihomo 概览）、出口管理、分流规则、mihomo 监控、AI 助手、设置（更新规则集、备份/恢复、主题切换）。界面支持深浅双主题跟随系统（可手动锁定），移动端为底部标签栏布局，已适配 iOS Safari（可「添加到主屏幕」）。
+
+**mihomo 监控**：`--setup-api` 会安装 metacubexd（固定版本 1.269.0），并在 smart 实例上启用仅回环的 Clash API（`127.0.0.1:9090`，不对公网开放，经 api-server 8444 反代访问）。控制台「监控」页上半为概览摘要，下半为完整 metacubexd 面板：**控制台与 API 同源时面板内嵌显示；控制台跨站托管（Cloudflare Pages、本地 file:// 等）时改为「新标签页打开」**——顶层导航下认证 cookie 属第一方，iOS Safari 可靠。首次打开完整面板时，在其设置里把后端地址填 `https://<你的域名>:8444/api/mihomo/proxy`，**secret 留空**。
+
+**安全模型**：唯一公网入口是 8444（TLS + Bearer 令牌）。mihomo Clash API 仅回环，真实 Clash secret 由 api-server 在服务端注入，浏览器永不接触。mihomo 静态资源经一次性 `?token=` 完成首次鉴权后种下 `pgw_mihomo` 会话 cookie（`Path=/; HttpOnly; Secure; SameSite=Strict`），后续子资源与 `/api/mihomo/*` 调用（含写方法与 WS 白名单流）走该 cookie；其他 `/api/*` 仍仅认 Bearer。所有响应带安全响应头（HSTS / X-Frame-Options / nosniff / CSP），`/api/*` 另有每源 IP 令牌桶限流（超限 429），请求日志静默不落盘。令牌等同控制台全部权限：不要分享给他人，泄露后立即在 `/opt/5gpn/etc/api.env` 更换并 `systemctl restart 5gpn-api`。
+
+令牌保存在 `/opt/5gpn/etc/api.env`（权限 600）。注意：默认 `FIREWALL_MODE=preserve` 不接管防火墙，需自行放行 TCP 8444；8443 已被回环 sniproxy 占用，故 API 默认用 8444。
+
 ## Telegram Bot
 
 ```bash
@@ -162,21 +208,36 @@ sudo ./install.sh --setup-tgbot
 
 添加出口：`🌐 出口 -> ➕ 添加出口`，直接粘贴节点链接（`ss:// vmess:// trojan:// vless:// hysteria2:// tuic:// anytls:// socks5:// http://`），备注会自动作为出口名。
 
-## 网页控制台（可选）
+## DNS 与 ECS
+
+上游池分两组：**国际池**（`REMOTE_DNS`，海外/代理侧解析）与**国内池**（`LOCAL_DNS`，ChinaList 直连解析）。两组都支持：
+
+- 纯 IP（`1.1.1.1`、`223.5.5.5:53`、IPv6 `[2001:4860:4860::8888]:53`）；
+- `udp://` / `tcp://`（须 IP 字面量）；
+- `https://` / `tls://`（**支持域名**，含伪装路径如 `https://host/api/xxxx`），域名由内置 bootstrap 解析器解析。
+
+例如把上游指向自建 AdGuard Home 的 DoH：
 
 ```bash
-sudo ./install.sh --setup-api   # 生成令牌并启用 HTTP 控制 API（默认端口 8444），同时安装 mihomo 监控面板
+# 国际池用 AGH DoH（不带 ECS）；国内池用 AGH DoH（携带 ECS）+ 传统 DNS 兜底
+sudo ./install.sh --set-dns "https://agh-jp.example.com/api/xxxx https://adg.example.com/api/xxxx" \
+                            "https://agh-jp.example.com/api/xxxx 180.76.76.76 119.29.29.29"
+sudo ./install.sh --set-ecs 112.96.54.0/24
 ```
 
-执行后会打印 **API 地址** 与 **令牌**。打开仓库里的 `webui/index.html`（纯静态单文件，可本地双击打开，或托管到任意静态托管 / Cloudflare Pages，见 `webui/README.md`），填入地址和令牌即可使用——与 Telegram Bot 调用同一后端，实时同步。控制台共六页：**仪表盘**（实时状态、流量/延迟曲线、mihomo 概览）、**出口管理**、**分流规则**、**mihomo 监控**、**AI 助手**（绑定你自己的 OpenAI 兼容接口，自然语言生成分流方案，人工确认后才生效）、**设置**（更新规则集、备份/恢复、主题切换）。界面支持深浅双主题跟随系统（可手动锁定），移动端为底部标签栏布局，已适配 iOS Safari（可「添加到主屏幕」）。
+要点：
 
-### mihomo 监控
+- **ECS 只随国内链查询发出**（`local_primary`/`local_secondary`），国际链查询不携带。用 `--set-ecs` 可随时修改，立即生效；安装期可用 `PGW_ECS` 预设（默认 `139.226.48.0/24`）。
+- DoH 证书需为公网可信证书；建议在 AGH 侧按来源 IP 限流/白名单。
+- sniproxy 的解析器只认纯 IP：上游为 DoH/DoT 时自动改用 `127.0.0.1`（本机 mosdns，走完整链路与缓存），不产生警告。
 
-`--setup-api` 会安装 metacubexd（固定版本 1.269.0），并在 smart 实例上启用仅回环的 Clash API（`127.0.0.1:9090`，不对公网开放，经 api-server 8444 反代访问）。控制台「监控」页提供完整面板（上半为概览摘要，下半为 metacubexd）：**控制台与 API 同源时面板内嵌显示；控制台跨站托管（Cloudflare Pages、本地 file:// 等）时改为「新标签页打开」**——顶层导航下认证 cookie 属第一方，iOS Safari 可靠。首次打开完整面板时，在其设置里把后端地址填 `https://<你的域名>:8444/api/mihomo/proxy`，**secret 留空**（面板与 API 同源，浏览器自动携带 `pgw_mihomo` 会话 cookie 完成认证；api-server 在服务端注入真实的 Clash secret，浏览器不接触它）。
+## 冒烟检查（每次安装/更新后）
 
-**安全说明**：控制台与 mihomo 面板均必须经 **HTTPS** 访问。鉴权沿用 Bearer 令牌；由于浏览器无法给 iframe/WS 子请求加自定义头，mihomo 静态资源改用一次性 `?token=` 完成首次鉴权并种下 `pgw_mihomo` 同源会话 cookie（`Path=/; HttpOnly; Secure; SameSite=Strict`）——后续静态子资源与 `/api/mihomo/*` 面板调用（含写方法与 WS 白名单流）走该 cookie，其他 `/api/*` 仍仅认 Bearer；放行写方法的前提是 SameSite=Strict（跨站请求不带 cookie，CSRF 不可行）与 HttpOnly（JS 读不到），请勿放宽。令牌等同控制台全部权限，不要分享给他人；泄露后立即在 `/opt/5gpn/etc/api.env` 更换并 `systemctl restart 5gpn-api`。
+```bash
+sudo bash /opt/5gpn/scripts/smoke-check.sh
+```
 
-令牌保存在 `/opt/5gpn/etc/api.env`（权限 600）。注意：默认 `FIREWALL_MODE=preserve` 不接管防火墙，需自行放行 TCP 8444；8443 已被回环 sniproxy 占用，故 API 默认用 8444。
+只读、约一分钟：服务状态、端口监听、DNS/DoT 应答（区分无应答与上游拒绝）、TUN 链路（含 `--interface pgw-smart` 实际出网探测）、fwmark 规则健康度、API 健康、证书有效期；配置了域名 DoH 上游时还会做一次 wire-format 直连探测。结尾附人工核对步骤。
 
 ## 配置参考
 
@@ -185,20 +246,23 @@ sudo ./install.sh --setup-api   # 生成令牌并启用 HTTP 控制 API（默认
 ```text
 install.sh        # 安装/管理入口（唯一需要直接运行的脚本）
 quick-install.sh  # 一键安装引导
-lib/              # 组件源码与模板（tgbot、wa-shim、Go 代理、mosdns 模板等）
-tests/            # 策略测试
+lib/              # 组件源码与模板（tgbot、wa-shim、api-server、Go 代理、mihomo/mosdns 生成器等）
+webui/            # 静态网页控制台（index.html 单文件）
+scripts/          # 运维脚本（smoke-check.sh 冒烟检查）
+tests/            # 策略与单元测试
 ```
 
 ### 关键路径
 
 | 路径 | 说明 |
 | --- | --- |
-| `/opt/5gpn` | 项目目录（一键安装拉取） |
-| `/opt/5gpn` | 运行时主目录（含 `bin/5gpn-ctl`、`bin/tgbot.py`、`bin/mihomo` 等） |
+| `/opt/5gpn` | 项目 git 检出 + 运行时主目录（`bin/5gpn-ctl`、`bin/api-server.py`、`bin/mihomo` 等） |
 | `/opt/5gpn/etc/current-exit` | 当前出口 |
+| `/opt/5gpn/etc/api.env` | 控制台 API 令牌与端口（权限 600） |
 | `/opt/5gpn/etc/tgbot.env` | Bot Token 和管理员 ID（权限 600） |
+| `/etc/5gpn/` | 出口与分流状态（`exits/`、`rules.conf`、`policy-map.conf`、`mihomo-api-secret`） |
 | `/etc/mosdns/config.yaml` | mosdns 实际配置 |
-| `/etc/mosdns/gfwlist-extra-local.txt` | 本地补充 GFWList 域名 |
+| `/etc/mosdns/.remote_dns` `.local_dns` `.ecs` | DNS 上游与 ECS（`--set-dns` / `--set-ecs` 维护） |
 | `/etc/sniproxy.conf` | sniproxy 配置（resolver 强制 `ipv4_only`） |
 
 ### 端口
@@ -211,8 +275,8 @@ tests/            # 策略测试
 | 443 | UDP | `172.22.0.0/16` | QUIC 透明代理 |
 | 853 | TCP | 公网 | DNS over TLS |
 | 8111 | TCP | 公网 | iOS 描述文件下载 |
-| 8444 | TCP | 公网 | HTTP 控制 API（可选，`--setup-api` 后；注意 8443 已被回环 sniproxy 占用） |
-| 9090 | TCP | 仅 127.0.0.1 | mihomo Clash API（smart 实例回环；经 api-server 8444 反代访问，不对公网开放） |
+| 8444 | TCP | 公网 | HTTP 控制 API（可选，`--setup-api` 后） |
+| 9090 | TCP | 仅 127.0.0.1 | mihomo Clash API（smart 实例回环；经 api-server 8444 反代访问） |
 
 ### 环境变量
 
@@ -224,25 +288,14 @@ LOCAL_DNS="101.226.4.6,218.30.118.6,180.76.76.76,119.29.29.29"  # 国内 DNS 竞
 PGW_ECS="139.226.48.0/24"         # 国内链查询携带的 ECS（可用 --set-ecs 随时改）
 LOWMEM=1                        # 强制低内存模式（≤1GB 自动启用）
 MIHOMO_VERSION="1.19.28"        # 可覆盖锁定版，建议保持默认
+METACUBEXD_VERSION="1.269.0"    # 可覆盖锁定版 metacubexd
 TG_BOT_TOKEN="123456:ABC"
 TG_ADMIN_IDS="11111111,22222222"
 FIREWALL_MODE=preserve          # preserve(默认)/auto/managed，见下方说明
 PGW_TUNING=essential            # essential(默认)/performance 内核调优档位
 ```
 
-旧兼容变量 `DNS_UPSTREAMS`、`OVERSEAS_DNS`、`PRIVATE_OVERSEAS_DNS`、`SNIPROXY_DNS` 等同于 `REMOTE_DNS`。也支持 `https://`、`tls://`、`udp://`、`tcp://` 协议前缀。
-
-`https://` / `tls://` 上游**支持域名**（`udp://`、`tcp://` 仍须 IP 字面量），域名由内置
-bootstrap 解析器解析。因此可以把上游指向自己的 DoH 服务器，例如自建的 AdGuard Home：
-
-```bash
-# 海外与国内池都换成自建 AGH 的 DoH（国内链仍会携带 ECS，AGH 的上游按 ECS 返回最优结果）
-sudo ./install.sh --set-dns "https://agh-tokyo.example.com/dns-query https://agh-hk.example.com/dns-query" \
-                          "https://agh-tokyo.example.com/dns-query"
-sudo ./install.sh --set-ecs 112.96.54.0/24
-```
-
-注意：DoH 证书需为公网可信证书；建议在 AGH 侧按来源 IP 限流/白名单，避免开放给全网。
+旧兼容变量 `DNS_UPSTREAMS`、`OVERSEAS_DNS`、`PRIVATE_OVERSEAS_DNS`、`SNIPROXY_DNS` 等同于 `REMOTE_DNS`。
 
 ### 防火墙与内核调优
 
@@ -263,29 +316,19 @@ sudo ./install.sh --set-ecs 112.96.54.0/24
 `rp_filter`、可用时启用 BBR）；`PGW_TUNING=performance` 使用旧版激进吞吐调优
 （大连接表、短超时等）。旧版本升级时沿用 performance，不会悄悄改变内核行为。
 
-## 冒烟检查（每次安装/更新后）
-
-```bash
-sudo bash /opt/5gpn/scripts/smoke-check.sh
-```
-
-只读、约一分钟：服务状态、端口监听、DNS/DoT 应答、TUN 链路（含 `--interface pgw-smart`
-实际出网探测）、fwmark 规则健康度、API 健康、证书有效期，结尾附人工核对步骤。
-有失败项时按提示逐项排查（参考常见问题）。
-
 ## 常见问题
 
 **为什么内网客户端不返回 IPv6？** 透明代理路径按 IPv4 设计；只有 `172.22.0.0/16` 来源的 AAAA 返回 NOERROR/NODATA。Wi-Fi、公网及其他来源正常返回 IPv6。
 
-**为什么国内网站直连？** ChinaList 域名由 mosdns 转发到 4 路国内 DNS 竞速代理（携带 ECS，默认 `139.226.48.0/24`，可用 `--set-ecs` 修改），获得更适合大陆访问的结果。UDP 150ms 无响应后自动切 TCP，都不通才走海外兜底（含 `22.22.22.22`），避免单一国内 DNS 故障卡住页面。
+**为什么国内网站直连？** ChinaList 域名由 mosdns 转发到国内 DNS 竞速（携带 ECS，可用 `--set-ecs` 修改），获得更适合大陆访问的结果。UDP 150ms 无响应后自动切 TCP，都不通才走海外兜底（含 `22.22.22.22`），避免单一国内 DNS 故障卡住页面。
 
-**如何更新 DNS 规则？**
+**如何更新规则集与程序本身？** 规则集：`sudo ./install.sh --update-rules`。程序：`sudo ./install.sh --update`（无需手动 git pull）。
 
-```bash
-cd /opt/5gpn && sudo git pull && sudo ./install.sh --update-rules
-```
+**smart 模式分流全部失败怎么排查？** 先跑 `sudo bash scripts/smoke-check.sh` 定位环节；再看 `journalctl -u 5gpn-mihomo@smart -n 30 --no-pager`（规则是否命中、拨号错误类型）、`ip route show table 100`（默认路由是否指向 pgw-smart）、以及 smart.yaml 的 `dns` 段是否就位。
 
-**如何查看日志？** 相关服务：`mosdns`、`sniproxy`、`wa-shim`、`quic-proxy`、`5gpn-tgbot`、`5gpn-mihomo@*`，用 `systemctl status` / `journalctl -u <服务> -f` 查看。
+**sniproxy 用什么 DNS？** 上游为纯 IP 时直接用该 IP；上游为 DoH/DoT 时用 `127.0.0.1`（本机 mosdns，走完整链路与缓存）。sniproxy 的解析器只用于解析被代理网站的上游主机名，与客户端 DNS 策略无关。
+
+**如何查看日志？** 相关服务：`mosdns`、`sniproxy`、`wa-shim`、`quic-proxy`、`5gpn-tgbot`、`5gpn-mihomo@*`，用 `systemctl status` / `journalctl -u <服务> -f` 查看；也可在 Telegram Bot 的 📜 日志里按服务查看。
 
 **如何测试 DoT？**
 
