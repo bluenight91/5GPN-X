@@ -16,6 +16,8 @@ import time
 LISTEN = os.environ.get("WA_SHIM_LISTEN", "0.0.0.0")
 PORT = int(os.environ.get("WA_SHIM_PORT", "443"))
 BACKEND = os.environ.get("WA_SHIM_BACKEND", "127.0.0.1:8443")
+WLOC_BACKEND = os.environ.get("WA_SHIM_WLOC_BACKEND", "127.0.0.1:10451")
+WLOC_STATE = os.environ.get("WA_SHIM_WLOC_STATE", "/opt/5gpn/etc/wloc/modifier.state")
 WA_HOST = os.environ.get("WA_SHIM_WA_HOST", "g.whatsapp.net")
 WA_PORT = int(os.environ.get("WA_SHIM_WA_PORT", "443"))
 RESOLVERS = [x.strip() for x in os.environ.get("WA_SHIM_RESOLVER", "1.1.1.1,8.8.8.8").split(",") if x.strip()]
@@ -50,6 +52,7 @@ def hostport(value, default):
 
 
 BACKEND_HOST, BACKEND_PORT = hostport(BACKEND, 8443)
+WLOC_HOST, WLOC_PORT = hostport(WLOC_BACKEND, 10451)
 
 
 def source_allowed(value):
@@ -60,9 +63,46 @@ def source_allowed(value):
     return any(address in network for network in ALLOW)
 
 
+def tls_server_name(data):
+    """Return the SNI from one complete TLS ClientHello record, or empty."""
+    try:
+        if len(data) < 9 or data[0] != 22 or data[5] != 1:
+            return ""
+        pos = 9 + 2 + 32
+        pos += 1 + data[pos]  # session id
+        pos += 2 + int.from_bytes(data[pos:pos + 2], "big")  # cipher suites
+        pos += 1 + data[pos]  # compression methods
+        extensions_end = pos + 2 + int.from_bytes(data[pos:pos + 2], "big")
+        pos += 2
+        while pos + 4 <= extensions_end <= len(data):
+            kind = int.from_bytes(data[pos:pos + 2], "big")
+            length = int.from_bytes(data[pos + 2:pos + 4], "big")
+            pos += 4
+            value = data[pos:pos + length]
+            pos += length
+            if kind != 0 or len(value) < 5:
+                continue
+            name_len = int.from_bytes(value[3:5], "big")
+            if value[2] == 0 and 5 + name_len <= len(value):
+                return value[5:5 + name_len].decode("idna").rstrip(".").lower()
+    except (IndexError, UnicodeError, ValueError):
+        pass
+    return ""
+
+
+def wloc_active():
+    try:
+        with open(WLOC_STATE, encoding="ascii") as handle:
+            return handle.read(16).strip() == "active"
+    except OSError:
+        return False
+
+
 def classify(data):
     if len(data) >= 2 and data[:2] in WA_PREFIXES:
         return "whatsapp", "known" if data[:4] in KNOWN else "new"
+    if wloc_active() and tls_server_name(data) in {"gs-loc.apple.com", "gs-loc-cn.apple.com"}:
+        return "wloc", ""
     return "backend", ""
 
 
@@ -170,6 +210,22 @@ async def peek(reader):
         if not chunk:
             break
         data += chunk
+    # For a TLS ClientHello obtain the full first record so its SNI can be
+    # routed before the byte stream is replayed to the selected backend.
+    if len(data) >= 5 and data[0] == 22:
+        length = int.from_bytes(data[3:5], "big")
+        if 4 <= length <= 16384:
+            while len(data) < 5 + length:
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    break
+                try:
+                    chunk = await asyncio.wait_for(reader.read(5 + length - len(data)), remaining)
+                except (asyncio.TimeoutError, OSError):
+                    break
+                if not chunk:
+                    break
+                data += chunk
     return data
 
 
@@ -220,6 +276,12 @@ async def handle(reader, writer):
                     writer.close()
                     return
                 LOG.warning("WhatsApp edge unavailable; failing open to backend for src=%s", source)
+        elif route == "wloc" and source_allowed(source):
+            if await relay(reader, writer, WLOC_HOST, WLOC_PORT, first):
+                writer.close()
+                return
+            LOG.warning("WLOC interceptor unavailable; failing closed for src=%s", source)
+            return
         await relay(reader, writer, BACKEND_HOST, BACKEND_PORT, first)
     finally:
         ACTIVE -= 1

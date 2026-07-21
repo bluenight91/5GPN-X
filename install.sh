@@ -38,6 +38,7 @@ bootstrap_from_repo_if_needed() {
         lib/mosdns.yaml.template lib/update-rules.sh lib/ios-http.py lib/tgbot.py
         lib/wa-shim.py lib/rules-import.py lib/mihomo-exit-config.py
         lib/mihomo-router-config.py lib/rules-default.conf lib/host-setup.sh
+        lib/wloc-interceptor.py lib/wloc-rewrite.py lib/wloc-wifitile.py
     )
     local missing=0 f tmpdir
     for f in "${required[@]}"; do
@@ -1075,6 +1076,112 @@ EOF
     systemctl enable wa-shim.service 2>/dev/null || true
     ok "WhatsApp no-SNI shim installed (public :443 -> sniproxy 127.0.0.1:8443)"
 }
+install_wloc() {
+    # WLOC is opt-in: install the isolated runtime now, but do not start it or
+    # hijack DNS until an authorized Bot user selects a target.
+    local wloc_dir="${CONF_DIR}/wloc"
+    info "Installing scoped Apple WLOC interceptor..."
+    if ! getent group wloc >/dev/null; then
+        groupadd --system wloc
+    fi
+    if ! id -u wloc >/dev/null 2>&1; then
+        useradd --system --gid wloc --home-dir /nonexistent --shell /usr/sbin/nologin wloc
+    fi
+    install -d -o root -g wloc -m 0750 "$wloc_dir"
+    install -d -o wloc -g wloc -m 0750 /var/lib/5gpn/wloc
+    install -m 0755 "${LIB_DIR}/wloc-interceptor.py" "${BASE_DIR}/bin/wloc-interceptor.py"
+    install -m 0644 "${LIB_DIR}/wloc-rewrite.py" "${BASE_DIR}/bin/wloc_rewrite.py"
+    install -m 0644 "${LIB_DIR}/wloc-wifitile.py" "${BASE_DIR}/bin/wloc_wifitile.py"
+    if [[ ! -f "${wloc_dir}/location.json" ]]; then
+        cat > "${wloc_dir}/location.json" <<'EOF'
+{"active":"default","default_accuracy_m":25,"presets":{"default":{"lat":0,"lon":0,"accuracy_m":25,"datum":"wgs84"}}}
+EOF
+    fi
+    if [[ ! -f "${wloc_dir}/modifier.state" ]]; then
+        printf 'paused\n' > "${wloc_dir}/modifier.state"
+    fi
+    if [[ ! -f "${wloc_dir}/jitter.seed" ]]; then
+        umask 0077
+        openssl rand 32 > "${wloc_dir}/jitter.seed"
+    fi
+    chown root:wloc "${wloc_dir}/location.json" "${wloc_dir}/modifier.state" "${wloc_dir}/jitter.seed"
+    chmod 0640 "${wloc_dir}/location.json" "${wloc_dir}/modifier.state" "${wloc_dir}/jitter.seed"
+    if [[ ! -s "${wloc_dir}/ca.crt" || ! -s "${wloc_dir}/ca.der" || ! -s "${wloc_dir}/leaf.crt" || ! -s "${wloc_dir}/leaf.key" ]]; then
+        local stage ext
+        stage="$(mktemp -d)"
+        ext="${stage}/leaf.ext"
+        umask 0077
+        openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "${stage}/ca.key"
+        openssl req -x509 -new -sha256 -days 3650 -key "${stage}/ca.key" -out "${stage}/ca.crt" \
+            -subj "/CN=5GPN-X WLOC Root CA" -addext "basicConstraints=critical,CA:TRUE,pathlen:0" \
+            -addext "keyUsage=critical,keyCertSign,cRLSign"
+        openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "${stage}/leaf.key"
+        openssl req -new -key "${stage}/leaf.key" -out "${stage}/leaf.csr" -subj "/CN=gs-loc.apple.com"
+        cat > "$ext" <<'EOF'
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature
+extendedKeyUsage=serverAuth
+subjectAltName=DNS:gs-loc.apple.com,DNS:gs-loc-cn.apple.com,DNS:*.ls.apple.com
+EOF
+        openssl x509 -req -sha256 -days 397 -in "${stage}/leaf.csr" -CA "${stage}/ca.crt" \
+            -CAkey "${stage}/ca.key" -CAcreateserial -extfile "$ext" -out "${stage}/leaf.crt"
+        openssl x509 -in "${stage}/ca.crt" -outform DER -out "${stage}/ca.der"
+        openssl verify -CAfile "${stage}/ca.crt" "${stage}/leaf.crt" >/dev/null
+        openssl x509 -checkhost gs-loc.apple.com -noout -in "${stage}/leaf.crt" >/dev/null
+        openssl x509 -checkhost gs-loc-cn.apple.com -noout -in "${stage}/leaf.crt" >/dev/null
+        install -o root -g root -m 0644 "${stage}/ca.crt" "${wloc_dir}/ca.crt"
+        install -o root -g root -m 0644 "${stage}/ca.der" "${wloc_dir}/ca.der"
+        install -o root -g wloc -m 0640 "${stage}/leaf.crt" "${wloc_dir}/leaf.crt"
+        install -o root -g wloc -m 0640 "${stage}/leaf.key" "${wloc_dir}/leaf.key"
+        rm -rf "$stage"
+    fi
+    cat > /etc/systemd/system/5gpn-wloc.service <<EOF
+[Unit]
+Description=5GPN-X scoped Apple WLOC interceptor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=wloc
+Group=wloc
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=GSLOC_LISTEN_HOST=127.0.0.1
+Environment=GSLOC_LISTEN_PORT=10451
+Environment=GSLOC_LEAF_CRT=${wloc_dir}/leaf.crt
+Environment=GSLOC_LEAF_KEY=${wloc_dir}/leaf.key
+Environment=GSLOC_PRESETS=${wloc_dir}/location.json
+Environment=GSLOC_MODIFIER_STATE=${wloc_dir}/modifier.state
+Environment=GSLOC_JITTER_SEED=${wloc_dir}/jitter.seed
+Environment=GSLOC_LOG=/var/lib/5gpn/wloc/interceptor.log
+ExecStart=/usr/bin/python3 ${BASE_DIR}/bin/wloc-interceptor.py
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+ReadOnlyPaths=${wloc_dir} ${BASE_DIR}/bin
+ReadWritePaths=/var/lib/5gpn/wloc
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+TasksMax=64
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+    systemctl disable --now 5gpn-wloc.service 2>/dev/null || true
+    ok "Scoped WLOC runtime installed (disabled until configured in Telegram)"
+}
 install_quic_proxy() {
     ensure_proxy_user
     if [[ ! -x "${BASE_DIR}/bin/quic-proxy" ]]; then
@@ -1128,7 +1235,7 @@ install_mosdns() {
     echo "$REMOTE_DNS" > /etc/mosdns/.sniproxy_dns
     echo "${PGW_ECS:-139.226.48.0/24}" > /etc/mosdns/.ecs
     echo "${PACKET_CACHE_SIZE:-500000}" > /etc/mosdns/.cache_size
-    touch /etc/mosdns/gfwlist.txt /etc/mosdns/chinalist.txt /etc/mosdns/gfwlist-extra-local.txt
+    touch /etc/mosdns/gfwlist.txt /etc/mosdns/chinalist.txt /etc/mosdns/gfwlist-extra-local.txt /etc/mosdns/wloc.txt
     chown -R mosdns:mosdns /etc/mosdns
     chmod 0750 /etc/mosdns /etc/mosdns/certs
     cat > /etc/systemd/system/mosdns.service <<'EOF'
@@ -3125,6 +3232,7 @@ main_install() {
     configure_dns_upstreams
     install_sniproxy
     install_whatsapp_shim
+    install_wloc
     install_quic_proxy
     install_mosdns
     init_rules
