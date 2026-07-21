@@ -339,6 +339,7 @@ Options:
   (none)         Full interactive installation
   --status       Show service status
   --update       Self-update from git and redeploy the runtime (config kept)
+  --smoke        Run the read-only post-deploy smoke check
   --update-rules Update GFWList/ChinaList and reload mosdns
   --renew-cert   Force renew certificates and reload services
   --set-dot-domain <domain>
@@ -3315,6 +3316,10 @@ case "${1:-}" in
         ;;
     --update)
         do_update
+        ;;
+    --smoke)
+        check_root
+        exec bash "${SCRIPT_DIR}/scripts/smoke-check.sh"
         ;;
     --update-rules)
         /usr/local/bin/update-mosdns-rules.sh

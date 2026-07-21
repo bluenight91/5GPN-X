@@ -103,6 +103,10 @@ if [[ "${update_body}" != *'install_cli'* ]]; then
     echo "do_update must install the global 5gpn cli." >&2
     exit 1
 fi
+if [[ "${install_body}" != *'--smoke)'* || "${install_body}" != *'scripts/smoke-check.sh'* ]]; then
+    echo "install.sh must provide a --smoke command running the smoke check." >&2
+    exit 1
+fi
 
 uninstall_body="$(sed -n '/^do_uninstall()/,/^}/p' "${install}")"
 if [[ "${uninstall_body}" != *'5gpn-wloc'* || "${uninstall_body}" != *'userdel wloc'* ]]; then
