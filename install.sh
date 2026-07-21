@@ -2888,8 +2888,9 @@ do_uninstall() {
     shopt -u nullglob
     systemctl stop mosdns dnsdist sniproxy wa-shim quic-proxy china-dns-race-proxy 5gpn-ios-profile.socket 5gpn-ios-profile 5gpn-exit 5gpn-tgbot 5gpn-api 5gpn-wloc 2>/dev/null || true
     systemctl disable mosdns dnsdist sniproxy wa-shim quic-proxy china-dns-race-proxy 5gpn-ios-profile.socket 5gpn-ios-profile 5gpn-exit 5gpn-tgbot 5gpn-api 5gpn-wloc 2>/dev/null || true
-    rm -f /etc/systemd/system/{mosdns,sniproxy,wa-shim,quic-proxy,china-dns-race-proxy,5gpn-ios-profile,update-mosdns-rules,5gpn-exit,5gpn-tgbot,5gpn-wloc}.*
+    rm -f /etc/systemd/system/{mosdns,sniproxy,wa-shim,quic-proxy,china-dns-race-proxy,5gpn-ios-profile,update-mosdns-rules,5gpn-exit,5gpn-tgbot}.*
     rm -f /etc/systemd/system/5gpn-api.*
+    rm -f /etc/systemd/system/5gpn-wloc.*
     rm -f /etc/systemd/system/5gpn-ios-profile@.service \
         /etc/systemd/system/5gpn-mihomo@.service \
         /etc/systemd/system/5gpn-singbox@.service
