@@ -19,6 +19,7 @@ DOMAIN-SUFFIX,google.com,us
 DOMAIN-KEYWORD,netflix,direct
 RULE-SET,${tmp}/dev.list,us
 RULE-SET,https://example.com/remote.list,us
+RULE-SET,https://example.com/china-ipcidr.txt,us
 RULE-SET,https://example.com/ambiguous.yaml#domain,us
 GEOSITE,telegram,us
 GEOIP,cn,direct
@@ -37,7 +38,8 @@ providers = c["rule-providers"]
 assert any(k.startswith("geosite_") and v["format"] == "mrs" and v["behavior"] == "domain" for k,v in providers.items())
 assert any(k.startswith("geoip_") and v["format"] == "mrs" and v["behavior"] == "ipcidr" for k,v in providers.items())
 assert any(v["type"] == "file" and v["behavior"] == "classical" for v in providers.values())
-assert any(v["type"] == "http" and v["format"] == "text" and v["interval"] == 86400 for v in providers.values())
+assert any(v["type"] == "http" and v["format"] == "text" and v["behavior"] == "domain" and v["interval"] == 86400 for v in providers.values()), "bare .list must default to text+domain"
+assert any(v["type"] == "http" and v["format"] == "text" and v["behavior"] == "ipcidr" for v in providers.values()), "ipcidr-keyword .txt must be text+ipcidr"
 assert any(v["type"] == "http" and v["format"] == "yaml" and v["behavior"] == "domain" for v in providers.values())
 PY
 ls "${tmp}/rs"/*.json >/dev/null 2>&1 || fail "local list must be cached as a classical provider"
@@ -45,6 +47,10 @@ ls "${tmp}/rs"/*.json >/dev/null 2>&1 || fail "local list must be cached as a cl
 printf 'RULE-SET,https://example.com/old.srs,us\n' > "${tmp}/bad.conf"
 if EXITS_DIR="${tmp}/exits" WG_DIR="${tmp}/wg" python3 "${gen}" "${tmp}/bad.conf" >/dev/null 2>&1; then
     fail "sing-box .srs must be rejected with a migration error"
+fi
+printf 'RULE-SET,https://example.com/list.txt#classical,us\n' > "${tmp}/bad.conf"
+if EXITS_DIR="${tmp}/exits" WG_DIR="${tmp}/wg" python3 "${gen}" "${tmp}/bad.conf" >/dev/null 2>&1; then
+    fail "text rule-sets must reject #classical (unsupported by mihomo text providers)"
 fi
 printf 'not-a-real-mrs' > "${tmp}/geoip-local.mrs"
 printf 'RULE-SET,%s/geoip-local.mrs#ipcidr,us\n' "${tmp}" > "${tmp}/local-mrs.conf"

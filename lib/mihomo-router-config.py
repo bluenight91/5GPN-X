@@ -222,9 +222,20 @@ def main():
                 add_mrs(tag, source, behavior)
             else:
                 fmt = "text" if suffix.endswith((".txt", ".list")) else "yaml"
-                behavior = behavior_hint or ("domain" if any(word in suffix for word in ("domain-set", "domain_set", "geosite"))
-                                             else "ipcidr" if any(word in suffix for word in ("ipcidr", "ip-set", "geoip"))
-                                             else "classical")
+                ip_words = ("ipcidr", "ip-set", "ip_set", "geoip", "cidr")
+                domain_words = ("domain-set", "domain_set", "domain-list", "domain_list", "geosite", "domains")
+                if fmt == "text":
+                    # mihomo text providers only support domain/ipcidr behaviors;
+                    # classical over text misparses every bare line as a broken
+                    # rule and floods the log with "missing subsequent
+                    # parameters" warnings (also slowing startup).
+                    behavior = behavior_hint or ("ipcidr" if any(word in suffix for word in ip_words) else "domain")
+                    if behavior == "classical":
+                        die("text rule-sets (.txt/.list) cannot use classical behavior; convert to a YAML payload")
+                else:
+                    behavior = behavior_hint or ("domain" if any(word in suffix for word in domain_words)
+                                                 else "ipcidr" if any(word in suffix for word in ip_words)
+                                                 else "classical")
                 providers[tag] = {"type": "http", "behavior": behavior, "format": fmt,
                                   "url": source, "path": "./providers/%s.%s" % (tag, "txt" if fmt == "text" else "yaml"),
                                   "interval": INTERVAL, "proxy": "DIRECT"}
