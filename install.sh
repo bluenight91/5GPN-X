@@ -2851,11 +2851,13 @@ do_update() {
     setup_schedules
     install -m 0755 "${SCRIPT_PATH}" "${BASE_DIR}/bin/5gpn-ctl"
     # Rebuild URI exit configs from the stored links (generator may have changed).
+    # Subshell is mandatory: edit_exit -> add_exit/regen_smart use `exit 1` on
+    # errors, which would otherwise kill the whole --update before later steps.
     local f n
     shopt -s nullglob
     for f in "${EXITS_DIR}"/*.uri; do
         n="$(basename "$f" .uri)"
-        edit_exit "$n" < "$f" >/dev/null 2>&1 || warn "重建出口 $n 失败，可手动 --edit-exit $n"
+        ( edit_exit "$n" < "$f" ) >/dev/null 2>&1 || warn "重建出口 $n 失败，可手动 --edit-exit $n"
     done
     shopt -u nullglob
     [[ -f "${CONF_DIR}/api.env" ]] && setup_api

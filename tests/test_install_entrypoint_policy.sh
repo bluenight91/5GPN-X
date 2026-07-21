@@ -95,6 +95,10 @@ if [[ "${update_body}" != *'install_wloc'* ]]; then
     echo "do_update must install the WLOC runtime as well (else /wloc reports not installed)." >&2
     exit 1
 fi
+if [[ "${update_body}" != *'( edit_exit "$n" < "$f" )'* ]]; then
+    echo "do_update must subshell-wrap edit_exit so an exit 1 cannot kill the whole update." >&2
+    exit 1
+fi
 
 uninstall_body="$(sed -n '/^do_uninstall()/,/^}/p' "${install}")"
 if [[ "${uninstall_body}" != *'5gpn-wloc'* || "${uninstall_body}" != *'userdel wloc'* ]]; then
