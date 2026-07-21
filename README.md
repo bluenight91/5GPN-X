@@ -90,23 +90,22 @@ cd /opt/5gpn && sudo ./install.sh --update
 
 ## 管理命令
 
-安装后 `/opt/5gpn` 自动成为本仓库的 git 检出（运行时目录 `bin/`、`etc/` 等不受影响），所有管理命令都在该目录下执行：
+安装后 `/opt/5gpn` 自动成为本仓库的 git 检出，同时提供全局命令 `5gpn`（`/usr/local/bin/5gpn`），在任意目录直接执行：
 
 ```bash
-cd /opt/5gpn
-sudo ./install.sh --update             # 一键更新到最新版（保留全部配置）
-sudo ./install.sh --status              # 查看状态
-sudo ./install.sh --update-rules        # 更新 GFWList/ChinaList 并重载 mosdns
-sudo ./install.sh --renew-cert          # 续期证书
-sudo ./install.sh --set-dot-domain dns.example.com
-sudo ./install.sh --set-dns "1.1.1.1 8.8.8.8" "223.5.5.5 119.29.29.29"
-sudo ./install.sh --set-ecs 112.96.54.0/24   # 设置国内链查询携带的 ECS（默认 139.226.48.0/24）
-sudo ./install.sh -ios                  # 重新生成 iOS 描述文件和二维码
-sudo ./install.sh --list-exits          # 列出出口
-sudo ./install.sh --check-exits         # 检测出口连通性
-sudo ./install.sh --setup-tgbot         # 配置 Telegram Bot
-sudo ./install.sh --setup-api           # 启用 HTTP 控制 API + 网页控制台（可选）
-sudo ./install.sh --uninstall           # 卸载
+sudo 5gpn --update             # 一键更新到最新版（保留全部配置）
+sudo 5gpn --status              # 查看状态
+sudo 5gpn --update-rules        # 更新 GFWList/ChinaList 并重载 mosdns
+sudo 5gpn --renew-cert          # 续期证书
+sudo 5gpn --set-dot-domain dns.example.com
+sudo 5gpn --set-dns "1.1.1.1 8.8.8.8" "223.5.5.5 119.29.29.29"
+sudo 5gpn --set-ecs 112.96.54.0/24   # 设置国内链查询携带的 ECS（默认 139.226.48.0/24）
+sudo 5gpn -ios                  # 重新生成 iOS 描述文件和二维码
+sudo 5gpn --list-exits          # 列出出口
+sudo 5gpn --check-exits         # 检测出口连通性
+sudo 5gpn --setup-tgbot         # 配置 Telegram Bot
+sudo 5gpn --setup-api           # 启用 HTTP 控制 API + 网页控制台（可选）
+sudo 5gpn --uninstall           # 卸载
 ```
 
 出口与分流相关子命令见下两节；其余子命令（`--show-rules`、`--show-policy`、`--import-rules`、`--proxy-domain`、`--setup-whatsapp` 等）可用 `sudo ./install.sh --help` 查看。
