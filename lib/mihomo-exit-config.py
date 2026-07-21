@@ -6,6 +6,7 @@ stdlib-only while safely quoting credentials and other user-controlled values.
 """
 import base64
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -23,14 +24,28 @@ def _dns_servers(env_name, default):
     return [x for x in raw.split() if x]
 
 
+def _pure_ips(values):
+    out = []
+    for value in values:
+        try:
+            ipaddress.ip_address(value)
+            out.append(value)
+        except ValueError:
+            continue
+    return out
+
+
 # mihomo's internal DNS client is strict about refused/ip-version answers and
 # breaks against the gateway's own AAAA-rejecting resolver path; give it real
 # upstreams instead of relying on the system resolver.
 DNS_LOCAL = _dns_servers("MIHOMO_DNS_LOCAL", "223.5.5.5 119.29.29.29 180.76.76.76")
 DNS_REMOTE = _dns_servers("MIHOMO_DNS_REMOTE", "1.1.1.1 8.8.8.8 9.9.9.9")
+# default-nameserver bootstraps DoH/DoT hostname resolution; mihomo requires
+# it to be PURE IPs, so DoH URLs from the pool must be filtered out.
+DNS_BOOTSTRAP = _pure_ips(DNS_LOCAL)[:2] or ["223.5.5.5", "119.29.29.29"]
 DNS_CONFIG = {"enable": True, "ipv6": False,
               "nameserver": DNS_LOCAL + DNS_REMOTE, "fallback": DNS_REMOTE,
-              "default-nameserver": (DNS_LOCAL[:2] or ["223.5.5.5", "119.29.29.29"]),
+              "default-nameserver": DNS_BOOTSTRAP,
               "proxy-server-nameserver": DNS_LOCAL + DNS_REMOTE}
 
 

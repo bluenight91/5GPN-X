@@ -27,5 +27,7 @@ fail() { echo "$1" >&2; exit 1; }
 # --- mihomo bootstrap for DoH hostnames ------------------------------------------
 [[ "${gen}" == *'default-nameserver'* ]] || fail "router dns must set default-nameserver (bootstrap)"
 [[ "${exitgen}" == *'default-nameserver'* ]] || fail "exit dns must set default-nameserver (bootstrap)"
+[[ "${gen}" == *'_pure_ips(DNS_LOCAL)'* && "${exitgen}" == *'_pure_ips(DNS_LOCAL)'* ]] \
+    || fail "default-nameserver must filter DoH URLs out (mihomo requires pure IPs)"
 
 echo "test_doh_ecs_policy: OK"

@@ -2655,7 +2655,7 @@ setup_api() {
     fi
     install -m 0755 "${LIB_DIR}/api-server.py" "${BASE_DIR}/bin/api-server.py"
     install -m 0755 "${SCRIPT_PATH}" "${BASE_DIR}/bin/5gpn-ctl"
-    if [[ -f "${SCRIPT_DIR}/webui/index.html" ]]; then
+    if [[ -f "${SCRIPT_DIR}/webui/index.html" && "${SCRIPT_DIR}" != "${BASE_DIR}" ]]; then
         mkdir -p "${BASE_DIR}/webui"
         install -m 0644 "${SCRIPT_DIR}/webui/index.html" "${BASE_DIR}/webui/index.html"
     fi
