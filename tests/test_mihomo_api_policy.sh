@@ -36,6 +36,6 @@ done
 
 # --- fwmark ip rules must be deduplicated, and --update rebuilds URI exits -----
 [[ "${install_body}" == *'while ip rule del fwmark "${EXIT_MARK}" table "${EXIT_TABLE}"'* ]] || fail "set_exit must dedupe fwmark ip rules"
-[[ "${install_body}" == *'edit_exit "$n" < "$f"'* ]] || fail "do_update must rebuild URI exits from stored links"
+[[ "${install_body}" == *'PGW_EXIT_OVERWRITE=1 add_exit "$n" < "$f"'* ]] || fail "do_update must rebuild URI exits from stored links"
 
 echo "test_mihomo_api_policy: OK"
