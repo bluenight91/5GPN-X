@@ -91,5 +91,15 @@ if [[ "${update_body}" != *'systemctl reset-failed'* ]]; then
     echo "do_update must reset-failed services before restart (start-limit-hit after crash loops)." >&2
     exit 1
 fi
+if [[ "${update_body}" != *'install_wloc'* ]]; then
+    echo "do_update must install the WLOC runtime as well (else /wloc reports not installed)." >&2
+    exit 1
+fi
+
+uninstall_body="$(sed -n '/^do_uninstall()/,/^}/p' "${install}")"
+if [[ "${uninstall_body}" != *'5gpn-wloc'* || "${uninstall_body}" != *'userdel wloc'* ]]; then
+    echo "do_uninstall must clean up the WLOC service and user." >&2
+    exit 1
+fi
 
 echo "install entrypoint policy OK"

@@ -2839,6 +2839,7 @@ do_update() {
     cur_ns="$(cat /etc/mosdns/.remote_dns 2>/dev/null || cat "${CONF_DIR}/.remote_dns" 2>/dev/null || echo "${DEFAULT_REMOTE_DNS[*]}")"
     REMOTE_DNS="$cur_ns" install_sniproxy   # re-render conf with current DNS, not defaults
     install_whatsapp_shim
+    install_wloc
     cmp -s "${LIB_DIR}/quic-proxy.go" "${SRC_DIR}/quic-proxy.go" 2>/dev/null || rm -f "${BASE_DIR}/bin/quic-proxy"
     install_quic_proxy
     install_mosdns_binary
@@ -2885,9 +2886,9 @@ do_uninstall() {
         systemctl stop "5gpn-singbox@$(basename "$f" .type).service" 2>/dev/null || true
     done
     shopt -u nullglob
-    systemctl stop mosdns dnsdist sniproxy wa-shim quic-proxy china-dns-race-proxy 5gpn-ios-profile.socket 5gpn-ios-profile 5gpn-exit 5gpn-tgbot 5gpn-api 2>/dev/null || true
-    systemctl disable mosdns dnsdist sniproxy wa-shim quic-proxy china-dns-race-proxy 5gpn-ios-profile.socket 5gpn-ios-profile 5gpn-exit 5gpn-tgbot 5gpn-api 2>/dev/null || true
-    rm -f /etc/systemd/system/{mosdns,sniproxy,wa-shim,quic-proxy,china-dns-race-proxy,5gpn-ios-profile,update-mosdns-rules,5gpn-exit,5gpn-tgbot}.*
+    systemctl stop mosdns dnsdist sniproxy wa-shim quic-proxy china-dns-race-proxy 5gpn-ios-profile.socket 5gpn-ios-profile 5gpn-exit 5gpn-tgbot 5gpn-api 5gpn-wloc 2>/dev/null || true
+    systemctl disable mosdns dnsdist sniproxy wa-shim quic-proxy china-dns-race-proxy 5gpn-ios-profile.socket 5gpn-ios-profile 5gpn-exit 5gpn-tgbot 5gpn-api 5gpn-wloc 2>/dev/null || true
+    rm -f /etc/systemd/system/{mosdns,sniproxy,wa-shim,quic-proxy,china-dns-race-proxy,5gpn-ios-profile,update-mosdns-rules,5gpn-exit,5gpn-tgbot,5gpn-wloc}.*
     rm -f /etc/systemd/system/5gpn-api.*
     rm -f /etc/systemd/system/5gpn-ios-profile@.service \
         /etc/systemd/system/5gpn-mihomo@.service \
@@ -2914,6 +2915,9 @@ do_uninstall() {
     fi
     userdel "${EXIT_USER}" 2>/dev/null || true
     userdel mosdns 2>/dev/null || true
+    userdel wloc 2>/dev/null || true
+    groupdel wloc 2>/dev/null || true
+    rm -rf /var/lib/5gpn
     warn "SSL certificates in /etc/letsencrypt/live/ are kept. Remove manually if needed."
     if [[ -e /swapfile ]]; then
         warn "Swapfile /swapfile is kept. To remove: swapoff /swapfile && rm -f /swapfile && sed -i '/^\\/swapfile /d' /etc/fstab"
