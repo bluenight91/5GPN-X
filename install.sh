@@ -1591,6 +1591,8 @@ ExecStart=${MIHOMO_BIN} -d ${CONF_DIR}/mihomo/%I -f ${EXITS_DIR}/%I.yaml
 ExecStartPost=-/usr/local/bin/5gpn-apply-exit.sh
 Restart=on-failure
 RestartSec=5
+# ExecStartPost may legitimately wait ~2min for the TUN on low-RAM boxes.
+TimeoutStartSec=180
 User=root
 LimitNOFILE=65535
 Environment=SKIP_SYSTEM_IPV6_CHECK=1
@@ -1786,11 +1788,23 @@ if ! ip link show "${iface}" >/dev/null 2>&1; then
             runtime_conf="${WG_DIR}/${iface}.conf"
             [[ "${conf}" == "${runtime_conf}" ]] || ln -sf "${conf}" "${runtime_conf}"
             wg-quick up "${iface}" 2>/dev/null || { echo "[!] exit '${current}' (wireguard) failed to start"; exit 1; } ;;
-        shadowsocks|vmess|trojan|vless|hysteria|hysteria2|tuic|anytls|shadowtls|socks|http|router) systemctl start "$(mihomo_unit "${current}")" 2>/dev/null || { echo "[!] exit '${current}' (${etype}) failed to start"; exit 1; } ;;
+        shadowsocks|vmess|trojan|vless|hysteria|hysteria2|tuic|anytls|shadowtls|socks|http|router)
+            unit="$(mihomo_unit "${current}")"
+            state="$(systemctl show -p ActiveState --value "${unit}" 2>/dev/null || echo inactive)"
+            # When this script runs as the unit's own ExecStartPost the unit is
+            # still "activating"; `systemctl start` on it deadlocks (start-post
+            # waits for the start job, which waits for start-post) until
+            # TimeoutStartSec kills it. In that case mihomo is already
+            # starting — just wait for the TUN below.
+            if [[ "${state}" != "active" && "${state}" != "activating" ]]; then
+                systemctl start "${unit}" 2>/dev/null || { echo "[!] exit '${current}' (${etype}) failed to start"; exit 1; }
+            fi ;;
     esac
 fi
 
-for _ in $(seq 1 50); do ip link show up "${iface}" >/dev/null 2>&1 && break; sleep 0.1; done
+# TUN creation can lag far behind the mihomo fork on low-RAM boxes
+# (memconservative geodata load + ruleset downloads), so wait up to 120s.
+for _ in $(seq 1 1200); do ip link show up "${iface}" >/dev/null 2>&1 && break; sleep 0.1; done
 ip link show up "${iface}" >/dev/null 2>&1 || { echo "[!] exit '${current}' (${etype}) device is not up"; exit 1; }
 ip route replace default dev "${iface}" table "${TABLE}"
 echo "[OK] egress exit active: ${current} (${etype}, dev ${iface})"
