@@ -7,7 +7,7 @@
 1. **在网关上启用 API**(它才是真正的后端):
 
    ```bash
-   sudo ./install.sh --setup-api
+   sudo 5gpn setup-api
    ```
 
    执行后会打印 **API 地址**(`https://你的网关域名:8444`)和 **令牌**。在 Telegram Bot 里发 `/api` 也能随时查看。

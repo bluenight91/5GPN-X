@@ -77,7 +77,7 @@ sudo ./install.sh
 ## 升级
 
 ```bash
-cd /opt/5gpn && sudo ./install.sh --update
+sudo 5gpn update
 ```
 
 一条命令完成：`git fetch + reset --hard origin/main` 自更新（有新代码则以新代码 re-exec）→ 重部署运行时——重渲染 sniproxy 配置（保留当前 DNS）、按需重编译 quic-proxy、刷新 mosdns/mihomo 二进制与生成器、从保存的 `.uri` 链接重建出口配置、刷新 api-server/metacubexd/tgbot（**令牌不变**）、重建 smart 配置并重启服务（先 `reset-failed` 清除启动频率限制）。防火墙、内核调优、DNS 设置、出口、分流规则、证书全部保持原样。
@@ -90,25 +90,25 @@ cd /opt/5gpn && sudo ./install.sh --update
 
 ## 管理命令
 
-安装后 `/opt/5gpn` 自动成为本仓库的 git 检出，同时提供全局命令 `5gpn`（`/usr/local/bin/5gpn`），在任意目录直接执行：
+安装后 `/opt/5gpn` 自动成为本仓库的 git 检出，同时提供全局命令 `5gpn`（`/usr/local/bin/5gpn`），在任意目录直接执行。首个子命令的 `--` 可省略（如 `5gpn update` 等同 `5gpn --update`）：
 
 ```bash
-sudo 5gpn --update             # 一键更新到最新版（保留全部配置）
-sudo 5gpn --status              # 查看状态
-sudo 5gpn --update-rules        # 更新 GFWList/ChinaList 并重载 mosdns
-sudo 5gpn --renew-cert          # 续期证书
-sudo 5gpn --set-dot-domain dns.example.com
-sudo 5gpn --set-dns "1.1.1.1 8.8.8.8" "223.5.5.5 119.29.29.29"
-sudo 5gpn --set-ecs 112.96.54.0/24   # 设置国内链查询携带的 ECS（默认 139.226.48.0/24）
-sudo 5gpn -ios                  # 重新生成 iOS 描述文件和二维码
-sudo 5gpn --list-exits          # 列出出口
-sudo 5gpn --check-exits         # 检测出口连通性
-sudo 5gpn --setup-tgbot         # 配置 Telegram Bot
-sudo 5gpn --setup-api           # 启用 HTTP 控制 API + 网页控制台（可选）
-sudo 5gpn --uninstall           # 卸载
+sudo 5gpn update             # 一键更新到最新版（保留全部配置）
+sudo 5gpn status             # 查看状态
+sudo 5gpn update-rules       # 更新 GFWList/ChinaList 并重载 mosdns
+sudo 5gpn renew-cert         # 续期证书
+sudo 5gpn set-dot-domain dns.example.com
+sudo 5gpn set-dns "1.1.1.1 8.8.8.8" "223.5.5.5 119.29.29.29"
+sudo 5gpn set-ecs 112.96.54.0/24   # 设置国内链查询携带的 ECS（默认 139.226.48.0/24）
+sudo 5gpn -ios               # 重新生成 iOS 描述文件和二维码
+sudo 5gpn list-exits         # 列出出口
+sudo 5gpn check-exits        # 检测出口连通性
+sudo 5gpn setup-tgbot        # 配置 Telegram Bot
+sudo 5gpn setup-api          # 启用 HTTP 控制 API + 网页控制台（可选）
+sudo 5gpn uninstall          # 卸载
 ```
 
-出口与分流相关子命令见下两节；其余子命令（`--show-rules`、`--show-policy`、`--import-rules`、`--proxy-domain`、`--setup-whatsapp` 等）可用 `sudo ./install.sh --help` 查看。
+出口与分流相关子命令见下两节；其余子命令（`show-rules`、`show-policy`、`import-rules`、`proxy-domain`、`setup-whatsapp` 等）可用 `sudo 5gpn --help` 查看。
 
 ## 出口管理
 
@@ -116,17 +116,17 @@ sudo 5gpn --uninstall           # 卸载
 
 ```bash
 # WireGuard：导入你自己准备好的 WireGuard client 配置
-sudo ./install.sh --add-exit us us.conf
+sudo 5gpn add-exit us us.conf
 
 # URI 出口
-sudo ./install.sh --add-exit jp 'socks5://user:pass@1.2.3.4:1080'
-sudo ./install.sh --add-exit hk 'ss://2022-blake3-aes-128-gcm:PASSWORD@5.6.7.8:443'
+sudo 5gpn add-exit jp 'socks5://user:pass@1.2.3.4:1080'
+sudo 5gpn add-exit hk 'ss://2022-blake3-aes-128-gcm:PASSWORD@5.6.7.8:443'
 
 # 原地修改已有出口（读取新配置，校验通过后替换，活动出口自动重新激活）
-sudo ./install.sh --edit-exit jp < new-config.txt
+sudo 5gpn edit-exit jp < new-config.txt
 
 # 切换 / 验证
-sudo ./install.sh --set-exit hk
+sudo 5gpn set-exit hk
 curl --interface pgw-hk -4 -s https://api.ipify.org; echo
 ```
 
@@ -137,7 +137,7 @@ printf 'socks5://1.2.3.4:1080
 user: myuser
 pass: my@p:ss/word
 remote-dns: on
-' | sudo ./install.sh --add-exit jp
+' | sudo 5gpn add-exit jp
 ```
 
 当前出口记录在 `/opt/5gpn/etc/current-exit`，开机自动恢复。
@@ -156,15 +156,15 @@ RULE-SET,https://example.com/rules.mrs,jp
 FINAL,us
 EOF
 
-sudo ./install.sh --set-rules rules.conf
-sudo ./install.sh --set-exit smart
+sudo 5gpn set-rules rules.conf
+sudo 5gpn set-exit smart
 ```
 
 单独追加规则或规则集（不覆盖整份文件）：
 
 ```bash
-sudo ./install.sh --add-rule 'DOMAIN-SUFFIX,openai.com,us'
-sudo ./install.sh --add-ruleset 'https://example.com/openai.mrs' us
+sudo 5gpn add-rule 'DOMAIN-SUFFIX,openai.com,us'
+sudo 5gpn add-ruleset 'https://example.com/openai.mrs' us
 ```
 
 规则类型：`DOMAIN`、`DOMAIN-SUFFIX`、`DOMAIN-KEYWORD`、`IP-CIDR`、`GEOSITE`、`GEOIP`、`RULE-SET`、`FINAL`。
@@ -174,14 +174,14 @@ sudo ./install.sh --add-ruleset 'https://example.com/openai.mrs' us
 导入整份规则并按分类映射出口：
 
 ```bash
-sudo ./install.sh --import-rules /path/to/rule.conf
-sudo ./install.sh --set-policy Netflix hk
+sudo 5gpn import-rules /path/to/rule.conf
+sudo 5gpn set-policy Netflix hk
 ```
 
 ## 网页控制台与 mihomo 监控（可选）
 
 ```bash
-sudo ./install.sh --setup-api   # 生成令牌并启用 HTTP 控制 API（默认端口 8444），同时安装 mihomo 监控面板
+sudo 5gpn setup-api   # 生成令牌并启用 HTTP 控制 API（默认端口 8444），同时安装 mihomo 监控面板
 ```
 
 执行后会打印 **API 地址** 与 **令牌**。打开仓库里的 `webui/index.html`（纯静态单文件，可本地双击打开，或托管到任意静态托管 / Cloudflare Pages，见 `webui/README.md`），填入地址和令牌即可使用——与 Telegram Bot 调用同一后端，实时同步。
@@ -199,7 +199,7 @@ sudo ./install.sh --setup-api   # 生成令牌并启用 HTTP 控制 API（默认
 ```bash
 export TG_BOT_TOKEN="123456:ABC-your-bot-token"
 export TG_ADMIN_IDS="11111111,22222222"
-sudo ./install.sh --setup-tgbot
+sudo 5gpn setup-tgbot
 ```
 
 不知道自己的数字 ID 时，先启用 Bot 后发送 `/id`，把返回的 ID 写入 `/opt/5gpn/etc/tgbot.env` 并 `sudo systemctl restart 5gpn-tgbot`。
@@ -226,9 +226,9 @@ WLOC 仅在启用时将 `gs-loc.apple.com` 和 `gs-loc-cn.apple.com` 导向网�
 
 ```bash
 # 国际池用 AGH DoH（不带 ECS）；国内池用 AGH DoH（携带 ECS）+ 传统 DNS 兜底
-sudo ./install.sh --set-dns "https://agh-jp.example.com/api/xxxx https://adg.example.com/api/xxxx" \
-                            "https://agh-jp.example.com/api/xxxx 180.76.76.76 119.29.29.29"
-sudo ./install.sh --set-ecs 112.96.54.0/24
+sudo 5gpn set-dns "https://agh-jp.example.com/api/xxxx https://adg.example.com/api/xxxx" \
+                  "https://agh-jp.example.com/api/xxxx 180.76.76.76 119.29.29.29"
+sudo 5gpn set-ecs 112.96.54.0/24
 ```
 
 要点：
@@ -240,7 +240,7 @@ sudo ./install.sh --set-ecs 112.96.54.0/24
 ## 冒烟检查（每次安装/更新后）
 
 ```bash
-sudo 5gpn --smoke
+sudo 5gpn smoke
 ```
 
 只读、约一分钟：服务状态、端口监听、DNS/DoT 应答（区分无应答与上游拒绝）、TUN 链路（含 `--interface pgw-smart` 实际出网探测）、fwmark 规则健康度、API 健康、证书有效期、WLOC 状态；配置了域名 DoH 上游时还会做一次 wire-format 直连探测。结尾附人工核对步骤。
@@ -330,7 +330,7 @@ PGW_TUNING=essential            # essential(默认)/performance 内核调优档�
 
 **为什么国内网站直连？** ChinaList 域名由 mosdns 转发到国内 DNS 竞速（携带 ECS，可用 `--set-ecs` 修改），获得更适合大陆访问的结果。UDP 150ms 无响应后自动切 TCP，都不通才走海外兜底（含 `22.22.22.22`），避免单一国内 DNS 故障卡住页面。
 
-**如何更新规则集与程序本身？** 规则集：`sudo ./install.sh --update-rules`。程序：`sudo ./install.sh --update`（无需手动 git pull）。
+**如何更新规则集与程序本身？** 规则集：`sudo 5gpn update-rules`。程序：`sudo 5gpn update`（无需手动 git pull）。
 
 **smart 模式分流全部失败怎么排查？** 先跑 `sudo bash scripts/smoke-check.sh` 定位环节；再看 `journalctl -u 5gpn-mihomo@smart -n 30 --no-pager`（规则是否命中、拨号错误类型）、`ip route show table 100`（默认路由是否指向 pgw-smart）、以及 smart.yaml 的 `dns` 段是否就位。
 

@@ -107,6 +107,10 @@ if [[ "${install_body}" != *'--smoke)'* || "${install_body}" != *'scripts/smoke-
     echo "install.sh must provide a --smoke command running the smoke check." >&2
     exit 1
 fi
+if [[ "${install_body}" != *'set -- "--$1" "${@:2}"'* ]]; then
+    echo "5gpn cli must translate a bare first subcommand (5gpn update -> 5gpn --update)." >&2
+    exit 1
+fi
 
 uninstall_body="$(sed -n '/^do_uninstall()/,/^}/p' "${install}")"
 if [[ "${uninstall_body}" != *'5gpn-wloc'* || "${uninstall_body}" != *'userdel wloc'* ]]; then

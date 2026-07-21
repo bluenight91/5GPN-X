@@ -401,6 +401,9 @@ Options:
   -ios          Regenerate iOS DoT profile and QR code
   -h, --help     Show this help
 
+When invoked through the global 5gpn command, the leading dashes of the
+first subcommand are optional: '5gpn update' works like '5gpn --update'.
+
 Environment variables (for non-interactive use):
   DOMAIN         Your own fully-qualified domain (e.g. dns.example.com).
                  When set, the interactive domain prompt is skipped.
@@ -2785,6 +2788,11 @@ install_cli() {
     # trigger the bootstrap clone on every call, so use a tiny wrapper instead.
     cat > /usr/local/bin/5gpn <<'EOF'
 #!/bin/bash
+# Accept bare subcommands: `5gpn update` ≡ `5gpn --update`. Only the first
+# argument is translated; everything after it is passed through verbatim.
+if [[ $# -gt 0 && "$1" != -* ]]; then
+    set -- "--$1" "${@:2}"
+fi
 exec /opt/5gpn/install.sh "$@"
 EOF
     chmod 0755 /usr/local/bin/5gpn
