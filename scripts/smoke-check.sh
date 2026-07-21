@@ -126,6 +126,27 @@ if [[ -f "${CONF_DIR}/api.env" ]]; then
     fi
 fi
 
+# ---------- 6.5 WLOC 虚拟定位（可选） ----------
+if [[ -f /etc/systemd/system/5gpn-wloc.service ]]; then
+    echo "----- WLOC 虚拟定位 -----"
+    wloc_dir="${CONF_DIR}/wloc"
+    [[ -s "${wloc_dir}/ca.crt" && -s "${wloc_dir}/leaf.crt" && -s "${wloc_dir}/leaf.key" ]] \
+        && ok "WLOC CA 与拦截证书就位" || bad "WLOC 证书缺失（重跑一次 install.sh 安装运行时）"
+    wstate="$(cat "${wloc_dir}/modifier.state" 2>/dev/null || echo paused)"
+    if [[ "$wstate" == "active" ]]; then
+        systemctl is-active --quiet 5gpn-wloc && ok "WLOC 拦截器运行中" || bad "WLOC 已启用但拦截器未运行"
+        ss -tln 2>/dev/null | grep -q "127.0.0.1:10451 " \
+            && ok "WLOC 拦截端口仅回环监听 (10451)" || bad "WLOC 拦截端口 10451 未监听"
+        grep -q "gs-loc.apple.com" /etc/mosdns/wloc.txt 2>/dev/null \
+            && ok "WLOC DNS 劫持域名已写入" || bad "WLOC 已启用但 wloc.txt 无劫持域名"
+    else
+        [[ ! -s /etc/mosdns/wloc.txt ]] \
+            && ok "WLOC 禁用态：无 DNS 劫持（wloc.txt 为空）" \
+            || note "wloc.txt 非空但 WLOC 为 paused（残留？）"
+        note "WLOC 未启用（可选功能；在 Telegram Bot「WLOC 管理」中开启）"
+    fi
+fi
+
 # ---------- 7. 证书与域名 ----------
 echo "----- 证书 -----"
 [[ -s /etc/mosdns/certs/fullchain.pem && -s /etc/mosdns/certs/privkey.pem ]] && ok "TLS 证书就位" || bad "TLS 证书缺失"
