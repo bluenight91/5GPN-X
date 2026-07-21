@@ -23,7 +23,7 @@
 - DNS + DoT：客户端通过 TCP/UDP 53（仅 `172.22.0.0/16`）或 DoT 853（所有来源）接入；来源 IP 按段区分解析策略，海外 DNS 池 `1.1.1.1`、`8.8.8.8`、`9.9.9.9`，ChinaList 查询携带 ECS `139.226.48.0/24`，全局不返回 AAAA。
 - iOS WhatsApp Patch：wa-shim 监听 TCP 443，仅分流客户端网段内 `ED`/`WA` 开头的无 SNI Noise 连接，其余 fail-open 交给 sniproxy。
 - 智能分流：mihomo `smart` 出口按域名 / IP / GEOSITE / GEOIP / RULE-SET 分流，远程规则集自动更新。
-- Telegram Bot：状态、出口管理、分流规则、DNS/DoT 设置、日志、iOS 二维码。
+- Telegram Bot：状态、出口管理、分流规则、DNS/DoT 设置、WLOC 虚拟定位、日志、iOS 二维码。
 - 低内存模式：≤ 1 GB 内存自动降低缓存与内核参数，512 MB VPS 可运行。
 
 ## 环境要求
@@ -152,7 +152,13 @@ sudo ./install.sh --setup-tgbot
 
 不知道自己的数字 ID 时，先启用 Bot 后发送 `/id`，把返回的 ID 写入 `/opt/5gpn/etc/tgbot.env` 并 `sudo systemctl restart 5gpn-tgbot`。
 
-命令：`/start` 打开面板、`/status` 状态、`/exits` 出口、`/rules` 分流、`/cancel` 取消输入、`/id` 查 ID。
+命令：`/start` 打开面板、`/status` 状态、`/exits` 出口、`/rules` 分流、`/wloc` 虚拟定位、`/cancel` 取消输入、`/id` 查 ID。
+
+### WLOC 虚拟定位
+
+在 Bot 的 `📡 WLOC 管理` 中选择预置地点，或输入 WGS84 经纬度（例如 `35.681236,139.767125`）。首次使用先通过菜单下载并安装 `5GPN-WLOC-CA.cer`，然后在 iOS `设置 -> 通用 -> 关于本机 -> 证书信任设置` 对该证书开启完全信任。
+
+WLOC 仅在启用时将 `gs-loc.apple.com` 和 `gs-loc-cn.apple.com` 导向网关本地的受限拦截器；仅改写 `/clls/wloc` 及必要的 Apple 定位辅助响应。关闭后会清除这两个精确 DNS 映射并恢复原始网络定位。切换地点后 iOS 的 `locationd` 可能保有缓存，必要时重启设备。
 
 添加出口：`🌐 出口 -> ➕ 添加出口`，直接粘贴节点链接（`ss:// vmess:// trojan:// vless:// hysteria2:// tuic:// anytls:// socks5:// http://`），备注会自动作为出口名。
 

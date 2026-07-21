@@ -56,8 +56,8 @@ def click(data):
 
 assert click("menu:ops") == ("🛠 <b>运维</b>\n选择一个操作：", bot.ops_menu())
 wloc_text, wloc_keyboard = click("menu:wloc")
-assert "WLOC 管理" in wloc_text and "功能即将上线" in wloc_text
-assert wloc_keyboard == bot.back_kb("menu:main")
+assert "WLOC" in wloc_text and "虚拟定位" in wloc_text
+assert any(b["callback_data"] == "menu:main" for row in wloc_keyboard for b in row)
 PY
 
 # --- authorization must gate every operation --------------------------------
@@ -99,7 +99,7 @@ PY
 [[ "${bot_body}" == *'"prompt_mid": cb_mid'* ]] || fail "PENDING flows must remember the prompt message for in-place edits"
 [[ "${bot_body}" == *'def reanchor_console('* ]] || fail "slash commands must re-anchor the console with a fresh visible message"
 [[ "${bot_body}" == *'keyboard_fn=exits_menu'* ]] || fail "add-exit success menu must refresh exits after the new exit is written"
-[[ "${bot_body}" == *'"📡 WLOC 管理", "callback_data": "menu:wloc"'* ]] || fail "main menu must expose the WLOC management placeholder"
+[[ "${bot_body}" == *'"📡 WLOC 管理", "callback_data": "menu:wloc"'* ]] || fail "main menu must expose the WLOC management entry"
 [[ "${bot_body}" == *'"🛠 运维", "callback_data": "menu:ops"'* ]] || fail "main menu must expose operations management"
 [[ "${bot_body}" == *'def ops_menu('* ]] || fail "tgbot.py must define an operations submenu"
 [[ "${bot_body}" == *'"♻️ 重启服务", "callback_data": "act:restart"'* ]] || fail "operations menu must restart services directly"
