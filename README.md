@@ -240,10 +240,10 @@ sudo ./install.sh --set-ecs 112.96.54.0/24
 ## 冒烟检查（每次安装/更新后）
 
 ```bash
-sudo bash /opt/5gpn/scripts/smoke-check.sh
+sudo 5gpn --smoke
 ```
 
-只读、约一分钟：服务状态、端口监听、DNS/DoT 应答（区分无应答与上游拒绝）、TUN 链路（含 `--interface pgw-smart` 实际出网探测）、fwmark 规则健康度、API 健康、证书有效期；配置了域名 DoH 上游时还会做一次 wire-format 直连探测。结尾附人工核对步骤。
+只读、约一分钟：服务状态、端口监听、DNS/DoT 应答（区分无应答与上游拒绝）、TUN 链路（含 `--interface pgw-smart` 实际出网探测）、fwmark 规则健康度、API 健康、证书有效期、WLOC 状态；配置了域名 DoH 上游时还会做一次 wire-format 直连探测。结尾附人工核对步骤。
 
 ## 配置参考
 
