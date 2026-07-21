@@ -2254,12 +2254,25 @@ regen_smart() {
     install -m 600 "${yaml}.tmp" "${yaml}"; rm -f "${yaml}.tmp"
     echo router > "$type_file"
     if [[ "$cur" == "smart" ]]; then
-        local apply_ok=1
-        systemctl restart "5gpn-mihomo@smart.service" >/dev/null 2>&1 || apply_ok=0
-        [[ $apply_ok -eq 1 ]] && systemctl is-active --quiet "5gpn-mihomo@smart.service" || apply_ok=0
-        [[ $apply_ok -eq 1 ]] && exit_wait_device smart || apply_ok=0
-        [[ $apply_ok -eq 1 ]] && apply_current_exit >/dev/null 2>&1 || apply_ok=0
-        if [[ $apply_ok -ne 1 ]]; then
+        # Stepwise checks: record exactly which stage failed so the error
+        # output (plus a journal dump) explains the rollback without needing
+        # a separate SSH debugging session.
+        local fail_step=""
+        if ! systemctl restart "5gpn-mihomo@smart.service" >/dev/null 2>&1; then
+            fail_step="service restart"
+        elif ! systemctl is-active --quiet "5gpn-mihomo@smart.service"; then
+            fail_step="service inactive right after restart"
+        elif ! exit_wait_device smart; then
+            fail_step="TUN device did not appear within 30s (slow geodata/ruleset load?)"
+        elif ! apply_current_exit >/dev/null 2>&1; then
+            fail_step="policy routing re-apply"
+        fi
+        if [[ -n "$fail_step" ]]; then
+            err "smart apply failed at stage: ${fail_step}"
+            if command -v journalctl >/dev/null 2>&1; then
+                err "last 5gpn-mihomo@smart log lines:"
+                journalctl -u "5gpn-mihomo@smart.service" -n 25 --no-pager 2>/dev/null | sed 's/^/    /' >&2 || true
+            fi
             systemctl stop "5gpn-mihomo@smart.service" >/dev/null 2>&1 || true
             if [[ $had_yaml -eq 1 ]]; then
                 install -m 600 "${backup_dir}/smart.yaml" "$yaml"
