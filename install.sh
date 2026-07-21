@@ -1720,7 +1720,9 @@ check_exits() {
 }
 exit_wait_device() {
     local iface i; iface="$(exit_iface "$1")"
-    for i in $(seq 1 50); do
+    # Low-RAM boxes take >10s to start mihomo (memconservative geodata load);
+    # 5s was too short and caused false "failed to start" rollbacks.
+    for i in $(seq 1 300); do
         ip link show up "$iface" >/dev/null 2>&1 && return 0
         sleep 0.1
     done
