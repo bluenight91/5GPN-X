@@ -2752,6 +2752,15 @@ start_services() {
     systemctl restart quic-proxy || { err "quic-proxy failed to start"; journalctl -u quic-proxy --no-pager -n 20; exit 1; }
     ok "All services started"
 }
+install_cli() {
+    # Global `5gpn` command. A symlink would break SCRIPT_DIR resolution and
+    # trigger the bootstrap clone on every call, so use a tiny wrapper instead.
+    cat > /usr/local/bin/5gpn <<'EOF'
+#!/bin/bash
+exec /opt/5gpn/install.sh "$@"
+EOF
+    chmod 0755 /usr/local/bin/5gpn
+}
 setup_schedules() {
     info "Setting up automatic updates..."
     cat > /etc/systemd/system/update-mosdns-rules.timer <<'EOF'
@@ -2852,6 +2861,7 @@ do_update() {
     apply_lowmem_go_limits
     setup_schedules
     install -m 0755 "${SCRIPT_PATH}" "${BASE_DIR}/bin/5gpn-ctl"
+    install_cli
     # Rebuild URI exit configs from the stored links (generator may have changed).
     # Use add_exit (NOT edit_exit): it rebuilds only the exit's own config, so
     # smart is regenerated/restarted ONCE below instead of once per exit —
@@ -2904,6 +2914,7 @@ do_uninstall() {
     rm -f /etc/systemd/system/{mosdns,sniproxy,wa-shim,quic-proxy,china-dns-race-proxy,5gpn-ios-profile,update-mosdns-rules,5gpn-exit,5gpn-tgbot}.*
     rm -f /etc/systemd/system/5gpn-api.*
     rm -f /etc/systemd/system/5gpn-wloc.*
+    rm -f /usr/local/bin/5gpn
     rm -f /etc/systemd/system/5gpn-ios-profile@.service \
         /etc/systemd/system/5gpn-mihomo@.service \
         /etc/systemd/system/5gpn-singbox@.service
@@ -3263,6 +3274,7 @@ main_install() {
     setup_schedules
     setup_tgbot
     maybe_setup_api
+    install_cli
     echo ""
     echo "=========================================="
     echo "         部署完成！"

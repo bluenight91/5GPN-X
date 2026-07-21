@@ -99,10 +99,18 @@ if [[ "${update_body}" != *'( PGW_EXIT_OVERWRITE=1 add_exit "$n" < "$f" )'* ]]; 
     echo "do_update must subshell-wrap add_exit (no per-exit smart regen; exit 1 cannot kill the update)." >&2
     exit 1
 fi
+if [[ "${update_body}" != *'install_cli'* ]]; then
+    echo "do_update must install the global 5gpn cli." >&2
+    exit 1
+fi
 
 uninstall_body="$(sed -n '/^do_uninstall()/,/^}/p' "${install}")"
 if [[ "${uninstall_body}" != *'5gpn-wloc'* || "${uninstall_body}" != *'userdel wloc'* ]]; then
     echo "do_uninstall must clean up the WLOC service and user." >&2
+    exit 1
+fi
+if [[ "${uninstall_body}" != *'rm -f /usr/local/bin/5gpn'* ]]; then
+    echo "do_uninstall must remove the global 5gpn cli." >&2
     exit 1
 fi
 
