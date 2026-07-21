@@ -95,8 +95,8 @@ if [[ "${update_body}" != *'install_wloc'* ]]; then
     echo "do_update must install the WLOC runtime as well (else /wloc reports not installed)." >&2
     exit 1
 fi
-if [[ "${update_body}" != *'( edit_exit "$n" < "$f" )'* ]]; then
-    echo "do_update must subshell-wrap edit_exit so an exit 1 cannot kill the whole update." >&2
+if [[ "${update_body}" != *'( PGW_EXIT_OVERWRITE=1 add_exit "$n" < "$f" )'* ]]; then
+    echo "do_update must subshell-wrap add_exit (no per-exit smart regen; exit 1 cannot kill the update)." >&2
     exit 1
 fi
 

@@ -2851,21 +2851,30 @@ do_update() {
     setup_schedules
     install -m 0755 "${SCRIPT_PATH}" "${BASE_DIR}/bin/5gpn-ctl"
     # Rebuild URI exit configs from the stored links (generator may have changed).
-    # Subshell is mandatory: edit_exit -> add_exit/regen_smart use `exit 1` on
-    # errors, which would otherwise kill the whole --update before later steps.
-    local f n
+    # Use add_exit (NOT edit_exit): it rebuilds only the exit's own config, so
+    # smart is regenerated/restarted ONCE below instead of once per exit —
+    # important on low-RAM boxes where each mihomo -t geodata load is slow.
+    # Subshells are mandatory: add_exit/regen_smart use exit 1 on errors.
+    local f n cur_exit
     shopt -s nullglob
     for f in "${EXITS_DIR}"/*.uri; do
         n="$(basename "$f" .uri)"
-        ( edit_exit "$n" < "$f" ) >/dev/null 2>&1 || warn "重建出口 $n 失败，可手动 --edit-exit $n"
+        ( PGW_EXIT_OVERWRITE=1 add_exit "$n" < "$f" ) >/dev/null 2>&1 \
+            || warn "重建出口 $n 失败，可手动 --edit-exit $n"
     done
     shopt -u nullglob
+    cur_exit="$(cat "${CONF_DIR}/current-exit" 2>/dev/null || echo local)"
     [[ -f "${CONF_DIR}/api.env" ]] && setup_api
     if [[ -f "${CONF_DIR}/tgbot.env" ]]; then
         install -m 0755 "${LIB_DIR}/tgbot.py" "${BASE_DIR}/bin/tgbot.py"
         systemctl restart 5gpn-tgbot 2>/dev/null || true
     fi
     [[ -f "${RULES_FILE}" ]] && { ( regen_smart ) || warn "smart 配置重建失败；可稍后手动 --set-rules"; }
+    # A named (non-smart) active exit keeps running its old config until restarted.
+    if [[ "$cur_exit" != "local" && "$cur_exit" != "smart" ]]; then
+        systemctl reset-failed "5gpn-mihomo@${cur_exit}.service" 2>/dev/null || true
+        systemctl restart "5gpn-mihomo@${cur_exit}.service" 2>/dev/null || true
+    fi
     # A crash loop (e.g. bad config earlier) trips systemd's start limit; clear
     # it or restart is refused even with the config fixed.
     systemctl reset-failed mosdns sniproxy wa-shim quic-proxy 2>/dev/null || true
