@@ -21,6 +21,11 @@ rules="$(cat "${root}/lib/update-rules.sh")"
 [[ "${install}" == *'--set-client-cidr)'* ]] || fail "install.sh must expose --set-client-cidr"
 [[ "${install}" == *'--detect-client-cidr)'* ]] || fail "install.sh must expose --detect-client-cidr"
 [[ "${install}" == *'PGW_UPDATE_SNAPSHOT'* ]] || fail "update must carry a rollback snapshot id"
+[[ "${install}" == *'install_repo_script()'* ]] || fail "install must define install_repo_script"
+[[ "${install}" == *'"$src" -ef "$dest"'* || "${install}" == *"\$src\" -ef \"\$dest\""* ]] \
+    || fail "install_repo_script must skip same-file (in-place /opt/5gpn) copies"
+[[ "${install}" == *'install_repo_script "${SCRIPT_DIR}/scripts/${f}"'* ]] \
+    || fail "update/schedules must install ops scripts via install_repo_script"
 [[ "${install}" == *'5gpn-health.timer'* ]] || fail "schedules must install 5gpn-health.timer"
 [[ "${install}" == *'5gpn-health.service'* ]] || fail "uninstall must remove 5gpn-health units"
 [[ "${install}" == *'set_client_cidr()'* ]] || fail "install.sh must define set_client_cidr"

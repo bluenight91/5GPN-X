@@ -68,6 +68,19 @@ info()  { echo -e "${BLUE}[INFO]${NC} $*"; }
 ok()    { echo -e "${GREEN}[OK]${NC}   $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 err()   { echo -e "${RED}[ERR]${NC}  $*" >&2; }
+
+# Copy a repo script into BASE_DIR. No-op when source and dest are the same
+# inode (normal for /opt/5gpn in-place updates) — GNU install errors on that.
+install_repo_script() {
+    local src="$1" dest="$2" mode="${3:-0755}"
+    [[ -f "$src" ]] || return 0
+    mkdir -p "$(dirname "$dest")"
+    if [[ "$src" -ef "$dest" ]] 2>/dev/null || [[ "$src" == "$dest" ]]; then
+        chmod "$mode" "$dest" 2>/dev/null || true
+        return 0
+    fi
+    install -m "$mode" "$src" "$dest"
+}
 ensure_repo_checkout() {
     [[ -d "${BASE_DIR}/.git" ]] && return 0
     command -v git >/dev/null 2>&1 || return 0
@@ -2958,11 +2971,9 @@ Type=oneshot
 ExecStart=/usr/local/bin/update-mosdns-rules.sh
 EOF
     # Periodic doctor → Telegram alert (no-op when tgbot.env is absent).
-    install -m 0755 "${SCRIPT_DIR}/scripts/doctor.sh" "${BASE_DIR}/scripts/doctor.sh" 2>/dev/null \
-        || install -m 0755 "${LIB_DIR}/../scripts/doctor.sh" "${BASE_DIR}/scripts/doctor.sh" 2>/dev/null || true
     mkdir -p "${BASE_DIR}/scripts"
     for f in doctor.sh snapshot.sh report.sh health-notify.sh smoke-check.sh; do
-        [[ -f "${SCRIPT_DIR}/scripts/${f}" ]] && install -m 0755 "${SCRIPT_DIR}/scripts/${f}" "${BASE_DIR}/scripts/${f}"
+        install_repo_script "${SCRIPT_DIR}/scripts/${f}" "${BASE_DIR}/scripts/${f}"
     done
     cat > /etc/systemd/system/5gpn-health.service <<EOF
 [Unit]
@@ -3147,7 +3158,7 @@ do_update() {
     local snap_id="${PGW_UPDATE_SNAPSHOT:-}"
     mkdir -p "${BASE_DIR}/scripts"
     for f in doctor.sh snapshot.sh report.sh health-notify.sh smoke-check.sh; do
-        [[ -f "${SCRIPT_DIR}/scripts/${f}" ]] && install -m 0755 "${SCRIPT_DIR}/scripts/${f}" "${BASE_DIR}/scripts/${f}"
+        install_repo_script "${SCRIPT_DIR}/scripts/${f}" "${BASE_DIR}/scripts/${f}"
     done
 
     # Always keep a rollback point before mutating runtime (including the
