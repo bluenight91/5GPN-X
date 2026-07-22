@@ -8,6 +8,9 @@
 # shellcheck disable=SC2015
 set -uo pipefail
 
+# systemd Bot/API often inherit a minimal PATH; keep sbin tools visible.
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
+
 GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; NC='\033[0m'
 PASS=0; FAIL=0; WARN=0
 JSON=0; DEEP=0; QUIET=0

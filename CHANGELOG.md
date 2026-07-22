@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- **mihomo 面板看不到出口**：smart 配置缺少 `proxy-groups` 时，metacubexd「代理」页不易列出仅作为规则目标的出口；现会预加载全部出口，并增加仅供展示的 `EXITS` 选择组（规则仍直接指向出口名，不影响分流）。
+- **Bot doctor 误报服务全挂**：`/opt/5gpn/bin/5gpn-ctl` 曾是整份 `install.sh` 拷贝，`SCRIPT_DIR` 变成 `/opt/5gpn/bin`，每次调用都会 bootstrap `git clone`，自检结果不可靠。改为与 `5gpn` 相同的薄包装，转调 `/opt/5gpn/install.sh`。
+
+### Fixed
+
 - **Bot「自检 doctor」失败但终端正常**：systemd 下 `LANG=C` 时 `doctor --json` 打印中文检查项触发 `UnicodeEncodeError`。改为显式 UTF-8 写出，并为 tgbot 设置 `LANG=C.UTF-8`。
 - **`5gpn update` 在 setup_api 中断**：`API_PORT_DEFAULT` 被误删导致 `set -u` 报 *unbound variable*；已恢复默认 `8444`。
 

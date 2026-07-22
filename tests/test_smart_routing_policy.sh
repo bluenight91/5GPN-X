@@ -13,6 +13,7 @@ python3 -m py_compile "${gen}" || fail "mihomo-router-config.py must compile"
 tmp="$(mktemp -d)"; trap 'rm -rf "${tmp}"' EXIT
 mkdir -p "${tmp}/exits" "${tmp}/rs" "${tmp}/wg"
 printf '{"proxies":[{"name":"out","type":"socks5","server":"1.1.1.1","port":1080,"udp":true}]}' > "${tmp}/exits/us.yaml"
+printf '{"proxies":[{"name":"sg","type":"socks5","server":"2.2.2.2","port":1080,"udp":true}]}' > "${tmp}/exits/SG.yaml"
 printf 'a.com\n+.b.com\nDOMAIN-SUFFIX,c.com\n' > "${tmp}/dev.list"
 cat > "${tmp}/rules.conf" <<R
 DOMAIN-SUFFIX,google.com,us
@@ -29,7 +30,13 @@ out="$(EXITS_DIR="${tmp}/exits" WG_DIR="${tmp}/wg" PGW_RULESET_CACHE="${tmp}/rs"
 python3 - "$out" <<'PY'
 import json, sys
 c = json.loads(sys.argv[1])
-assert [p["name"] for p in c["proxies"]] == ["us"]
+names = [p["name"] for p in c["proxies"]]
+assert "us" in names and "SG" in names, names
+assert names.count("us") == 1 and names.count("SG") == 1
+groups = c.get("proxy-groups") or []
+assert any(g.get("name") == "EXITS" and g.get("type") == "select" for g in groups), groups
+exits_group = next(g for g in groups if g["name"] == "EXITS")
+assert "DIRECT" in exits_group["proxies"] and "SG" in exits_group["proxies"] and "us" in exits_group["proxies"]
 assert c["tun"]["device"] == "pgw-smart" and c["tun"]["auto-route"] is False
 assert c["sniffer"]["enable"] and c["sniffer"]["override-destination"]
 assert c["rules"][0] == "DOMAIN-SUFFIX,google.com,us", "order not preserved"
@@ -68,5 +75,9 @@ fi
 [[ "${install_body}" == *'Rules rejected; previous rules restored'* ]] || fail "set-rules must roll back invalid input"
 [[ "${install_body}" == *'reserved exit name'* ]] || fail "smart/local must be reserved"
 [[ "${install_body}" == *'exit_reachable()'* && "${install_body}" == *'preflight_exit()'* ]] || fail "exit preflight missing"
+[[ "${install_body}" == *'install_mgmt_ctl()'* ]] || fail "install must define install_mgmt_ctl"
+[[ "${install_body}" == *'exec /opt/5gpn/install.sh'* ]] || fail "5gpn-ctl must wrap /opt/5gpn/install.sh"
+[[ "${install_body}" != *'install -m 0755 "${SCRIPT_PATH}" "${BASE_DIR}/bin/5gpn-ctl"'* ]] \
+    || fail "must not install a full install.sh copy as 5gpn-ctl"
 
 echo "smart routing policy OK"

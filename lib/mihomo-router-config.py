@@ -133,6 +133,27 @@ def build_exit_proxy(name):
     die("rule references unknown exit: '%s' (add it first)" % name)
 
 
+def iter_configured_exits():
+    """All URI/WG exits on disk (smart UI lists these even if unused by rules)."""
+    names = []
+    if os.path.isdir(EXITS_DIR):
+        for fn in sorted(os.listdir(EXITS_DIR)):
+            if fn.endswith(".yaml") and not fn.startswith("."):
+                names.append(fn[:-5])
+    if os.path.isdir(WG_DIR):
+        for fn in sorted(os.listdir(WG_DIR)):
+            if fn.startswith("pgw-") and fn.endswith(".conf"):
+                names.append(fn[4:-5])
+    # Preserve order, drop reserved / duplicates.
+    out, seen = [], set()
+    for name in names:
+        if name in ("smart", "local") or name in seen:
+            continue
+        seen.add(name)
+        out.append(name)
+    return out
+
+
 def parse_classical_rules(text):
     payload = []
     for raw in text.splitlines():
@@ -176,6 +197,17 @@ def main():
     providers, rules = {}, []
     policy_map = load_policy_map()
     final = "DIRECT"
+
+    # Always register every configured exit so metacubexd / proxy panel keeps
+    # showing unused exits (rules only reference a subset after add-rule).
+    for name in iter_configured_exits():
+        try:
+            proxies.append(build_exit_proxy(name))
+            proxy_names.add(name)
+        except SystemExit:
+            # Preload must not abort smart rebuild if one exit file is corrupt.
+            sys.stderr.write("warning: skipping unloadable exit '%s'\n" % name)
+            continue
 
     def target(policy):
         raw = policy.strip()
@@ -293,6 +325,10 @@ def main():
             else:
                 die("line %d: unsupported rule type '%s'" % (line_number, parts[0]))
     rules.append("MATCH,%s" % final)
+    # metacubexd's Proxy tab primarily lists proxy-groups; without one, exits that
+    # only appear as bare rule targets are easy to miss. This select group is not
+    # referenced by rules — routing still uses exit names directly.
+    group_proxies = ["DIRECT"] + [p["name"] for p in proxies]
     config = {"mode": "rule", "log-level": "warning", "ipv6": False, "find-process-mode": "off",
               "tun": {"enable": True, "stack": os.environ.get("MIHOMO_STACK", "gvisor"),
                       "device": "pgw-smart", "auto-route": False, "auto-redirect": False,
@@ -300,7 +336,9 @@ def main():
               "sniffer": {"enable": True, "force-dns-mapping": True, "parse-pure-ip": True,
                           "override-destination": True,
                           "sniff": {"TLS": {"ports": [443, 8443]}, "HTTP": {"ports": [80, "8080-8880"]}}},
-              "proxies": proxies, "rule-providers": providers, "rules": rules,
+              "proxies": proxies,
+              "proxy-groups": [{"name": "EXITS", "type": "select", "proxies": group_proxies}],
+              "rule-providers": providers, "rules": rules,
               "dns": DNS_CONFIG}
     secret = ""
     try:

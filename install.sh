@@ -2911,7 +2911,7 @@ setup_tgbot() {
         return 1
     fi
     install -m 0755 "${LIB_DIR}/tgbot.py" "${BASE_DIR}/bin/tgbot.py"
-    install -m 0755 "${SCRIPT_PATH}" "${BASE_DIR}/bin/5gpn-ctl"
+    install_mgmt_ctl
     mkdir -p "${CONF_DIR}"
     cat > "${CONF_DIR}/tgbot.env" <<EOF
 TG_BOT_TOKEN=${token}
@@ -3007,7 +3007,8 @@ setup_api() {
         ( regen_smart ) || warn "smart 配置重建失败；配置规则后可重跑 --setup-api"
     fi
     install -m 0755 "${LIB_DIR}/api-server.py" "${BASE_DIR}/bin/api-server.py"
-    install -m 0755 "${SCRIPT_PATH}" "${BASE_DIR}/bin/5gpn-ctl"
+    install -m 0755 "${LIB_DIR}/mihomo-router-config.py" "${MIHOMO_ROUTER_GEN}"
+    install_mgmt_ctl
     if [[ -f "${SCRIPT_DIR}/webui/index.html" && "${SCRIPT_DIR}" != "${BASE_DIR}" ]]; then
         mkdir -p "${BASE_DIR}/webui"
         install -m 0644 "${SCRIPT_DIR}/webui/index.html" "${BASE_DIR}/webui/index.html"
@@ -3116,6 +3117,21 @@ fi
 exec /opt/5gpn/install.sh "$@"
 EOF
     chmod 0755 /usr/local/bin/5gpn
+    install_mgmt_ctl
+}
+install_mgmt_ctl() {
+    # Bot/API call ${BASE_DIR}/bin/5gpn-ctl. Never place a full copy of install.sh
+    # here: SCRIPT_DIR would become /opt/5gpn/bin, missing lib/, and every call
+    # would git-clone a bootstrap tree (slow, flaky doctor/API ops).
+    mkdir -p "${BASE_DIR}/bin"
+    cat > "${BASE_DIR}/bin/5gpn-ctl" <<'EOF'
+#!/bin/bash
+if [[ $# -gt 0 && "$1" != -* ]]; then
+    set -- "--$1" "${@:2}"
+fi
+exec /opt/5gpn/install.sh "$@"
+EOF
+    chmod 0755 "${BASE_DIR}/bin/5gpn-ctl"
 }
 setup_schedules() {
     info "Setting up automatic updates..."
@@ -3396,7 +3412,6 @@ do_update() {
     generate_ios_profile
     apply_lowmem_go_limits
     setup_schedules
-    install -m 0755 "${SCRIPT_PATH}" "${BASE_DIR}/bin/5gpn-ctl"
     install_cli
     local f n cur_exit
     shopt -s nullglob
