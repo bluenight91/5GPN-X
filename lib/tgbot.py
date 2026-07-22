@@ -412,6 +412,38 @@ def status_kb():
             [{"text": "« 返回", "callback_data": "menu:main"}]]
 
 
+def send_document(chat_id, path, caption="", filename=None):
+    """Upload a local file via multipart/form-data (sendDocument)."""
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+    except OSError:
+        return False
+    name = filename or os.path.basename(path) or "report.txt"
+    boundary = "----pgwDocBoundary9c1e4d"
+
+    def _field(field_name, val):
+        return ("--%s\r\nContent-Disposition: form-data; name=\"%s\"\r\n\r\n%s\r\n"
+                % (boundary, field_name, val)).encode("utf-8")
+
+    body = _field("chat_id", str(chat_id))
+    if caption:
+        body += _field("caption", caption) + _field("parse_mode", "HTML")
+    body += ("--%s\r\nContent-Disposition: form-data; name=\"document\"; "
+             "filename=\"%s\"\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n"
+             % (boundary, name)).encode("utf-8")
+    body += data + b"\r\n" + ("--%s--\r\n" % boundary).encode("utf-8")
+    req = urllib.request.Request(
+        API + "sendDocument", data=body,
+        headers={"Content-Type": "multipart/form-data; boundary=%s" % boundary})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            return json.loads(resp.read().decode("utf-8")).get("ok", False)
+    except Exception as e:
+        print("[warn] send_document failed: %s" % e, file=sys.stderr)
+        return False
+
+
 def send_photo(chat_id, path, caption=""):
     """Upload a local image via multipart/form-data (sendPhoto)."""
     try:
@@ -1393,15 +1425,57 @@ def op_doctor():
 
 
 def op_report():
+    """Generate a redacted report; returns (ok, path_or_error, text_or_empty)."""
     ok, out = run2(["bash", MGMT, "--report"], timeout=240)
     path = ""
     for line in (out or "").splitlines():
-        if line.startswith("/tmp/") or "report written:" in line:
+        line = line.strip()
+        if line.startswith("/tmp/") and line.endswith(".txt"):
+            path = line
+        elif "report written:" in line:
             path = line.split()[-1]
-    if ok and path:
-        return ("✅ <b>诊断报告已生成</b>\n<code>%s</code>\n"
-                "（已脱敏；服务器本地文件，权限 600）" % html.escape(path))
-    return "❌ <b>报告生成失败</b>\n%s" % html.escape(_reason(out))
+    if not (ok and path and os.path.isfile(path)):
+        return False, html.escape(_reason(out) or "report missing"), ""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except OSError as e:
+        return False, "报告已生成但无法读取：%s" % html.escape(str(e)), ""
+    return True, path, text
+
+
+def deliver_report(cb, chat_id):
+    """Show report inline (paginated) and attach the .txt document."""
+    ok, path_or_err, text = op_report()
+    if not ok:
+        edit(cb, "❌ <b>报告生成失败</b>\n%s" % path_or_err, back_kb("menu:ops"))
+        return
+    path = path_or_err
+    edit(cb,
+         ("✅ <b>诊断报告已生成</b>（已脱敏）\n"
+          "全文见下方消息；完整文件见附件。\n"
+          "<code>%s</code>" % html.escape(path)),
+         back_kb("menu:ops"))
+    # Paginated monospace messages so the report is readable in-chat.
+    send(chat_id, text or "(empty report)", mono=True)
+    if not send_document(chat_id, path,
+                         caption="5GPN 脱敏诊断报告",
+                         filename=os.path.basename(path)):
+        send(chat_id, "⚠️ 报告正文已发送，但附件上传失败；服务器文件：<code>%s</code>"
+             % html.escape(path))
+
+
+def edit_report_async(cb, chat_id):
+    key = _busy_key_from_cb(cb)
+
+    def go():
+        try:
+            deliver_report(cb, chat_id)
+        finally:
+            BUSY.discard(key)
+
+    BUSY.add(key)
+    background(go)
 
 
 def op_snapshot():
@@ -2546,7 +2620,7 @@ def handle_callback(cb):
         edit_async(cb, op_doctor, back_kb("menu:ops"))
     elif data == "act:report":
         edit(cb, "⏳ 正在生成脱敏诊断报告…")
-        edit_async(cb, op_report, back_kb("menu:ops"))
+        edit_report_async(cb, chat_id)
     elif data == "act:snapshot":
         edit(cb, "⏳ 正在保存配置快照…")
         edit_async(cb, op_snapshot, back_kb("menu:ops"))

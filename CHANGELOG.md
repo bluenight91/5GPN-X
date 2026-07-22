@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Changed
+
+- Telegram「诊断报告」：生成后在聊天中分页展示全文，并附上 `.txt` 文件；不再只给服务器路径。
+- 健康告警文案改为引导使用 Bot「运维」菜单查看详情。
+
 ### Fixed
 
 - **`5gpn update` 同文件 install 中断**：在 `/opt/5gpn` 原地更新时，`install` 把 `scripts/*.sh` 拷到自身会报 *are the same file* 并触发失败回滚，导致 tgbot 等后续步骤未跑完。现用 `install_repo_script` 跳过同源拷贝。

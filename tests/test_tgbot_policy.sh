@@ -105,7 +105,14 @@ PY
 [[ "${bot_body}" == *'keyboard_fn=exits_menu'* ]] || fail "add-exit success menu must refresh exits after the new exit is written"
 [[ "${bot_body}" == *'"📡 WLOC 管理", "callback_data": "menu:wloc"'* ]] || fail "main menu must expose the WLOC management entry"
 [[ "${bot_body}" == *'"🛠 运维", "callback_data": "menu:ops"'* ]] || fail "main menu must expose operations management"
-[[ "${bot_body}" == *'def ops_menu('* ]] || fail "tgbot.py must define an operations submenu"
+[[ "${bot_body}" == *'def send_document('* ]] || fail "tgbot.py must be able to send report documents"
+[[ "${bot_body}" == *'def deliver_report('* ]] || fail "tgbot.py must deliver diagnostic reports inline"
+[[ "${bot_body}" == *'def edit_report_async('* ]] || fail "tgbot.py must generate reports asynchronously"
+[[ "${bot_body}" == *'edit_report_async(cb, chat_id)'* ]] || fail "act:report must deliver the report inline"
+[[ "${bot_body}" == *'send(chat_id, text or "(empty report)", mono=True)'* ]] \
+    || fail "diagnostic report body must be shown as paginated monospace messages"
+[[ "${bot_body}" == *'send_document(chat_id, path'* ]] \
+    || fail "diagnostic report must also attach the .txt document"
 [[ "${bot_body}" == *'"♻️ 重启服务", "callback_data": "act:restart"'* ]] || fail "operations menu must restart services directly"
 [[ "${bot_body}" == *'services_menu("logs", "menu:ops")'* ]] || fail "log service selection must return to operations"
 [[ "${bot_body}" == *'edit_async(cb, op_restart_services, back_kb("menu:ops"))'* ]] || fail "restart results must return to operations"

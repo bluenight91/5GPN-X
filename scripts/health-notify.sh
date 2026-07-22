@@ -21,34 +21,43 @@ ADMINS="${TG_ADMIN_IDS:-}"
 json_out="$(mktemp)"
 bash "${BASE_DIR}/scripts/doctor.sh" --json >"$json_out" 2>/dev/null || true
 
-eval "$(python3 - "$json_out" <<'PY'
-import json, sys
+text="$(python3 - "$json_out" "$STATE_FILE" <<'PY'
+import html, json, os, sys
+
+path, state_path = sys.argv[1], sys.argv[2]
 try:
-    d = json.load(open(sys.argv[1]))
-    print("fail_n=%d" % int(d.get("fail", 0)))
-    print("warn_n=%d" % int(d.get("warn", 0)))
+    d = json.load(open(path, encoding="utf-8"))
 except Exception:
-    print("fail_n=99")
-    print("warn_n=0")
+    d = {"fail": 99, "warn": 0, "checks": []}
+
+fail_n = int(d.get("fail", 0) or 0)
+warn_n = int(d.get("warn", 0) or 0)
+prev_fail = 0
+if os.path.isfile(state_path):
+    try:
+        prev_fail = int(json.load(open(state_path, encoding="utf-8")).get("fail", 0) or 0)
+    except Exception:
+        prev_fail = 0
+
+text = ""
+if fail_n > 0 and fail_n != prev_fail:
+    lines = []
+    for item in d.get("checks") or []:
+        if item.get("level") == "fail":
+            lines.append("%s: %s" % (item.get("check", "?"), item.get("detail", "")))
+    body = "\n".join(lines[:8])
+    text = "🔴 <b>5GPN 健康检查失败</b>\n失败 %d / 警告 %d" % (fail_n, warn_n)
+    if body:
+        text += "\n<pre>%s</pre>" % html.escape(body[:1500])
+    text += "\n请打开 Bot「运维 → 自检 doctor / 诊断报告」查看详情"
+elif fail_n == 0 and prev_fail > 0:
+    text = "🟢 <b>5GPN 健康检查已恢复</b>\n警告 %d" % warn_n
+print(text)
 PY
 )"
 
-prev_fail=0
-if [[ -f "$STATE_FILE" ]]; then
-    prev_fail="$(python3 -c 'import json,sys;print(int(json.load(open(sys.argv[1])).get("fail",0)))' "$STATE_FILE" 2>/dev/null || echo 0)"
-fi
 cp "$json_out" "$STATE_FILE"
 rm -f "$json_out"
-
-text=""
-if [[ "$fail_n" -gt 0 && "$fail_n" != "$prev_fail" ]]; then
-    text="🔴 <b>5GPN 健康检查失败</b>
-失败 ${fail_n} / 警告 ${warn_n}
-请执行: <code>sudo 5gpn doctor</code> 或 <code>sudo 5gpn report</code>"
-elif [[ "$fail_n" -eq 0 && "$prev_fail" -gt 0 ]]; then
-    text="🟢 <b>5GPN 健康检查已恢复</b>
-警告 ${warn_n}"
-fi
 [[ -n "$text" ]] || exit 0
 
 IFS=',' read -r -a ids <<< "$ADMINS"
