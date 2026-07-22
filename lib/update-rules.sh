@@ -207,6 +207,19 @@ render_config() {
     local_dns=$(cat "$BASE_DIR/.local_dns" 2>/dev/null || printf '%s ' "${DEFAULT_LOCAL_DNS[@]}")
     cache_size=$(cat "$BASE_DIR/.cache_size" 2>/dev/null || echo 500000)
     [[ "$cache_size" =~ ^[0-9]+$ ]] || cache_size=500000
+    client_cidr=$(cat "$BASE_DIR/.client_cidr" 2>/dev/null || echo "172.22.0.0/16")
+    # Basic IPv4 CIDR sanity; fall back to the historical NPN default.
+    if ! python3 - "$client_cidr" <<'PY'
+import ipaddress, sys
+try:
+    net = ipaddress.ip_network(sys.argv[1].strip(), strict=False)
+    assert net.version == 4 and 8 <= net.prefixlen <= 30
+except Exception:
+    raise SystemExit(1)
+PY
+    then
+        client_cidr="172.22.0.0/16"
+    fi
     # ECS for the China chain (default 139.226.48.0/24; overridable via .ecs,
     # set at install time with PGW_ECS or later with --set-ecs).
     local ecs ecs_host
@@ -234,7 +247,8 @@ PY
     local_secondary=$(yaml_upstreams "$local_dns" "101.226.4.6 218.30.118.6 180.76.76.76 119.29.29.29" all tcp)
 
     python3 - "$MOSDNS_TEMPLATE" "$MOSDNS_CONF.tmp" "$server_ip" "$cache_size" \
-        "$remote_primary" "$remote_secondary" "$local_primary" "$local_secondary" "$ecs_host" <<'PY'
+        "$remote_primary" "$remote_secondary" "$local_primary" "$local_secondary" "$ecs_host" \
+        "$client_cidr" <<'PY'
 import sys
 
 template, output, server_ip, cache_size = sys.argv[1:5]
@@ -248,6 +262,7 @@ replacements = {
     "__LOCAL_PRIMARY_UPSTREAMS__": sys.argv[7],
     "__LOCAL_SECONDARY_UPSTREAMS__": sys.argv[8],
     "__ECS_HOST__": sys.argv[9],
+    "__CLIENT_CIDR__": sys.argv[10],
 }
 for marker, value in replacements.items():
     content = content.replace(marker, value)

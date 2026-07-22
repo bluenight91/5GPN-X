@@ -271,14 +271,15 @@ firewall_preserve_hints() {
     info "FIREWALL_MODE=preserve: leaving the existing host firewall untouched."
     info "Make sure these inbound ports are open (SSH detected on: ${ssh_ports}):"
     info "  TCP ${ssh_ports} (SSH), 853 (DoT), 8111 (iOS profile)"
-    info "  From 172.22.0.0/16 only: TCP/UDP 53 (DNS), TCP 80/443 and UDP 443 (reverse proxy)"
+    info "  From $(cat /etc/mosdns/.client_cidr 2>/dev/null || echo 172.22.0.0/16) only: TCP/UDP 53 (DNS), TCP 80/443 and UDP 443 (reverse proxy)"
     info "  Recommended: per-IP rate limit 10000 qps on DNS/DoT ports"
     info "  TCP 80 must be reachable while Let's Encrypt issues/renews the cert."
 }
 firewall_auto_allow() {
     local ssh_ports="$1" p net
     local tcp_list="${ssh_ports},853,8111"
-    local client_nets="172.22.0.0/16"
+    local client_nets
+    client_nets="$(cat /etc/mosdns/.client_cidr 2>/dev/null || echo '172.22.0.0/16')"
     if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'; then
         info "FIREWALL_MODE=auto: adding allow rules to the active UFW profile..."
         for p in ${tcp_list//,/ }; do ufw allow "${p}/tcp" >/dev/null 2>&1 || true; done
@@ -420,13 +421,13 @@ table inet filter {
         # DoT 853 — per-IP QPS 10000 then accept.
         tcp dport 853 meter dns_rate_dot { ip saddr limit rate over 10000/second } drop
         tcp dport 853 accept
-        ip saddr 172.22.0.0/16 tcp dport { 80, 443 } accept
-        ip saddr 172.22.0.0/16 udp dport 443 accept
+        ip saddr __CLIENT_CIDR__ tcp dport { 80, 443 } accept
+        ip saddr __CLIENT_CIDR__ udp dport 443 accept
         # DNS 53 — source-restricted + per-IP QPS 10000 then accept.
-        ip saddr 172.22.0.0/16 tcp dport 53 meter dns_rate_tcp53 { ip saddr limit rate over 10000/second } drop
-        ip saddr 172.22.0.0/16 udp dport 53 meter dns_rate_udp53 { ip saddr limit rate over 10000/second } drop
-        ip saddr 172.22.0.0/16 tcp dport 53 accept
-        ip saddr 172.22.0.0/16 udp dport 53 accept
+        ip saddr __CLIENT_CIDR__ tcp dport 53 meter dns_rate_tcp53 { ip saddr limit rate over 10000/second } drop
+        ip saddr __CLIENT_CIDR__ udp dport 53 meter dns_rate_udp53 { ip saddr limit rate over 10000/second } drop
+        ip saddr __CLIENT_CIDR__ tcp dport 53 accept
+        ip saddr __CLIENT_CIDR__ udp dport 53 accept
         # ICMP for basic network health
         ip protocol icmp accept
         ip6 nexthdr icmpv6 accept
@@ -444,6 +445,10 @@ table inet filter {
 include "/etc/5gpn/pgw-exit.nft"
 EOF
         sed -i "s/__TCP_PORTS__/${tcp_ports}/" "$tmp_conf"
+        local client_cidr
+        client_cidr="$(cat /etc/mosdns/.client_cidr 2>/dev/null || echo '172.22.0.0/16')"
+        # Escape for sed replacement (CIDR has dots/slashes).
+        sed -i "s#__CLIENT_CIDR__#${client_cidr}#g" "$tmp_conf"
         if ! nft -c -f "$tmp_conf" >/dev/null 2>&1; then
             rm -f "$tmp_conf"
             warn "Generated nftables config failed validation; existing firewall left unchanged."
@@ -469,10 +474,12 @@ EOF
         iptables -A INPUT -p tcp --dport 853 -m hashlimit --hashlimit-above 10000/sec --hashlimit-burst 10000 --hashlimit-mode srcip --hashlimit-name dns_dot -j DROP
         iptables -A INPUT -p tcp --dport 853 -j ACCEPT
         # DNS 53 — source-restricted + per-IP QPS 10000.
-        iptables -A INPUT -s 172.22.0.0/16 -p tcp --dport 53 -m hashlimit --hashlimit-above 10000/sec --hashlimit-burst 10000 --hashlimit-mode srcip --hashlimit-name dns_tcp53 -j DROP
-        iptables -A INPUT -s 172.22.0.0/16 -p udp --dport 53 -m hashlimit --hashlimit-above 10000/sec --hashlimit-burst 10000 --hashlimit-mode srcip --hashlimit-name dns_udp53 -j DROP
-        iptables -A INPUT -s 172.22.0.0/16 -p tcp -m multiport --dports 53,80,443 -j ACCEPT
-        iptables -A INPUT -s 172.22.0.0/16 -p udp -m multiport --dports 53,443 -j ACCEPT
+        local client_cidr
+        client_cidr="$(cat /etc/mosdns/.client_cidr 2>/dev/null || echo '172.22.0.0/16')"
+        iptables -A INPUT -s "${client_cidr}" -p tcp --dport 53 -m hashlimit --hashlimit-above 10000/sec --hashlimit-burst 10000 --hashlimit-mode srcip --hashlimit-name dns_tcp53 -j DROP
+        iptables -A INPUT -s "${client_cidr}" -p udp --dport 53 -m hashlimit --hashlimit-above 10000/sec --hashlimit-burst 10000 --hashlimit-mode srcip --hashlimit-name dns_udp53 -j DROP
+        iptables -A INPUT -s "${client_cidr}" -p tcp -m multiport --dports 53,80,443 -j ACCEPT
+        iptables -A INPUT -s "${client_cidr}" -p udp -m multiport --dports 53,443 -j ACCEPT
         iptables -A INPUT -p icmp -j ACCEPT
         iptables -P FORWARD ACCEPT
         iptables -P OUTPUT ACCEPT
@@ -549,7 +556,9 @@ setup_firewall() {
         auto)     firewall_auto_allow "$ssh_ports" ;;
         managed)  firewall_managed_apply "$tcp_ports" "$tcp_ports_ipt" || true ;;
     esac
-    ok "Firewall configured (reverse proxy whitelist: 172.22.0.0/16)"
+    local wl
+    wl="$(cat /etc/mosdns/.client_cidr 2>/dev/null || echo '172.22.0.0/16')"
+    ok "Firewall configured (reverse proxy whitelist: ${wl})"
 }
 open_cert_http_port() {
     info "Temporarily opening TCP/80 for Let's Encrypt HTTP-01..."

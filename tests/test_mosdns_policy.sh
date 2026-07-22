@@ -10,8 +10,12 @@ install="$(cat "${root}/install.sh")"
 fail() { echo "$1" >&2; exit 1; }
 has() { [[ "$1" == *"$2"* ]] || fail "$3"; }
 
-has "$template" 'client_ip 172.22.0.0/16' \
-    "mosdns must identify the gateway client network by source address"
+has "$template" 'client_ip __CLIENT_CIDR__' \
+    "mosdns must identify the gateway client network by source address (CIDR placeholder)"
+has "$rules" '__CLIENT_CIDR__' \
+    "update-rules must substitute the configured client CIDR into mosdns"
+has "$rules" '.client_cidr' \
+    "update-rules must read /etc/mosdns/.client_cidr"
 has "$template" 'exec: goto private_client' \
     "gateway client networks must enter the synthetic proxy policy"
 has "$template" 'exec: goto public_client' \

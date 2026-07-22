@@ -339,7 +339,16 @@ Options:
   (none)         Full interactive installation
   --status       Show service status
   --update       Self-update from git and redeploy the runtime (config kept)
-  --smoke        Run the read-only post-deploy smoke check
+  --smoke        Run the read-only post-deploy smoke check (alias of doctor --deep)
+  --doctor       Structured health check (--json / --deep supported via scripts/doctor.sh)
+  --report       Write a redacted diagnostic report under /tmp
+  --snapshot     Save a config snapshot (also done automatically before --update)
+  --rollback [id]
+                 Restore the latest (or named) config snapshot
+  --set-client-cidr <cidr>
+                 Set private-client source CIDR for mosdns hijack (default 172.22.0.0/16)
+  --detect-client-cidr
+                 Detect a private-client CIDR from local interfaces and apply it
   --update-rules Update GFWList/ChinaList and reload mosdns
   --renew-cert   Force renew certificates and reload services
   --set-dot-domain <domain>
@@ -1248,6 +1257,7 @@ install_mosdns() {
     echo "$REMOTE_DNS" > /etc/mosdns/.sniproxy_dns
     echo "${PGW_ECS:-139.226.48.0/24}" > /etc/mosdns/.ecs
     echo "${PACKET_CACHE_SIZE:-500000}" > /etc/mosdns/.cache_size
+    echo "${CLIENT_CIDR:-172.22.0.0/16}" > /etc/mosdns/.client_cidr
     touch /etc/mosdns/gfwlist.txt /etc/mosdns/chinalist.txt /etc/mosdns/gfwlist-extra-local.txt /etc/mosdns/wloc.txt /etc/mosdns/direct-domains.txt
     chown -R mosdns:mosdns /etc/mosdns
     chmod 0750 /etc/mosdns /etc/mosdns/certs
@@ -2947,11 +2957,39 @@ Description=Update mosdns GFWList/ChinaList rules
 Type=oneshot
 ExecStart=/usr/local/bin/update-mosdns-rules.sh
 EOF
+    # Periodic doctor → Telegram alert (no-op when tgbot.env is absent).
+    install -m 0755 "${SCRIPT_DIR}/scripts/doctor.sh" "${BASE_DIR}/scripts/doctor.sh" 2>/dev/null \
+        || install -m 0755 "${LIB_DIR}/../scripts/doctor.sh" "${BASE_DIR}/scripts/doctor.sh" 2>/dev/null || true
+    mkdir -p "${BASE_DIR}/scripts"
+    for f in doctor.sh snapshot.sh report.sh health-notify.sh smoke-check.sh; do
+        [[ -f "${SCRIPT_DIR}/scripts/${f}" ]] && install -m 0755 "${SCRIPT_DIR}/scripts/${f}" "${BASE_DIR}/scripts/${f}"
+    done
+    cat > /etc/systemd/system/5gpn-health.service <<EOF
+[Unit]
+Description=5GPN-X periodic health check (Telegram alert on failure)
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash ${BASE_DIR}/scripts/health-notify.sh
+EOF
+    cat > /etc/systemd/system/5gpn-health.timer <<'EOF'
+[Unit]
+Description=Run 5GPN-X health check every 10 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
     systemctl daemon-reload
     systemctl enable --now update-mosdns-rules.timer
+    systemctl enable --now 5gpn-health.timer 2>/dev/null || true
     install_certbot_firewall_hooks
     systemctl enable --now certbot.timer 2>/dev/null || true
-    ok "Schedules configured (rules: weekly, cert: auto)"
+    ok "Schedules configured (rules: weekly, health: 10m, cert: auto)"
 }
 show_status() {
     echo "=========================================="
@@ -3105,6 +3143,26 @@ do_update() {
     DOMAIN="${DOMAIN:-$(cat "${CONF_DIR}/.domain" 2>/dev/null || cat /etc/mosdns/.domain 2>/dev/null || true)}"
     PUBLIC_IP="${PUBLIC_IP:-$(cat /etc/mosdns/.public_ip 2>/dev/null || true)}"
     info "更新 5GPN-X（保留全部配置）..."
+
+    local snap_id="${PGW_UPDATE_SNAPSHOT:-}"
+    mkdir -p "${BASE_DIR}/scripts"
+    for f in doctor.sh snapshot.sh report.sh health-notify.sh smoke-check.sh; do
+        [[ -f "${SCRIPT_DIR}/scripts/${f}" ]] && install -m 0755 "${SCRIPT_DIR}/scripts/${f}" "${BASE_DIR}/scripts/${f}"
+    done
+
+    # Always keep a rollback point before mutating runtime (including the
+    # first upgrade onto this feature when G5PNX_UPDATED was set by old code).
+    if [[ -z "$snap_id" && -x "${BASE_DIR}/scripts/snapshot.sh" ]]; then
+        info "更新前创建配置快照..."
+        snap_id="$(bash "${BASE_DIR}/scripts/snapshot.sh" create pre-update 2>/dev/null | tail -1 || true)"
+        if [[ -z "$snap_id" || "$snap_id" == *ERR* ]]; then
+            err "创建更新前快照失败；已中止更新（避免无回滚点）"
+            exit 1
+        fi
+        export PGW_UPDATE_SNAPSHOT="$snap_id"
+        ok "快照: ${snap_id}"
+    fi
+
     if [[ -z "${G5PNX_UPDATED:-}" ]]; then
         info "拉取最新代码 (origin/main)..."
         local sync_rc=0
@@ -3112,6 +3170,7 @@ do_update() {
         case "$sync_rc" in
             0)
                 export G5PNX_UPDATED=1
+                export PGW_UPDATE_SNAPSHOT="${snap_id}"
                 exec bash "${BASE_DIR}/install.sh" --update
                 ;;
             1)
@@ -3123,9 +3182,21 @@ do_update() {
                 ;;
         esac
     fi
+
+    _pgw_update_rollback() {
+        local rc=$?
+        trap - ERR
+        if [[ "$rc" -ne 0 && -n "${snap_id:-}" ]]; then
+            err "更新失败 (exit ${rc})，正在回滚快照 ${snap_id} ..."
+            bash "${BASE_DIR}/scripts/snapshot.sh" restore "$snap_id" || warn "自动回滚失败，请手动: 5gpn rollback ${snap_id}"
+        fi
+        exit "$rc"
+    }
+    trap _pgw_update_rollback ERR
+
     install_deps
     cur_ns="$(cat /etc/mosdns/.remote_dns 2>/dev/null || cat "${CONF_DIR}/.remote_dns" 2>/dev/null || echo "${DEFAULT_REMOTE_DNS[*]}")"
-    REMOTE_DNS="$cur_ns" install_sniproxy   # re-render conf with current DNS, not defaults
+    REMOTE_DNS="$cur_ns" install_sniproxy
     install_whatsapp_shim
     install_wloc
     cmp -s "${LIB_DIR}/quic-proxy.go" "${SRC_DIR}/quic-proxy.go" 2>/dev/null || rm -f "${BASE_DIR}/bin/quic-proxy"
@@ -3134,17 +3205,13 @@ do_update() {
     cp "${LIB_DIR}/mosdns.yaml.template" /etc/mosdns/config.yaml.template
     install -m 0755 "${LIB_DIR}/update-rules.sh" /usr/local/bin/update-mosdns-rules.sh
     touch /etc/mosdns/direct-domains.txt 2>/dev/null || true
+    [[ -f /etc/mosdns/.client_cidr ]] || echo "${CLIENT_CIDR:-172.22.0.0/16}" > /etc/mosdns/.client_cidr
     setup_exit_switching
     generate_ios_profile
     apply_lowmem_go_limits
     setup_schedules
     install -m 0755 "${SCRIPT_PATH}" "${BASE_DIR}/bin/5gpn-ctl"
     install_cli
-    # Rebuild URI exit configs from the stored links (generator may have changed).
-    # Use add_exit (NOT edit_exit): it rebuilds only the exit's own config, so
-    # smart is regenerated/restarted ONCE below instead of once per exit —
-    # important on low-RAM boxes where each mihomo -t geodata load is slow.
-    # Subshells are mandatory: add_exit/regen_smart use exit 1 on errors.
     local f n cur_exit
     shopt -s nullglob
     for f in "${EXITS_DIR}"/*.uri; do
@@ -3160,18 +3227,15 @@ do_update() {
         systemctl restart 5gpn-tgbot 2>/dev/null || true
     fi
     [[ -f "${RULES_FILE}" ]] && { ( regen_smart ) || warn "smart 配置重建失败；可稍后手动 --set-rules"; }
-    # A named (non-smart) active exit keeps running its old config until restarted.
     if [[ "$cur_exit" != "local" && "$cur_exit" != "smart" ]]; then
         systemctl reset-failed "5gpn-mihomo@${cur_exit}.service" 2>/dev/null || true
         systemctl restart "5gpn-mihomo@${cur_exit}.service" 2>/dev/null || true
     fi
-    # A crash loop (e.g. bad config earlier) trips systemd's start limit; clear
-    # it or restart is refused even with the config fixed.
     systemctl reset-failed mosdns sniproxy wa-shim quic-proxy 2>/dev/null || true
-    systemctl restart mosdns sniproxy wa-shim quic-proxy 2>/dev/null || true
-    # After a successful runtime redeploy, stamp the revision we actually ran.
+    systemctl restart mosdns sniproxy wa-shim quic-proxy
     record_deployed_revision
-    ok "更新完成 ($(deployed_revision_line))"
+    trap - ERR
+    ok "更新完成 ($(deployed_revision_line))；回滚点: ${snap_id:-none}"
 }
 do_uninstall() {
     warn "This will remove sniproxy, quic-proxy, mosdns configs, and rules."
@@ -3189,11 +3253,12 @@ do_uninstall() {
         systemctl stop "5gpn-singbox@$(basename "$f" .type).service" 2>/dev/null || true
     done
     shopt -u nullglob
-    systemctl stop mosdns dnsdist sniproxy wa-shim quic-proxy china-dns-race-proxy 5gpn-ios-profile.socket 5gpn-ios-profile 5gpn-exit 5gpn-tgbot 5gpn-api 5gpn-wloc 2>/dev/null || true
-    systemctl disable mosdns dnsdist sniproxy wa-shim quic-proxy china-dns-race-proxy 5gpn-ios-profile.socket 5gpn-ios-profile 5gpn-exit 5gpn-tgbot 5gpn-api 5gpn-wloc 2>/dev/null || true
+    systemctl stop mosdns dnsdist sniproxy wa-shim quic-proxy china-dns-race-proxy 5gpn-ios-profile.socket 5gpn-ios-profile 5gpn-exit 5gpn-tgbot 5gpn-api 5gpn-wloc 5gpn-health.timer 5gpn-health.service 2>/dev/null || true
+    systemctl disable mosdns dnsdist sniproxy wa-shim quic-proxy china-dns-race-proxy 5gpn-ios-profile.socket 5gpn-ios-profile 5gpn-exit 5gpn-tgbot 5gpn-api 5gpn-wloc 5gpn-health.timer 5gpn-health.service 2>/dev/null || true
     rm -f /etc/systemd/system/{mosdns,sniproxy,wa-shim,quic-proxy,china-dns-race-proxy,5gpn-ios-profile,update-mosdns-rules,5gpn-exit,5gpn-tgbot}.*
     rm -f /etc/systemd/system/5gpn-api.*
     rm -f /etc/systemd/system/5gpn-wloc.*
+    rm -f /etc/systemd/system/5gpn-health.service /etc/systemd/system/5gpn-health.timer
     rm -f /usr/local/bin/5gpn
     rm -f /etc/systemd/system/5gpn-ios-profile@.service \
         /etc/systemd/system/5gpn-mihomo@.service \
@@ -3423,6 +3488,91 @@ PY
     /usr/local/bin/update-mosdns-rules.sh >/dev/null 2>&1 || warn "配置刷新失败，请手动运行 $0 --update-rules"
     ok "ECS 已设置为 $ecs 并生效"
 }
+set_client_cidr() {
+    local cidr="${1:-}"
+    [[ -n "$cidr" ]] || { err "Usage: $0 --set-client-cidr <a.b.c.0/16>"; exit 1; }
+    python3 - "$cidr" <<'PY' || { err "无效 CIDR（需 IPv4/8..30，如 172.22.0.0/16）"; exit 1; }
+import ipaddress, sys
+net = ipaddress.ip_network(sys.argv[1].strip(), strict=False)
+assert net.version == 4 and 8 <= net.prefixlen <= 30
+print(str(net))
+PY
+    cidr="$(python3 -c 'import ipaddress,sys; print(ipaddress.ip_network(sys.argv[1].strip(), strict=False))' "$cidr")"
+    mkdir -p /etc/mosdns "$CONF_DIR"
+    echo "$cidr" > /etc/mosdns/.client_cidr
+    echo "$cidr" > "${CONF_DIR}/.client_cidr"
+    # Keep wa-shim allow list in sync when present.
+    if [[ -f "${CONF_DIR}/wa-shim.env" ]]; then
+        if grep -q '^WA_SHIM_ALLOW_CIDR=' "${CONF_DIR}/wa-shim.env"; then
+            sed -i -E "s#^WA_SHIM_ALLOW_CIDR=.*#WA_SHIM_ALLOW_CIDR=${cidr},127.0.0.0/8#" "${CONF_DIR}/wa-shim.env"
+        else
+            echo "WA_SHIM_ALLOW_CIDR=${cidr},127.0.0.0/8" >> "${CONF_DIR}/wa-shim.env"
+        fi
+        systemctl restart wa-shim 2>/dev/null || true
+    fi
+    /usr/local/bin/update-mosdns-rules.sh >/dev/null 2>&1 || warn "mosdns 刷新失败，请手动 --update-rules"
+    if [[ -f /etc/5gpn/.firewall-managed ]] && declare -F firewall_managed_apply >/dev/null 2>&1; then
+        local ssh_ports tcp_ports tcp_ports_ipt
+        ssh_ports="$(detect_ssh_ports 2>/dev/null || echo 22)"
+        tcp_ports_ipt="${ssh_ports},8111"
+        tcp_ports="${tcp_ports_ipt//,/, }"
+        firewall_managed_apply "$tcp_ports" "$tcp_ports_ipt" >/dev/null 2>&1 \
+            || warn "托管防火墙未自动刷新；请重跑安装或手动放行 ${cidr}"
+    else
+        info "若使用自管防火墙，请自行放行来源 ${cidr} 的 53/80/443"
+    fi
+    ok "客户端网段已设置为 ${cidr}"
+}
+detect_client_cidr() {
+    # Prefer RFC1918 addresses on non-default-route interfaces (typical NPN NIC).
+    local guessed
+    guessed="$(python3 <<'PY'
+import ipaddress, subprocess, re
+out = subprocess.check_output(["ip", "-o", "-4", "addr", "show"], text=True, stderr=subprocess.DEVNULL)
+default_if = ""
+try:
+    rt = subprocess.check_output(["ip", "route", "show", "default"], text=True, stderr=subprocess.DEVNULL)
+    m = re.search(r"dev\s+(\S+)", rt)
+    if m:
+        default_if = m.group(1)
+except Exception:
+    pass
+cands = []
+for line in out.splitlines():
+    parts = line.split()
+    if len(parts) < 4:
+        continue
+    iface, cidr = parts[1], parts[3]
+    try:
+        net = ipaddress.ip_network(cidr, strict=False)
+    except ValueError:
+        continue
+    if not net.is_private or net.is_loopback or net.prefixlen > 30:
+        continue
+    # Prefer non-default-route NIC (NPN data path), else any private /16-/24.
+    score = 0
+    if iface != default_if:
+        score += 10
+    if net.prefixlen == 16:
+        score += 3
+    elif 16 < net.prefixlen <= 24:
+        score += 2
+    # Prefer classic 172.16/12 NPN ranges
+    if ipaddress.ip_address(str(net.network_address)) in ipaddress.ip_network("172.16.0.0/12"):
+        score += 5
+    cands.append((score, str(net), iface))
+cands.sort(reverse=True)
+if cands:
+    print(cands[0][1])
+PY
+)"
+    if [[ -z "$guessed" ]]; then
+        err "未能从本机网卡识别私网客户端段；请手动: $0 --set-client-cidr 172.22.0.0/16"
+        exit 1
+    fi
+    info "检测到客户端网段候选: ${guessed}"
+    set_client_cidr "$guessed"
+}
 set_custom_dns() {
     local remote_dns local_dns backup_dir sniproxy_backup=""
     [[ -n "${1:-}" ]] || { err "Usage: $0 --set-dns <remote-dns> [local-dns]"; exit 1; }
@@ -3600,7 +3750,33 @@ case "${1:-}" in
         ;;
     --smoke)
         check_root
-        exec bash "${SCRIPT_DIR}/scripts/smoke-check.sh"
+        exec bash "${SCRIPT_DIR}/scripts/doctor.sh" --deep
+        ;;
+    --doctor)
+        check_root
+        shift
+        exec bash "${SCRIPT_DIR}/scripts/doctor.sh" "$@"
+        ;;
+    --report)
+        check_root
+        shift
+        exec bash "${SCRIPT_DIR}/scripts/report.sh" "$@"
+        ;;
+    --snapshot)
+        check_root
+        bash "${SCRIPT_DIR}/scripts/snapshot.sh" create "${2:-manual}"
+        ;;
+    --rollback)
+        check_root
+        bash "${SCRIPT_DIR}/scripts/snapshot.sh" restore "${2:-latest}"
+        ;;
+    --set-client-cidr)
+        check_root
+        set_client_cidr "${2:-}"
+        ;;
+    --detect-client-cidr)
+        check_root
+        detect_client_cidr
         ;;
     --update-rules)
         /usr/local/bin/update-mosdns-rules.sh

@@ -17,13 +17,13 @@ function Assert-Contains {
     }
 }
 
-Assert-Contains $install 'ip saddr 172.22.0.0/16 tcp dport { 80, 443 } accept' 'nft TCP reverse proxy private allow'
-Assert-Contains $install 'ip saddr 172.22.0.0/16 udp dport 443 accept' 'nft UDP reverse proxy private allow'
+Assert-Contains $install 'ip saddr __CLIENT_CIDR__ tcp dport { 80, 443 } accept' 'nft TCP reverse proxy private allow'
+Assert-Contains $install 'ip saddr __CLIENT_CIDR__ udp dport 443 accept' 'nft UDP reverse proxy private allow'
 Assert-Contains $install 'tcp dport 853 meter dns_rate_dot' 'nft DoT per-IP QPS rate limit'
 Assert-Contains $install 'meter dns_rate_tcp53' 'nft DNS TCP per-IP QPS rate limit'
 Assert-Contains $install 'meter dns_rate_udp53' 'nft DNS UDP per-IP QPS rate limit'
-Assert-Contains $install 'iptables -A INPUT -s 172.22.0.0/16 -p tcp -m multiport --dports 53,80,443 -j ACCEPT' 'iptables TCP reverse proxy + DNS private allow'
-Assert-Contains $install 'iptables -A INPUT -s 172.22.0.0/16 -p udp -m multiport --dports 53,443 -j ACCEPT' 'iptables UDP DNS + reverse proxy private allow'
+Assert-Contains $install 'iptables -A INPUT -s "${client_cidr}" -p tcp -m multiport --dports 53,80,443 -j ACCEPT' 'iptables TCP reverse proxy + DNS private allow'
+Assert-Contains $install 'iptables -A INPUT -s "${client_cidr}" -p udp -m multiport --dports 53,443 -j ACCEPT' 'iptables UDP DNS + reverse proxy private allow'
 Assert-Contains $install 'hashlimit-name dns_dot' 'iptables DoT per-IP QPS rate limit'
 Assert-Contains $install 'iptables -F INPUT' 'iptables fallback flushes stale public reverse proxy rules'
 Assert-Contains $install '--comment 5gpn-cert-http' 'temporary HTTP rule is tagged'
@@ -33,7 +33,7 @@ Assert-Contains $install '--pre-hook /usr/local/bin/5gpn-open-cert-http.sh' 'cer
 Assert-Contains $install '--post-hook /usr/local/bin/5gpn-restore-firewall.sh' 'certbot post-hook restores firewall'
 Assert-Contains $install '/etc/letsencrypt/renewal-hooks/pre/10-5gpn-open-http.sh' 'automatic renew pre-hook'
 Assert-Contains $install '/etc/letsencrypt/renewal-hooks/post/90-5gpn-restore-firewall.sh' 'automatic renew post-hook'
-Assert-Contains $install 'Firewall configured (reverse proxy whitelist: 172.22.0.0/16)' 'firewall status message'
+Assert-Contains $install 'Firewall configured (reverse proxy whitelist: ${wl})' 'firewall status message uses configured client CIDR'
 Assert-Contains $readme '172.22.0.0/16' 'README documents reverse proxy whitelist'
 Assert-Contains $readme '80/443' 'README documents reverse proxy ports'
 Assert-Contains $readme '443' 'README documents reverse proxy port'

@@ -186,7 +186,7 @@ __LOCAL_SECONDARY_UPSTREAMS__
           - has_resp
         exec: accept
       - matches:
-          - client_ip 172.22.0.0/16
+          - client_ip __CLIENT_CIDR__
         exec: goto private_client
       - exec: goto public_client
 

@@ -1384,6 +1384,40 @@ def op_restart_services():
     return head + "\n" + "\n".join(results)
 
 
+def op_doctor():
+    ok, out = run2(["bash", MGMT, "--doctor"], timeout=180)
+    body = html.escape(_strip_ansi(out)[-3500:])
+    if ok:
+        return "✅ <b>doctor 通过</b>\n<pre>%s</pre>" % body
+    return "❌ <b>doctor 发现问题</b>\n<pre>%s</pre>" % body
+
+
+def op_report():
+    ok, out = run2(["bash", MGMT, "--report"], timeout=240)
+    path = ""
+    for line in (out or "").splitlines():
+        if line.startswith("/tmp/") or "report written:" in line:
+            path = line.split()[-1]
+    if ok and path:
+        return ("✅ <b>诊断报告已生成</b>\n<code>%s</code>\n"
+                "（已脱敏；服务器本地文件，权限 600）" % html.escape(path))
+    return "❌ <b>报告生成失败</b>\n%s" % html.escape(_reason(out))
+
+
+def op_snapshot():
+    ok, out = run2(["bash", MGMT, "--snapshot", "manual-bot"], timeout=120)
+    if ok:
+        return "✅ <b>快照已保存</b>\n<pre>%s</pre>" % html.escape(_strip_ansi(out)[-1500:])
+    return "❌ <b>快照失败</b>\n%s" % html.escape(_reason(out))
+
+
+def op_rollback():
+    ok, out = run2(["bash", MGMT, "--rollback"], timeout=300)
+    if ok:
+        return ("✅ <b>已回滚到最近快照</b>\n<pre>%s</pre>" % html.escape(_strip_ansi(out)[-1500:]))
+    return "❌ <b>回滚失败</b>\n%s" % html.escape(_reason(out))
+
+
 def op_logs(svc):
     # Logs are the one place where the raw content IS the requested result.
     if svc not in SERVICES:
@@ -1845,6 +1879,10 @@ def main_menu():
 
 def ops_menu():
     return [
+        [{"text": "🩺 自检 doctor", "callback_data": "act:doctor"},
+         {"text": "🧾 诊断报告", "callback_data": "act:report"}],
+        [{"text": "💾 快照", "callback_data": "act:snapshot"},
+         {"text": "⏪ 回滚", "callback_data": "act:rollback"}],
         [{"text": "♻️ 重启服务", "callback_data": "act:restart"},
          {"text": "📜 日志", "callback_data": "menu:logs"}],
         [{"text": "« 返回", "callback_data": "menu:main"}],
@@ -2503,6 +2541,18 @@ def handle_callback(cb):
     elif data == "act:renew":
         edit(cb, "⏳ 正在续期证书，请稍候…")
         edit_async(cb, op_renew_cert, back_kb("menu:main"))
+    elif data == "act:doctor":
+        edit(cb, "⏳ 正在运行 doctor 自检…")
+        edit_async(cb, op_doctor, back_kb("menu:ops"))
+    elif data == "act:report":
+        edit(cb, "⏳ 正在生成脱敏诊断报告…")
+        edit_async(cb, op_report, back_kb("menu:ops"))
+    elif data == "act:snapshot":
+        edit(cb, "⏳ 正在保存配置快照…")
+        edit_async(cb, op_snapshot, back_kb("menu:ops"))
+    elif data == "act:rollback":
+        edit(cb, "⏳ 正在回滚到最近快照…")
+        edit_async(cb, op_rollback, back_kb("menu:ops"))
     elif data == "act:restart":
         edit(cb, "⏳ 正在重启服务…")
         edit_async(cb, op_restart_services, back_kb("menu:ops"))

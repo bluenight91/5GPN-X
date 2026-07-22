@@ -2,13 +2,13 @@
 
 服务器端透明代理网关：mosdns DoT + SNI/QUIC 透明代理 + 可切换多协议出口。客户端只需把 DNS/DoT 指向服务器域名，无需安装任何代理客户端。
 
-本仓库在 Xiuyixx/5GPN-X 基础上增强了管理与运维能力：网页控制台（含 mihomo 监控面板）、`--update` 一键更新、git 检出式 `/opt/5gpn`、冒烟检查、域名 DoH 上游与可配置 ECS、API 安全加固。
+本仓库在 Xiuyixx/5GPN-X 基础上增强了管理与运维能力：网页控制台（含 mihomo 监控面板）、`--update` 一键更新（含快照回滚）、git 检出式 `/opt/5gpn`、`doctor` 健康检查、域名 DoH 上游与可配置 ECS、API 安全加固。
 
 ## 工作原理
 
 面向 5G NPN / N6 互通、私网终端出海和轻量透明代理场景：
 
-- `172.22.0.0/16` 私网客户端把 DNS/DoT 指向网关。
+- `172.22.0.0/16` 私网客户端（可改，见 `--set-client-cidr`）把 DNS/DoT 指向网关。
 - ChinaList 域名（所有来源）走国内 DNS 竞速（4 路并发 + TCP fallback + 海外兜底含 `22.22.22.22`），保持本地访问体验。
 - 内网来源非 ChinaList 的 A 查询返回服务器 IP，流量进入 TCP/QUIC 代理。
 - 其他来源：被墙域名不劫持，正常海外解析；其他域名也正常海外解析。
@@ -39,9 +39,10 @@
 
 **运维**
 
-- `--update` 一键更新：git 自更新 + 重部署运行时（保留全部配置）。
+- `--update` 一键更新：git 自更新 + 重部署运行时（保留全部配置）；更新前自动快照，失败可回滚。
 - `/opt/5gpn` 自动成为 git 检出，管理命令全部在该目录执行。
-- 冒烟检查脚本：安装/更新后一分钟只读体检。
+- `doctor` / `report`：结构化自检与脱敏诊断报告；`smoke` 为 `doctor --deep` 别名。
+- 可配置客户端网段（`--set-client-cidr` / `--detect-client-cidr`）；健康定时器可经 Telegram 告警。
 - API 安全加固：全响应安全响应头（HSTS/XFO/nosniff/CSP）、每源 IP 限流（429）、PII 静默日志。
 
 ## 环境要求
@@ -80,7 +81,7 @@ sudo ./install.sh
 sudo 5gpn update
 ```
 
-一条命令完成：`git fetch` 强制更新 `origin/main` + `reset --hard` 自更新（有新代码则以新代码 re-exec）→ 重部署运行时——重渲染 sniproxy 配置（保留当前 DNS）、按需重编译 quic-proxy、刷新 mosdns/mihomo 二进制与生成器、从保存的 `.uri` 链接重建出口配置、刷新 api-server/metacubexd/tgbot（**令牌不变**）、重建 smart 配置并重启服务（先 `reset-failed` 清除启动频率限制）。防火墙、内核调优、DNS 设置、出口、分流规则、证书全部保持原样。
+一条命令完成：更新前配置快照 → `git fetch` 强制更新 `origin/main` + `reset --hard` 自更新（有新代码则以新代码 re-exec）→ 重部署运行时——重渲染 sniproxy 配置（保留当前 DNS）、按需重编译 quic-proxy、刷新 mosdns/mihomo 二进制与生成器、从保存的 `.uri` 链接重建出口配置、刷新 api-server/metacubexd/tgbot（**令牌不变**）、重建 smart 配置并重启服务（先 `reset-failed` 清除启动频率限制）。防火墙、内核调优、DNS 设置、出口、分流规则、证书全部保持原样。更新失败时会尝试自动回滚到更新前快照；也可手动 `sudo 5gpn rollback`。
 
 若 `git pull` 显示 `Already up to date` 但功能未出现，多半是当前分支未对齐 `origin/main`（例如只拉到了功能分支）。可手动：
 
@@ -106,8 +107,14 @@ sudo 5gpn update
 安装后 `/opt/5gpn` 自动成为本仓库的 git 检出，同时提供全局命令 `5gpn`（`/usr/local/bin/5gpn`），在任意目录直接执行。首个子命令的 `--` 可省略（如 `5gpn update` 等同 `5gpn --update`）：
 
 ```bash
-sudo 5gpn update             # 一键更新到最新版（保留全部配置）
+sudo 5gpn update             # 一键更新到最新版（保留全部配置；失败可回滚）
 sudo 5gpn status             # 查看状态
+sudo 5gpn doctor             # 结构化健康检查（--json / --deep）
+sudo 5gpn report             # 脱敏诊断报告 → /tmp
+sudo 5gpn snapshot           # 手动保存配置快照
+sudo 5gpn rollback           # 回滚到最近快照
+sudo 5gpn set-client-cidr 172.22.0.0/16   # 私网客户端源网段
+sudo 5gpn detect-client-cidr # 从本机网卡猜测并应用
 sudo 5gpn update-rules       # 更新 GFWList/ChinaList 并重载 mosdns
 sudo 5gpn renew-cert         # 续期证书
 sudo 5gpn set-dot-domain dns.example.com
@@ -123,7 +130,7 @@ sudo 5gpn setup-api          # 启用 HTTP 控制 API + 网页控制台（可选
 sudo 5gpn uninstall          # 卸载
 ```
 
-出口与分流相关子命令见下两节；DNS 直连名单也可在网页控制台「设置」或 Telegram Bot「DoT 管理 → DNS 直连域名」中维护。其余子命令（`show-rules`、`show-policy`、`import-rules`、`proxy-domain`、`setup-whatsapp` 等）可用 `sudo 5gpn --help` 查看。
+出口与分流相关子命令见下两节；DNS 直连名单也可在网页控制台「设置」或 Telegram Bot「DoT 管理 → DNS 直连域名」中维护。其余子命令（`show-rules`、`show-policy`、`import-rules`、`proxy-domain`、`setup-whatsapp` 等）可用 `sudo 5gpn --help` 查看。排查步骤见 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)。
 
 ## 出口管理
 
@@ -252,13 +259,16 @@ sudo 5gpn set-ecs 112.96.54.0/24
 - DoH 证书需为公网可信证书；建议在 AGH 侧按来源 IP 限流/白名单。
 - sniproxy 的解析器只认纯 IP：上游为 DoH/DoT 时自动改用 `127.0.0.1`（本机 mosdns，走完整链路与缓存），不产生警告。
 
-## 冒烟检查（每次安装/更新后）
+## 健康检查（每次安装/更新后）
 
 ```bash
-sudo 5gpn smoke
+sudo 5gpn doctor          # 结构化自检
+sudo 5gpn doctor --deep   # 深度检查（等同 smoke）
+sudo 5gpn smoke           # doctor --deep 别名
+sudo 5gpn report          # 脱敏报告写入 /tmp
 ```
 
-只读、约一分钟：服务状态、端口监听、DNS/DoT 应答（区分无应答与上游拒绝）、TUN 链路（含 `--interface pgw-smart` 实际出网探测）、fwmark 规则健康度、API 健康、证书有效期、WLOC 状态；配置了域名 DoH 上游时还会做一次 wire-format 直连探测。结尾附人工核对步骤。
+只读、约一分钟：服务状态、端口监听、DNS/DoT 应答（区分无应答与上游拒绝）、客户端网段、TUN 链路（`--deep` 含 `--interface pgw-smart` 出网探测）、fwmark 规则健康度、API 健康、证书有效期、WLOC 状态；配置了域名 DoH 上游时还会做一次 wire-format 直连探测。结尾附人工核对步骤。配置了 Telegram Bot 时，`5gpn-health.timer` 每 10 分钟复检并在失败/恢复时告警。
 
 ## 配置参考
 
@@ -269,8 +279,10 @@ install.sh        # 安装/管理入口（唯一需要直接运行的脚本）
 quick-install.sh  # 一键安装引导
 lib/              # 组件源码与模板（tgbot、wa-shim、api-server、Go 代理、mihomo/mosdns 生成器等）
 webui/            # 静态网页控制台（index.html 单文件）
-scripts/          # 运维脚本（smoke-check.sh 冒烟检查）
+scripts/          # 运维脚本（doctor / snapshot / report / health-notify）
+docs/             # 排查手册等
 tests/            # 策略与单元测试
+CHANGELOG.md      # 变更记录
 ```
 
 ### 关键路径
@@ -282,6 +294,8 @@ tests/            # 策略与单元测试
 | `/opt/5gpn/etc/api.env` | 控制台 API 令牌与端口（权限 600） |
 | `/opt/5gpn/etc/tgbot.env` | Bot Token 和管理员 ID（权限 600） |
 | `/etc/5gpn/` | 出口与分流状态（`exits/`、`rules.conf`、`policy-map.conf`、`mihomo-api-secret`） |
+| `/etc/mosdns/.client_cidr` | 私网客户端源网段（默认 `172.22.0.0/16`） |
+| `/var/lib/5gpn/snapshots/` | 配置快照（`update` 前自动创建，可用 `rollback` 恢复） |
 | `/etc/mosdns/config.yaml` | mosdns 实际配置 |
 | `/etc/mosdns/.remote_dns` `.local_dns` `.ecs` | DNS 上游与 ECS（`--set-dns` / `--set-ecs` 维护） |
 | `/etc/mosdns/gfwlist-extra-local.txt` | 本地补充 GFWList 域名（每行一个，`--update-rules` 时并入） |
@@ -310,6 +324,7 @@ EMAIL="admin@example.com"       # ACME 邮箱
 REMOTE_DNS="1.1.1.1,8.8.8.8,9.9.9.9"     # 海外 DNS 池
 LOCAL_DNS="101.226.4.6,218.30.118.6,180.76.76.76,119.29.29.29"  # 国内 DNS 竞速池（4路 UDP 并发）
 PGW_ECS="139.226.48.0/24"         # 国内链查询携带的 ECS（可用 --set-ecs 随时改）
+CLIENT_CIDR="172.22.0.0/16"       # 私网客户端源网段（可用 --set-client-cidr / --detect-client-cidr）
 LOWMEM=1                        # 强制低内存模式（≤1GB 自动启用）
 MIHOMO_VERSION="1.19.28"        # 可覆盖锁定版，建议保持默认
 METACUBEXD_VERSION="1.269.0"    # 可覆盖锁定版 metacubexd
@@ -350,7 +365,7 @@ PGW_TUNING=essential            # essential(默认)/performance 内核调优档�
 
 **如何更新规则集与程序本身？** 规则集：`sudo 5gpn update-rules`。程序：`sudo 5gpn update`（无需手动 git pull）。
 
-**smart 模式分流全部失败怎么排查？** 先跑 `sudo bash scripts/smoke-check.sh` 定位环节；再看 `journalctl -u 5gpn-mihomo@smart -n 30 --no-pager`（规则是否命中、拨号错误类型）、`ip route show table 100`（默认路由是否指向 pgw-smart）、以及 smart.yaml 的 `dns` 段是否就位。
+**smart 模式分流全部失败怎么排查？** 先跑 `sudo 5gpn doctor --deep` 定位环节；再看 `journalctl -u 5gpn-mihomo@smart -n 30 --no-pager`（规则是否命中、拨号错误类型）、`ip route show table 100`（默认路由是否指向 pgw-smart）、以及 smart.yaml 的 `dns` 段是否就位。更完整步骤见 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)。
 
 **sniproxy 用什么 DNS？** 上游为纯 IP 时直接用该 IP；上游为 DoH/DoT 时用 `127.0.0.1`（本机 mosdns，走完整链路与缓存）。sniproxy 的解析器只用于解析被代理网站的上游主机名，与客户端 DNS 策略无关。
 
