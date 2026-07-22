@@ -2927,6 +2927,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+Environment=LANG=C.UTF-8
+Environment=PYTHONIOENCODING=utf-8
+Environment=PYTHONUTF8=1
 EnvironmentFile=${CONF_DIR}/tgbot.env
 ExecStart=${py} ${BASE_DIR}/bin/tgbot.py
 Restart=on-failure
@@ -3407,6 +3410,15 @@ do_update() {
     [[ -f "${CONF_DIR}/api.env" ]] && setup_api
     if [[ -f "${CONF_DIR}/tgbot.env" ]]; then
         install -m 0755 "${LIB_DIR}/tgbot.py" "${BASE_DIR}/bin/tgbot.py"
+        # Keep Bot UTF-8-safe under systemd LANG=C (doctor --json / Chinese UI).
+        mkdir -p /etc/systemd/system/5gpn-tgbot.service.d
+        cat > /etc/systemd/system/5gpn-tgbot.service.d/locale.conf <<'EOF'
+[Service]
+Environment=LANG=C.UTF-8
+Environment=PYTHONIOENCODING=utf-8
+Environment=PYTHONUTF8=1
+EOF
+        systemctl daemon-reload
         systemctl restart 5gpn-tgbot 2>/dev/null || true
     fi
     [[ -f "${RULES_FILE}" ]] && { ( regen_smart ) || warn "smart 配置重建失败；可稍后手动 --set-rules"; }

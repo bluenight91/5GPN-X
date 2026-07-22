@@ -574,7 +574,8 @@ def run2(argv, timeout=120, inp=None):
     """Run a command; return (ok, stripped_output)."""
     try:
         p = subprocess.run(argv, input=inp, stdout=subprocess.PIPE,
-                           stderr=subprocess.STDOUT, text=True, timeout=timeout)
+                           stderr=subprocess.STDOUT, text=True,
+                           encoding="utf-8", errors="replace", timeout=timeout)
         return p.returncode == 0, _strip_ansi(p.stdout or "")
     except subprocess.TimeoutExpired:
         return False, "执行超时（%ds）" % timeout

@@ -54,4 +54,35 @@ notify="$(cat "${root}/scripts/health-notify.sh")"
 [[ "${notify}" == *'doctor.sh'* && "${notify}" == *'--json'* ]] \
     || fail "health-notify must run doctor --json"
 
+doctor="$(cat "${root}/scripts/doctor.sh")"
+[[ "${doctor}" == *'stdout.buffer.write'* ]] \
+    || fail "doctor --json must write UTF-8 via stdout.buffer"
+[[ "${doctor}" == *'PYTHONIOENCODING=utf-8'* ]] \
+    || fail "doctor --json must set PYTHONIOENCODING=utf-8"
+[[ "${doctor}" == *"dd_count=\"\$(grep -cE"* || "${doctor}" == *'dd_count="$(grep -cE'* ]] \
+    || fail "doctor must count direct-domains with grep -cE"
+# Zero-match grep -c must not use `|| echo 0` (duplicates the 0 on stdout).
+if grep -nE 'grep -cE.*\|\|[[:space:]]*echo[[:space:]]+0' "${root}/scripts/doctor.sh" >/dev/null; then
+    fail "doctor must not use grep -c || echo 0 (double-counts zero matches)"
+fi
+
+# Smoke: --json must succeed with Chinese labels even when stdout is ASCII.
+tmpd="$(mktemp -d)"
+mkdir -p "${tmpd}/etc"
+export BASE_DIR="$tmpd" CONF_DIR="${tmpd}/etc"
+echo local > "${CONF_DIR}/current-exit"
+set +e
+out="$(PYTHONUTF8=0 LANG=C LC_ALL=C bash "${root}/scripts/doctor.sh" --json 2>"${tmpd}/err")"
+rc=$?
+set -e
+if ! printf '%s' "$out" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert "checks" in d'; then
+    echo "doctor --json under LANG=C must print parseable UTF-8 JSON (rc=${rc})" >&2
+    echo "stdout: $out" >&2
+    echo "stderr: $(cat "${tmpd}/err")" >&2
+    rm -rf "$tmpd"
+    exit 1
+fi
+rm -rf "$tmpd"
+unset BASE_DIR CONF_DIR
+
 echo "test_ops_doctor_policy: OK"

@@ -27,6 +27,11 @@ done
 
 record() { # level label detail
     local level="$1" label="$2" detail="$3"
+    # Keep RESULT argv-safe for --json (no pipes/newlines in fields).
+    detail="${detail//$'\r'/}"
+    detail="${detail//$'\n'/ }"
+    detail="${detail//'|'/-}"
+    label="${label//'|'/-}"
     RESULTS+=("${level}|${label}|${detail}")
     case "$level" in
         ok)   PASS=$((PASS+1)); [[ "$JSON" -eq 0 && "$QUIET" -eq 0 ]] && echo -e "${GREEN}[PASS]${NC} ${label}: ${detail}" ;;
@@ -177,7 +182,9 @@ if [[ -f /etc/mosdns/config.yaml ]]; then
 fi
 dd_count=0
 if [[ -f /etc/mosdns/direct-domains.txt ]]; then
-    dd_count="$(grep -cE '^[A-Za-z0-9]' /etc/mosdns/direct-domains.txt 2>/dev/null || echo 0)"
+    # grep -c exits 1 on zero matches but still prints "0"; do not append via || echo.
+    dd_count="$(grep -cE '^[A-Za-z0-9]' /etc/mosdns/direct-domains.txt 2>/dev/null || true)"
+    [[ "$dd_count" =~ ^[0-9]+$ ]] || dd_count=0
 fi
 ok "DNS 直连名单" "${dd_count} 条"
 
@@ -297,14 +304,19 @@ fi
 
 # ----- output -----
 if [[ "$JSON" -eq 1 ]]; then
-    python3 - "$PASS" "$FAIL" "$WARN" "$CURRENT" "$CLIENT_CIDR" "${RESULTS[@]}" <<'PY'
+    # systemd / cron often use LANG=C (ASCII stdout). Write UTF-8 explicitly so
+    # Chinese check names do not raise UnicodeEncodeError (Bot doctor / health).
+    PYTHONIOENCODING=utf-8 PYTHONUTF8=1 python3 - "$PASS" "$FAIL" "$WARN" "$CURRENT" "$CLIENT_CIDR" "${RESULTS[@]}" <<'PY'
 import json, sys
 pass_n, fail_n, warn_n, current, cidr = sys.argv[1:6]
 items = []
 for raw in sys.argv[6:]:
-    level, label, detail = raw.split("|", 2)
+    parts = raw.split("|", 2)
+    if len(parts) < 3:
+        continue
+    level, label, detail = parts
     items.append({"level": level, "check": label, "detail": detail})
-print(json.dumps({
+payload = json.dumps({
     "ok": int(fail_n) == 0,
     "pass": int(pass_n),
     "fail": int(fail_n),
@@ -312,7 +324,8 @@ print(json.dumps({
     "current_exit": current,
     "client_cidr": cidr,
     "checks": items,
-}, ensure_ascii=False))
+}, ensure_ascii=False) + "\n"
+sys.stdout.buffer.write(payload.encode("utf-8"))
 PY
 else
     [[ "$QUIET" -eq 0 ]] && echo "" && echo "===== 结果: ${PASS} 通过, ${FAIL} 失败, ${WARN} 警告 ====="

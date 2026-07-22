@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- **Bot「自检 doctor」失败但终端正常**：systemd 下 `LANG=C` 时 `doctor --json` 打印中文检查项触发 `UnicodeEncodeError`。改为显式 UTF-8 写出，并为 tgbot 设置 `LANG=C.UTF-8`。
 - **`5gpn update` 在 setup_api 中断**：`API_PORT_DEFAULT` 被误删导致 `set -u` 报 *unbound variable*；已恢复默认 `8444`。
 
 ### Added
