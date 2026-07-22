@@ -1162,6 +1162,7 @@ def op_dot_status():
     remote_dns = (_read_file("/etc/mosdns/.remote_dns") or
                   _read_file("/etc/mosdns/.overseas_dns") or "?")
     local_dns = (_read_file("/etc/mosdns/.local_dns") or "?")
+    direct_n = len(_direct_domain_entries())
     lines = [
         "🔐 <b>DoT 管理</b>",
         "当前域名：<code>%s</code>" % html.escape(domain),
@@ -1169,6 +1170,7 @@ def op_dot_status():
     lines.extend([
         "国际 DNS：<code>%s</code>" % html.escape(remote_dns),
         "国内 DNS：<code>%s</code>" % html.escape(local_dns),
+        "DNS 直连名单：<code>%d</code> 个域名" % direct_n,
         _cert_status_line(),
     ])
     return "\n".join(lines)
@@ -1267,6 +1269,105 @@ def op_set_dns(kind, text):
         label = "国际 DNS" if kind == "remote" else "国内 DNS"
         return "✅ <b>%s 已更新</b>\n<code>%s</code>" % (label, html.escape(dns))
     return "❌ <b>DNS 上游更新失败</b>\n%s" % html.escape(_reason(out))
+
+
+DIRECT_DOMAINS_PATH = "/etc/mosdns/direct-domains.txt"
+
+
+def _direct_domain_entries():
+    txt = _read_file(DIRECT_DOMAINS_PATH)
+    out, seen = [], set()
+    for line in (txt.splitlines() if txt else []):
+        d = line.strip().lower().rstrip(".")
+        if not d or d.startswith("#"):
+            continue
+        if not DOMAIN_RE.match(d) or d in seen:
+            continue
+        seen.add(d)
+        out.append(d)
+    return out
+
+
+def op_show_direct_domains():
+    entries = _direct_domain_entries()
+    if not entries:
+        return ("🔓 <b>DNS 直连名单</b>（空）\n\n"
+                "私网客户端会把非 ChinaList 域名解析成网关 IP。"
+                "把 SSH 主机名加进来后返回真实 A 记录。")
+    body = "\n".join("%d. <code>%s</code>" % (i + 1, html.escape(d))
+                     for i, d in enumerate(entries))
+    return "🔓 <b>DNS 直连名单</b>（%d）：\n%s" % (len(entries), body)
+
+
+def op_add_direct_domain(domain):
+    domain = (domain or "").strip().lower().rstrip(".")
+    if not DOMAIN_RE.match(domain):
+        return "域名格式无效。请发送类似 <code>box2.example.com</code> 的完整域名。"
+    ok, out = run2(["bash", MGMT, "--add-direct-domain", domain], timeout=120)
+    if ok:
+        return ("✅ <b>已加入 DNS 直连名单</b>\n<code>%s</code>\n"
+                "私网客户端将对该域名（及其子域）返回真实解析。" % html.escape(domain))
+    return "❌ <b>添加失败</b>\n%s" % html.escape(_reason(out))
+
+
+def op_del_direct_domain(domain):
+    domain = (domain or "").strip().lower().rstrip(".")
+    if not DOMAIN_RE.match(domain):
+        return "域名格式无效。"
+    ok, out = run2(["bash", MGMT, "--del-direct-domain", domain], timeout=120)
+    if ok:
+        return "✅ <b>已从 DNS 直连名单移除</b>\n<code>%s</code>" % html.escape(domain)
+    return "❌ <b>删除失败</b>\n%s" % html.escape(_reason(out))
+
+
+def op_set_direct_domains(text):
+    lines = []
+    for raw in (text or "").splitlines():
+        d = raw.strip().lower().rstrip(".")
+        if not d or d.startswith("#"):
+            continue
+        if not DOMAIN_RE.match(d):
+            return "域名格式无效：<code>%s</code>" % html.escape(d)
+        lines.append(d)
+    # Deduplicate while preserving order.
+    seen, uniq = set(), []
+    for d in lines:
+        if d not in seen:
+            seen.add(d)
+            uniq.append(d)
+    payload = "\n".join(uniq) + ("\n" if uniq else "")
+    ok, out = run2(["bash", MGMT, "--set-direct-domains"], inp=payload, timeout=120)
+    if ok:
+        return "✅ <b>DNS 直连名单已替换</b>（%d 个域名）" % len(uniq)
+    return "❌ <b>保存失败</b>\n%s" % html.escape(_reason(out))
+
+
+def direct_domains_menu():
+    return [
+        [{"text": "📋 查看名单", "callback_data": "dd:show"}],
+        [{"text": "➕ 添加域名", "callback_data": "dd:add"},
+         {"text": "🗑 删除域名", "callback_data": "dd:del"}],
+        [{"text": "✏️ 整份替换", "callback_data": "dd:set"}],
+        [{"text": "« 返回", "callback_data": "menu:dot"}],
+    ]
+
+
+def direct_domains_del_menu():
+    rows = []
+    for index, d in enumerate(_direct_domain_entries()):
+        rows.append([{"text": "🗑 " + d,
+                      "callback_data": "ddel:%d:%s" % (index, _entry_token(d))}])
+    if not rows:
+        rows.append([{"text": "(名单为空)", "callback_data": "menu:direct"}])
+    rows.append([{"text": "« 返回", "callback_data": "menu:direct"}])
+    return rows
+
+
+def op_del_direct_domain_button(index, token):
+    entries = _direct_domain_entries()
+    if index < 0 or index >= len(entries) or _entry_token(entries[index]) != token:
+        return "名单已变化，请返回后重新打开删除列表。"
+    return op_del_direct_domain(entries[index])
 
 
 def op_restart_services():
@@ -1872,6 +1973,7 @@ def dot_menu():
         [{"text": "🌐 更改域名", "callback_data": "dot:domain"}],
         [{"text": "🌍 更改国际 DNS", "callback_data": "dot:dns_remote"}],
         [{"text": "🇨🇳 更改国内 DNS", "callback_data": "dot:dns_local"}],
+        [{"text": "🔓 DNS 直连域名", "callback_data": "menu:direct"}],
         [{"text": "🔄 续期证书", "callback_data": "act:renew"}],
         [{"text": "« 返回", "callback_data": "menu:main"}],
     ]
@@ -2076,6 +2178,24 @@ def handle_message(msg):
                              message_id=prompt_mid)
         console_async(chat_id, lambda: op_set_dns(kind, dns_text), dot_menu(), message_id=mid)
         return
+    if state and state.get("action") == "dd_add":
+        prompt_mid = state.get("prompt_mid")
+        PENDING.pop(chat_id, None)
+        domain_text = text
+        background(delete_message, chat_id, msg.get("message_id"))
+        mid = upsert_console(chat_id, "⏳ 正在加入 DNS 直连名单…", message_id=prompt_mid)
+        console_async(chat_id, lambda: op_add_direct_domain(domain_text),
+                      direct_domains_menu(), message_id=mid)
+        return
+    if state and state.get("action") == "dd_set":
+        prompt_mid = state.get("prompt_mid")
+        PENDING.pop(chat_id, None)
+        list_text = msg.get("text") or ""
+        background(delete_message, chat_id, msg.get("message_id"))
+        mid = upsert_console(chat_id, "⏳ 正在替换 DNS 直连名单…", message_id=prompt_mid)
+        console_async(chat_id, lambda: op_set_direct_domains(list_text),
+                      direct_domains_menu(), message_id=mid)
+        return
 
     send(chat_id, "未知命令。发送 /menu 打开操作面板。")
 
@@ -2108,6 +2228,10 @@ def handle_callback(cb):
     elif data == "cancel:dot":
         PENDING.pop(chat_id, None)
         edit(cb, op_dot_status(), dot_menu())
+    elif data == "cancel:direct":
+        PENDING.pop(chat_id, None)
+        edit(cb, "🔓 <b>DNS 直连域名</b>\n私网客户端跳过劫持、返回真实 A 记录的域名名单。",
+             direct_domains_menu())
     elif data == "cancel:wloc":
         PENDING.pop(chat_id, None)
         page, keyboard = _wloc_page()
@@ -2132,6 +2256,9 @@ def handle_callback(cb):
         edit(cb, "选择要删除的出口：", exits_del_menu())
     elif data == "menu:dot":
         edit(cb, op_dot_status(), dot_menu())
+    elif data == "menu:direct":
+        edit(cb, "🔓 <b>DNS 直连域名</b>\n私网客户端跳过劫持、返回真实 A 记录的域名名单。",
+             direct_domains_menu())
     elif data == "menu:wloc":
         page, keyboard = _wloc_page()
         edit(cb, page, keyboard)
@@ -2273,6 +2400,37 @@ def handle_callback(cb):
                 return result
 
             edit_async(cb, do_force_domain, dot_menu())
+    elif data == "dd:show":
+        edit(cb, "⏳ 正在读取 DNS 直连名单…")
+        edit_async(cb, op_show_direct_domains, direct_domains_menu())
+    elif data == "dd:add":
+        PENDING[chat_id] = {"action": "dd_add", "prompt_mid": cb_mid}
+        edit(cb,
+             "➕ <b>添加 DNS 直连域名</b>\n\n"
+             "发送一个完整域名。该域名及其子域在私网客户端上将返回真实 A 记录。\n\n"
+             "示例：<code>box2.example.com</code>\n"
+             "或整段：<code>servers.example.com</code>",
+             cancel_kb("direct"))
+    elif data == "dd:del":
+        edit(cb, "选择要删除的域名：", direct_domains_del_menu())
+    elif data == "dd:set":
+        PENDING[chat_id] = {"action": "dd_set", "prompt_mid": cb_mid}
+        edit(cb,
+             "✏️ <b>整份替换 DNS 直连名单</b>\n\n"
+             "发送完整名单（每行一个域名），将替换当前全部条目。\n"
+             "发送空内容可清空名单。\n\n"
+             "示例：\n<pre>box1.example.com\nbox2.example.com\nservers.example.com</pre>",
+             cancel_kb("direct"))
+    elif data.startswith("ddel:"):
+        try:
+            _, raw_index, token = data.split(":", 2)
+            index = int(raw_index)
+        except (ValueError, TypeError):
+            edit(cb, "删除按钮无效，请重新打开名单。", direct_domains_del_menu())
+        else:
+            edit(cb, "⏳ 正在从 DNS 直连名单删除…")
+            edit_async(cb, lambda: op_del_direct_domain_button(index, token),
+                       direct_domains_del_menu())
     elif data == "wloc:input":
         PENDING[chat_id] = {"action": "wloc_location", "prompt_mid": cb_mid}
         edit(cb,

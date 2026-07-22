@@ -390,6 +390,15 @@ Options:
   --rename-policy <old> <new>  Rename a rule group (updates rules + map).
   --proxy-domain <domain> <exit|direct|block>
                  One-click: hijack a domain into the gateway AND route it.
+  --list-direct-domains
+                 List DNS direct-resolve domains (private clients skip hijack).
+  --add-direct-domain <domain>
+                 Add a domain so private clients get its real A record
+                 (for SSH hostnames and other non-SNI services).
+  --del-direct-domain <domain>
+                 Remove a domain from the DNS direct-resolve list.
+  --set-direct-domains [file]
+                 Replace the whole DNS direct-resolve list (file/stdin/paste).
   --show-policy  Print the category -> target policy map.
   --setup-tgbot  Install/enable the Telegram control bot (uses TG_BOT_TOKEN /
                  TG_ADMIN_IDS env vars, or prompts interactively).
@@ -1239,7 +1248,7 @@ install_mosdns() {
     echo "$REMOTE_DNS" > /etc/mosdns/.sniproxy_dns
     echo "${PGW_ECS:-139.226.48.0/24}" > /etc/mosdns/.ecs
     echo "${PACKET_CACHE_SIZE:-500000}" > /etc/mosdns/.cache_size
-    touch /etc/mosdns/gfwlist.txt /etc/mosdns/chinalist.txt /etc/mosdns/gfwlist-extra-local.txt /etc/mosdns/wloc.txt
+    touch /etc/mosdns/gfwlist.txt /etc/mosdns/chinalist.txt /etc/mosdns/gfwlist-extra-local.txt /etc/mosdns/wloc.txt /etc/mosdns/direct-domains.txt
     chown -R mosdns:mosdns /etc/mosdns
     chmod 0750 /etc/mosdns /etc/mosdns/certs
     cat > /etc/systemd/system/mosdns.service <<'EOF'
@@ -2563,6 +2572,126 @@ proxy_domain() {
     ok "Domain '${domain}' -> ${target}  (hijack: $([[ "$target" == direct ]] && echo off || echo on))"
     regen_smart
 }
+DIRECT_DOMAINS_FILE="/etc/mosdns/direct-domains.txt"
+normalize_direct_domain() {
+    local domain="${1:-}"
+    domain="${domain%%#*}"
+    domain="${domain,,}"
+    domain="${domain#http://}"
+    domain="${domain#https://}"
+    domain="${domain%%/*}"
+    domain="${domain%.}"
+    printf '%s' "$domain"
+}
+valid_direct_domain() {
+    [[ "${1:-}" =~ ^[A-Za-z0-9]([A-Za-z0-9_-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9_-]*[A-Za-z0-9])?)+$ ]]
+}
+ensure_direct_domains_file() {
+    mkdir -p /etc/mosdns
+    touch "${DIRECT_DOMAINS_FILE}"
+    chmod 0644 "${DIRECT_DOMAINS_FILE}" 2>/dev/null || true
+}
+apply_direct_domains() {
+    ensure_direct_domains_file
+    # Pre-upgrade installs may lack the plugin until the template is redeployed.
+    if [[ -f /etc/mosdns/config.yaml ]] && ! grep -q 'direct_domains' /etc/mosdns/config.yaml 2>/dev/null; then
+        if [[ -x /usr/local/bin/update-mosdns-rules.sh ]]; then
+            /usr/local/bin/update-mosdns-rules.sh || { err "Failed to regenerate mosdns config for direct-domains"; return 1; }
+            return 0
+        fi
+        err "mosdns config lacks direct_domains; run: 5gpn update"
+        return 1
+    fi
+    if systemctl is-active --quiet mosdns 2>/dev/null; then
+        systemctl restart mosdns || { err "mosdns restart failed after direct-domains change"; return 1; }
+    fi
+    return 0
+}
+list_direct_domains() {
+    ensure_direct_domains_file
+    local domain count=0
+    while IFS= read -r domain || [[ -n "$domain" ]]; do
+        domain=$(normalize_direct_domain "$domain")
+        [[ -z "$domain" ]] && continue
+        valid_direct_domain "$domain" || continue
+        echo "$domain"
+        count=$((count + 1))
+    done < "${DIRECT_DOMAINS_FILE}"
+    if [[ $count -eq 0 ]]; then
+        info "（DNS 直连名单为空）私网客户端的非 ChinaList 域名会被解析为网关 IP。"
+    fi
+}
+add_direct_domain() {
+    local domain
+    domain=$(normalize_direct_domain "${1:-}")
+    [[ -z "$domain" ]] && { err "Usage: $0 --add-direct-domain <domain>"; exit 1; }
+    valid_direct_domain "$domain" || { err "Invalid domain: $domain"; exit 1; }
+    ensure_direct_domains_file
+    if grep -qxF "$domain" "${DIRECT_DOMAINS_FILE}" 2>/dev/null; then
+        ok "Domain '${domain}' already in DNS direct-resolve list"
+        return 0
+    fi
+    echo "$domain" >> "${DIRECT_DOMAINS_FILE}"
+    apply_direct_domains || exit 1
+    ok "Domain '${domain}' added to DNS direct-resolve list (private clients get real A records)"
+}
+del_direct_domain() {
+    local domain tmp
+    domain=$(normalize_direct_domain "${1:-}")
+    [[ -z "$domain" ]] && { err "Usage: $0 --del-direct-domain <domain>"; exit 1; }
+    ensure_direct_domains_file
+    if ! grep -qxF "$domain" "${DIRECT_DOMAINS_FILE}" 2>/dev/null; then
+        err "Domain '${domain}' is not in the DNS direct-resolve list"
+        exit 1
+    fi
+    tmp=$(mktemp)
+    grep -vxF "$domain" "${DIRECT_DOMAINS_FILE}" > "$tmp" || true
+    mv "$tmp" "${DIRECT_DOMAINS_FILE}"
+    chmod 0644 "${DIRECT_DOMAINS_FILE}" 2>/dev/null || true
+    apply_direct_domains || exit 1
+    ok "Domain '${domain}' removed from DNS direct-resolve list"
+}
+set_direct_domains() {
+    local src="${1:-}" line domain tmp count=0
+    ensure_direct_domains_file
+    tmp=$(mktemp)
+    if [[ -n "$src" && -f "$src" ]]; then
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            domain=$(normalize_direct_domain "$line")
+            [[ -z "$domain" ]] && continue
+            if ! valid_direct_domain "$domain"; then
+                warn "Skipping invalid domain: $domain"
+                continue
+            fi
+            echo "$domain" >> "$tmp"
+            count=$((count + 1))
+        done < "$src"
+    elif [[ -n "$src" ]]; then
+        rm -f "$tmp"
+        err "File not found: $src"
+        exit 1
+    else
+        if [[ -t 0 ]]; then
+            info "Paste DNS direct-resolve domains (one per line), then Ctrl-D:"
+        fi
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            domain=$(normalize_direct_domain "$line")
+            [[ -z "$domain" ]] && continue
+            if ! valid_direct_domain "$domain"; then
+                warn "Skipping invalid domain: $domain"
+                continue
+            fi
+            echo "$domain" >> "$tmp"
+            count=$((count + 1))
+        done
+    fi
+    sort -u -o "$tmp" "$tmp"
+    count=$(grep -c . "$tmp" 2>/dev/null || echo 0)
+    mv "$tmp" "${DIRECT_DOMAINS_FILE}"
+    chmod 0644 "${DIRECT_DOMAINS_FILE}" 2>/dev/null || true
+    apply_direct_domains || exit 1
+    ok "DNS direct-resolve list replaced (${count} domains)"
+}
 show_rules() {
     if [[ -f "${RULES_FILE}" ]]; then
         cat "${RULES_FILE}"
@@ -2892,6 +3021,7 @@ do_update() {
     install_mosdns_binary
     cp "${LIB_DIR}/mosdns.yaml.template" /etc/mosdns/config.yaml.template
     install -m 0755 "${LIB_DIR}/update-rules.sh" /usr/local/bin/update-mosdns-rules.sh
+    touch /etc/mosdns/direct-domains.txt 2>/dev/null || true
     setup_exit_switching
     generate_ios_profile
     apply_lowmem_go_limits
@@ -3439,6 +3569,21 @@ case "${1:-}" in
     --proxy-domain)
         check_root
         proxy_domain "${2:-}" "${3:-}"
+        ;;
+    --list-direct-domains)
+        list_direct_domains
+        ;;
+    --add-direct-domain)
+        check_root
+        add_direct_domain "${2:-}"
+        ;;
+    --del-direct-domain)
+        check_root
+        del_direct_domain "${2:-}"
+        ;;
+    --set-direct-domains)
+        check_root
+        set_direct_domains "${2:-}"
         ;;
     --show-policy)
         show_policy

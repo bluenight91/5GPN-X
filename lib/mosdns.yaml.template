@@ -22,6 +22,14 @@ plugins:
       files:
         - /etc/mosdns/wloc.txt
 
+  # Domains that private clients must resolve for real (no gateway IP spoof).
+  # Used for SSH hostnames and other non-HTTP services that cannot use SNI.
+  - tag: direct_domains
+    type: domain_set
+    args:
+      files:
+        - /etc/mosdns/direct-domains.txt
+
   - tag: remote_primary
     type: forward
     args:
@@ -131,6 +139,7 @@ __LOCAL_SECONDARY_UPSTREAMS__
 
   # DNS service does not return AAAA records; clients use IPv4 only.
   # Internal clients: ChinaList -> local_resolve (direct);
+  #                   direct-domains -> remote_resolve (no spoof; SSH etc.);
   #                   everything else -> server IP (proxied via TCP/QUIC).
   # External clients: GFWList -> normal overseas resolve (no hijack);
   #                   ChinaList -> local_resolve; other -> overseas.
@@ -150,6 +159,9 @@ __LOCAL_SECONDARY_UPSTREAMS__
       - matches:
           - qname $china_domains
         exec: goto local_resolve
+      - matches:
+          - qname $direct_domains
+        exec: goto remote_resolve
       - matches:
           - qname $gfw_domains
         exec: black_hole __SERVER_IP__

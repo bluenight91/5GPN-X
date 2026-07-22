@@ -22,14 +22,21 @@ has "$template" 'exec: reject 0' \
     "AAAA queries must be globally rejected (IPv4-only policy)"
 has "$template" 'exec: black_hole __SERVER_IP__' \
     "private overseas A queries must resolve to the gateway"
+has "$template" 'qname $direct_domains' \
+    "private clients must honour the DNS direct-resolve bypass list"
+has "$template" 'direct-domains.txt' \
+    "direct-domains file must be wired into the mosdns domain set"
 [[ "$(grep -c 'exec: accept' "${root}/lib/mosdns.yaml.template")" -ge 2 ]] \
     || fail "sequence responses must terminate before normal forwarding"
 has "$template" 'qname $china_domains' \
     "ChinaList domains must retain domestic resolution"
 
+# ChinaList must run before direct-domains bypass, which must run before default spoof.
 china_line=$(grep -n 'qname \$china_domains' "${root}/lib/mosdns.yaml.template" | head -n1 | cut -d: -f1)
+direct_line=$(grep -n 'qname \$direct_domains' "${root}/lib/mosdns.yaml.template" | head -n1 | cut -d: -f1)
 spoof_line=$(grep -n 'exec: black_hole __SERVER_IP__' "${root}/lib/mosdns.yaml.template" | tail -n1 | cut -d: -f1)
-[[ "$china_line" -lt "$spoof_line" ]] || fail "ChinaList matching must run before default private A spoofing"
+[[ "$china_line" -lt "$direct_line" ]] || fail "ChinaList matching must run before direct-domains bypass"
+[[ "$direct_line" -lt "$spoof_line" ]] || fail "direct-domains bypass must run before default private A spoofing"
 
 [[ "$(grep -c 'type: fallback' "${root}/lib/mosdns.yaml.template")" -ge 2 ]] \
     || fail "remote and local DNS paths must have fallback plugins"

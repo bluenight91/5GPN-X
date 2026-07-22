@@ -62,6 +62,9 @@ AI_CONF = os.environ.get("AI_CONF", CONF_DIR + "/ai.json")
 # Matches install.sh's exit-name validator (letters/digits/Chinese/_/-, 1-16).
 EXIT_NAME_RE = re.compile(r"^[\w一-鿿-]{1,16}$")
 CAT_RE = re.compile(r"^[A-Za-z0-9_一-鿿-]{1,40}$")
+DOMAIN_RE = re.compile(
+    r"^(?=.{1,253}$)([A-Za-z0-9]([A-Za-z0-9_-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,}$")
+DIRECT_DOMAINS_FILE = "/etc/mosdns/direct-domains.txt"
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 SERVICES = ["mosdns", "sniproxy", "wa-shim", "quic-proxy",
             "5gpn-tgbot", "5gpn-api"]
@@ -889,6 +892,15 @@ def gfwlist_set():
     return s
 
 
+def direct_domains_set():
+    s = set()
+    for line in read_file(DIRECT_DOMAINS_FILE).splitlines():
+        line = line.strip().lower().strip(".")
+        if line and not line.startswith("#"):
+            s.add(line)
+    return s
+
+
 def _domain_hijacked(d, gset):
     parts = d.split(".")
     for i in range(len(parts) - 1):
@@ -897,11 +909,29 @@ def _domain_hijacked(d, gset):
     return d in gset
 
 
+def list_direct_domains():
+    out = []
+    for line in read_file(DIRECT_DOMAINS_FILE).splitlines():
+        d = line.strip().lower().strip(".")
+        if d and not d.startswith("#") and DOMAIN_RE.match(d):
+            out.append(d)
+    # stable unique order
+    seen, uniq = set(), []
+    for d in out:
+        if d not in seen:
+            seen.add(d)
+            uniq.append(d)
+    return uniq
+
+
 def route_test(domain):
     d = (domain or "").lower().strip().strip(".").lstrip("*.")
     if not d or "." not in d:
         return {"error": "请输入合法域名"}
     gset = gfwlist_set()
+    dset = direct_domains_set()
+    in_direct = _domain_hijacked(d, dset)
+    in_gfw = _domain_hijacked(d, gset)
     final = None
     matched = None
     for raw in read_file(RULES_FILE).splitlines():
@@ -926,14 +956,21 @@ def route_test(domain):
     pm = policy_map()
     cat = matched[1] if matched else (final or "Proxy")
     target = cat if cat in ("direct", "block") else pm.get(cat, cat)
-    return {"domain": d, "hijacked": _domain_hijacked(d, gset),
+    # Private-client spoof: everything except ChinaList / direct-domains.
+    # ChinaList is not fully expanded here; direct bypass is authoritative.
+    hijacked = not in_direct
+    return {"domain": d, "hijacked": hijacked, "direct_bypass": in_direct,
+            "in_gfwlist": in_gfw,
             "matched": matched[0] if matched else ("FINAL," + (final or "?")),
             "category": cat, "target": target,
-            "note": "RULE-SET / GEOSITE / IP-CIDR 规则未在此展开，结果以显式域名规则与 FINAL 为准"}
+            "note": "私网客户端（172.22.0.0/16）：直连名单内域名返回真实 A 记录；"
+                    "其余非 ChinaList 域名解析为网关 IP。公网 DoT 默认不劫持。"
+                    " RULE-SET / GEOSITE / IP-CIDR / ChinaList 未在此展开。"}
 
 
 # --- config backup / restore -------------------------------------------------
 BACKUP_PATHS = ["etc/5gpn", "etc/mosdns/gfwlist-extra-local.txt",
+                "etc/mosdns/direct-domains.txt",
                 "etc/wireguard", "opt/5gpn/etc/current-exit"]
 
 
@@ -960,6 +997,7 @@ def _backup_allowed(name):
     if ".." in name.split("/"):
         return False
     return bool(name.startswith("etc/5gpn") or name == "etc/mosdns/gfwlist-extra-local.txt"
+                or name == "etc/mosdns/direct-domains.txt"
                 or re.match(r"etc/wireguard/pgw-[^/]+\.conf$", name)
                 or name == "opt/5gpn/etc/current-exit")
 
@@ -1211,6 +1249,10 @@ class Handler(BaseHTTPRequestHandler):
             txt = read_file(RULES_FILE)
             entries = parse_rules(txt)
             return self._send(200, {"ok": True, "count": len(entries), "rules": txt, "entries": entries})
+        if path == "/api/direct-domains":
+            domains = list_direct_domains()
+            return self._send(200, {"ok": True, "count": len(domains), "domains": domains,
+                                    "text": "\n".join(domains) + ("\n" if domains else "")})
         return self._send(404, {"ok": False, "error": "not found"})
 
     def do_POST(self):
@@ -1376,6 +1418,42 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, {"ok": False, "error": "目标无效"})
             ok, out = ctl("--proxy-domain", domain, target, timeout=400)
             return self._send(200 if ok else 500, {"ok": ok, "output": out})
+
+        if path == "/api/direct-domains/add":
+            domain = str(b.get("domain", "")).strip().lower().rstrip(".")
+            if not DOMAIN_RE.match(domain):
+                return self._send(400, {"ok": False, "error": "域名无效"})
+            ok, out = ctl("--add-direct-domain", domain, timeout=120)
+            return self._send(200 if ok else 500, {"ok": ok, "output": out})
+
+        if path == "/api/direct-domains/del":
+            domain = str(b.get("domain", "")).strip().lower().rstrip(".")
+            if not DOMAIN_RE.match(domain):
+                return self._send(400, {"ok": False, "error": "域名无效"})
+            ok, out = ctl("--del-direct-domain", domain, timeout=120)
+            return self._send(200 if ok else 500, {"ok": ok, "output": out})
+
+        if path == "/api/direct-domains":
+            # Replace whole list. Accept {domains:["a","b"]} or {text:"a\\nb"}.
+            raw = b.get("domains", None)
+            if isinstance(raw, list):
+                lines = [str(x).strip().lower().rstrip(".") for x in raw]
+            else:
+                text = b.get("text", b.get("domains", ""))
+                if not isinstance(text, str):
+                    return self._send(400, {"ok": False, "error": "domains must be a list or text"})
+                lines = [ln.strip().lower().rstrip(".") for ln in text.splitlines()]
+            cleaned = []
+            for d in lines:
+                if not d or d.startswith("#"):
+                    continue
+                if not DOMAIN_RE.match(d):
+                    return self._send(400, {"ok": False, "error": "无效域名: %s" % d})
+                cleaned.append(d)
+            ok, out = ctl("--set-direct-domains", inp="\n".join(cleaned) + ("\n" if cleaned else ""),
+                          timeout=120)
+            return self._send(200 if ok else 500, {"ok": ok, "output": out,
+                                                   "count": len(cleaned)})
 
         if path == "/api/restore":
             try:

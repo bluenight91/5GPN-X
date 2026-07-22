@@ -381,6 +381,21 @@
 
     <section id="sec-settings" hidden>
       <div class="card">
+        <h2>DNS 直连域名</h2>
+        <p class="muted small" style="margin:0 0 8px">私网客户端（172.22.0.0/16）默认把非 ChinaList 域名解析成网关 IP。把 SSH 等主机名加入此名单后返回真实 A 记录。公网 DoT 本身不劫持。</p>
+        <div class="row"><input id="dd_add" type="text" placeholder="例如 box2.example.com 或 servers.example.com" autocomplete="off" style="flex:1"></div>
+        <div class="row">
+          <button class="primary" onclick="addDirectDomain()">➕ 添加</button>
+          <button onclick="loadDirectDomains()">🔄 刷新</button>
+        </div>
+        <div id="dd_list" class="muted small" style="margin-top:8px">（加载中…）</div>
+        <details style="margin-top:12px">
+          <summary class="small muted">整份编辑</summary>
+          <div class="row" style="margin-top:8px"><textarea id="dd_text" spellcheck="false" placeholder="每行一个域名" style="min-height:120px"></textarea></div>
+          <div class="row"><button onclick="saveDirectDomains()">💾 保存整份名单</button></div>
+        </details>
+      </div>
+      <div class="card">
         <h2>备份 / 恢复</h2>
         <div class="row">
           <button onclick="backupConfig()">⬇️ 下载备份</button>
@@ -482,7 +497,7 @@ function onEnter(sec){
   else if(sec==="rules"){ loadStatus(); loadRules(); }
   else if(sec==="monitor"){ loadMihomoOverview(); loadXdFrame(); }
   else if(sec==="ai"){ aiLoadConfig(); }
-  else if(sec==="settings"){ fillSettings(); }
+  else if(sec==="settings"){ fillSettings(); loadDirectDomains(); }
 }
 document.querySelectorAll('[data-section]').forEach(el=>el.addEventListener('click',()=>{
   showSection(el.dataset.section);
@@ -957,7 +972,8 @@ async function routeTest(){
   try{ const r=await api("/api/route/test","POST",{domain:dm}); const x=r.result||{};
     if(x.error){ $("rt_result").textContent=x.error; return; }
     $("rt_result").innerHTML =
-      `劫持进网关：<b>${x.hijacked?"是 ✅":"否（客户端直连，不经网关）"}</b><br>`+
+      `劫持进网关：<b>${x.hijacked?"是 ✅":"否（真实解析 / 不经网关）"}</b>`+
+      (x.direct_bypass?` <span class="muted">（DNS 直连名单）</span>`:"")+`<br>`+
       `命中规则：<span class="mono">${esc(x.matched)}</span><br>`+
       `最终走：<b>${esc(x.target)}</b>（分类 ${esc(x.category)}）<br>`+
       `<span class="muted">${esc(x.note)}</span>`;
@@ -1006,6 +1022,44 @@ function copyText(t){
   if(navigator.clipboard && navigator.clipboard.writeText){
     navigator.clipboard.writeText(t).then(()=>toast("已复制","ok"),()=>toast("复制失败","bad"));
   } else { toast("当前环境不支持剪贴板 API","bad"); }
+}
+
+/* ---- DNS direct-domains (private-client hijack bypass) ---- */
+async function loadDirectDomains(){
+  const box=$("dd_list"), ta=$("dd_text");
+  if(!box) return;
+  try{
+    const r=await api("/api/direct-domains");
+    const domains=r.domains||[];
+    if(ta) ta.value=r.text||domains.join("\n")+(domains.length?"\n":"");
+    if(!domains.length){
+      box.innerHTML=`<div class="muted small">（名单为空）私网客户端的 SSH 主机名会被解析到网关。</div>`;
+      return;
+    }
+    box.innerHTML = domains.map(d=>
+      `<div class="row small" style="gap:8px;align-items:center">`+
+      `<span class="mono grow">${esc(d)}</span>`+
+      `<button data-dd="${esc(d)}" class="danger dd-del">删除</button></div>`
+    ).join("");
+    box.querySelectorAll(".dd-del").forEach(btn=>{
+      btn.addEventListener("click",()=>delDirectDomain(btn.getAttribute("data-dd")));
+    });
+  }catch(e){ box.innerHTML=`<span class="muted">加载失败：${esc(e.message)}</span>`; }
+}
+async function addDirectDomain(){
+  const dm=($("dd_add")&&$("dd_add").value||"").trim();
+  if(!dm){ log("请输入域名"); return; }
+  const ok=await mutate("/api/direct-domains/add",{domain:dm},"添加 DNS 直连 "+dm, loadDirectDomains);
+  if(ok && $("dd_add")) $("dd_add").value="";
+}
+function delDirectDomain(dm){
+  if(!dm||!confirm("从 DNS 直连名单删除 "+dm+" ?")) return;
+  mutate("/api/direct-domains/del",{domain:dm},"删除 DNS 直连 "+dm, loadDirectDomains);
+}
+async function saveDirectDomains(){
+  const text=($("dd_text")&&$("dd_text").value)||"";
+  if(!confirm("用文本框内容整份替换 DNS 直连名单？")) return;
+  await mutate("/api/direct-domains",{text},"保存 DNS 直连名单", loadDirectDomains);
 }
 
 /* ---- AI assistant ---- */

@@ -32,6 +32,8 @@ forms = {
     "dot:domain": "dot",
     "dot:dns_remote": "dot",
     "dot:dns_local": "dot",
+    "dd:add": "direct",
+    "dd:set": "direct",
 }
 
 for data, section in forms.items():
@@ -43,7 +45,7 @@ for data, section in forms.items():
     assert keyboard == [[{"text": "✖ 取消", "callback_data": "cancel:" + section}]]
     assert 10 in bot.PENDING
 
-for section in ("rules", "exits", "dot"):
+for section in ("rules", "exits", "dot", "direct"):
     edits.clear()
     bot.PENDING[10] = {"action": "test"}
     cb["data"] = "cancel:" + section

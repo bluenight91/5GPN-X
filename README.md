@@ -103,12 +103,14 @@ sudo 5gpn set-ecs 112.96.54.0/24   # 设置国内链查询携带的 ECS（默认
 sudo 5gpn -ios               # 重新生成 iOS 描述文件和二维码
 sudo 5gpn list-exits         # 列出出口
 sudo 5gpn check-exits        # 检测出口连通性
+sudo 5gpn list-direct-domains
+sudo 5gpn add-direct-domain box2.example.com   # 私网客户端对该域名返回真实解析（SSH 等）
 sudo 5gpn setup-tgbot        # 配置 Telegram Bot
 sudo 5gpn setup-api          # 启用 HTTP 控制 API + 网页控制台（可选）
 sudo 5gpn uninstall          # 卸载
 ```
 
-出口与分流相关子命令见下两节；其余子命令（`show-rules`、`show-policy`、`import-rules`、`proxy-domain`、`setup-whatsapp` 等）可用 `sudo 5gpn --help` 查看。
+出口与分流相关子命令见下两节；DNS 直连名单也可在网页控制台「设置」或 Telegram Bot「DoT 管理 → DNS 直连域名」中维护。其余子命令（`show-rules`、`show-policy`、`import-rules`、`proxy-domain`、`setup-whatsapp` 等）可用 `sudo 5gpn --help` 查看。
 
 ## 出口管理
 
@@ -270,6 +272,7 @@ tests/            # 策略与单元测试
 | `/etc/mosdns/config.yaml` | mosdns 实际配置 |
 | `/etc/mosdns/.remote_dns` `.local_dns` `.ecs` | DNS 上游与 ECS（`--set-dns` / `--set-ecs` 维护） |
 | `/etc/mosdns/gfwlist-extra-local.txt` | 本地补充 GFWList 域名（每行一个，`--update-rules` 时并入） |
+| `/etc/mosdns/direct-domains.txt` | DNS 直连名单（私网客户端跳过劫持，返回真实 A 记录；SSH 主机名等） |
 | `/etc/mosdns/wloc.txt` | WLOC 劫持域名（仅启用时写入，关闭即清空） |
 | `/etc/sniproxy.conf` | sniproxy 配置（resolver 强制 `ipv4_only`） |
 
@@ -325,6 +328,8 @@ PGW_TUNING=essential            # essential(默认)/performance 内核调优档�
 （大连接表、短超时等）。旧版本升级时沿用 performance，不会悄悄改变内核行为。
 
 ## 常见问题
+
+**为什么 SSH 到「主机名.域名」会进网关？** 私网客户端（`172.22.0.0/16`）对非 ChinaList 域名返回网关 IP；SSH 无 SNI，只能落到本机 `sshd`。把主机名加入 DNS 直连名单即可：`sudo 5gpn add-direct-domain box2.example.com`，或在 WebUI「设置」/ Bot「DoT 管理 → DNS 直连域名」中配置。公网 DoT 默认不劫持。
 
 **为什么内网客户端不返回 IPv6？** 透明代理路径按 IPv4 设计；只有 `172.22.0.0/16` 来源的 AAAA 返回 NOERROR/NODATA。Wi-Fi、公网及其他来源正常返回 IPv6。
 

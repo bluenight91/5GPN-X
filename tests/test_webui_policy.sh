@@ -31,6 +31,8 @@ for s in dashboard exits rules monitor ai settings; do
 done
 [[ "${ui}" == *'/api/mihomo/overview'* ]] || fail "dashboard must load the mihomo overview card"
 [[ "${ui}" == *'/mihomo/'* ]] || fail "monitor section must embed the metacubexd iframe"
+[[ "${ui}" == *'DNS 直连域名'* ]] || fail "settings must expose DNS direct-domains management"
+[[ "${ui}" == *'/api/direct-domains'* ]] || fail "settings must call /api/direct-domains"
 
 # --- auth model unchanged ------------------------------------------------------
 [[ "${ui}" == *'Bearer'* ]] || fail "panel must keep bearer-token auth"
