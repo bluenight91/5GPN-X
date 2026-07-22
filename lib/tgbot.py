@@ -44,6 +44,8 @@ ADMIN_IDS = {
     int(x) for x in re.split(r"[,\s]+", os.environ.get("TG_ADMIN_IDS", "").strip()) if x
 }
 MGMT = os.environ.get("MGMT", "/opt/5gpn/bin/5gpn-ctl")
+DOCTOR = os.environ.get("DOCTOR", "/opt/5gpn/scripts/doctor.sh")
+INSTALL_SH = "/opt/5gpn/install.sh"
 API = "https://api.telegram.org/bot%s/" % TOKEN
 
 # Services the bot may tail. Order matters for display only.
@@ -561,6 +563,42 @@ def validate_mgmt_path():
         print("MGMT must be an absolute path to the management script: %s" % MGMT,
               file=sys.stderr)
         sys.exit(1)
+
+
+def heal_mgmt_ctl():
+    """Rewrite a legacy full-copy 5gpn-ctl into a thin wrapper.
+
+    Older installs copied install.sh into bin/5gpn-ctl; SCRIPT_DIR then became
+    /opt/5gpn/bin and every Bot call bootstrap-cloned the repo. That made
+    doctor/report flaky (false 'service not running' / missing fwmark).
+    """
+    path = MGMT
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            head = fh.read(4096)
+    except OSError:
+        return
+    if "bootstrap_from_repo_if_needed" not in head and "REPO_URL=" not in head:
+        return
+    if not os.path.isfile(INSTALL_SH):
+        print("[warn] legacy 5gpn-ctl detected but %s missing; skip heal" % INSTALL_SH,
+              file=sys.stderr)
+        return
+    wrapper = (
+        "#!/bin/bash\n"
+        "if [[ $# -gt 0 && \"$1\" != -* ]]; then\n"
+        "    set -- \"--$1\" \"${@:2}\"\n"
+        "fi\n"
+        "exec /opt/5gpn/install.sh \"$@\"\n"
+    )
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(wrapper)
+        os.chmod(path, 0o755)
+        print("[info] healed legacy 5gpn-ctl into thin wrapper: %s" % path,
+              file=sys.stderr)
+    except OSError as exc:
+        print("[warn] could not heal 5gpn-ctl: %s" % exc, file=sys.stderr)
 
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
@@ -1423,7 +1461,10 @@ def op_restart_services():
 
 def op_doctor():
     """Compact FAIL/WARN summary for Telegram (full detail → 诊断报告)."""
-    ok, out = run2(["bash", MGMT, "--doctor", "--json"], timeout=180)
+    # Call doctor.sh directly — do not go through 5gpn-ctl/install.sh. A legacy
+    # full-copy ctl bootstrap-clones on every call and yields false negatives.
+    doctor = DOCTOR if os.path.isfile(DOCTOR) else "/opt/5gpn/scripts/doctor.sh"
+    ok, out = run2(["bash", doctor, "--json"], timeout=180)
     raw = (out or "").strip()
     data = None
     if raw:
@@ -2914,6 +2955,7 @@ def main():
         print("TG_BOT_TOKEN is not set", file=sys.stderr)
         sys.exit(1)
     validate_mgmt_path()
+    heal_mgmt_ctl()
     if not ADMIN_IDS:
         print("[warn] TG_ADMIN_IDS is empty; no one can operate. Use /id to find yours.",
               file=sys.stderr)

@@ -10,6 +10,15 @@ set -uo pipefail
 
 # systemd Bot/API often inherit a minimal PATH; keep sbin tools visible.
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
+SYSTEMCTL="$(command -v systemctl || echo /usr/bin/systemctl)"
+IP="$(command -v ip || echo /usr/sbin/ip)"
+NFT="$(command -v nft || echo /usr/sbin/nft)"
+
+svc_active() {
+    local unit="$1" st
+    st="$("$SYSTEMCTL" show -p ActiveState --value "$unit" 2>/dev/null || true)"
+    [[ "$st" == "active" || "$st" == "activating" ]]
+}
 
 GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; NC='\033[0m'
 PASS=0; FAIL=0; WARN=0
@@ -77,8 +86,8 @@ if [[ -n "$git_head" && -f "${CONF_DIR}/.deployed-rev" ]]; then
     fi
 fi
 if [[ -f "${BASE_DIR}/scripts/health-notify.sh" ]]; then
-    if systemctl is-enabled --quiet 5gpn-health.timer 2>/dev/null \
-        || systemctl is-active --quiet 5gpn-health.timer 2>/dev/null; then
+    if "$SYSTEMCTL" is-enabled --quiet 5gpn-health.timer 2>/dev/null \
+        || svc_active 5gpn-health.timer; then
         ok "健康定时器" "enabled"
     else
         note "健康定时器" "未启用，建议 sudo 5gpn update"
@@ -88,20 +97,20 @@ fi
 # ----- services -----
 [[ "$JSON" -eq 0 && "$QUIET" -eq 0 ]] && echo "----- 服务 -----"
 for svc in mosdns sniproxy wa-shim quic-proxy; do
-    if systemctl is-active --quiet "$svc" 2>/dev/null; then
+    if svc_active "$svc"; then
         ok "服务 ${svc}" "running"
     else
         bad "服务 ${svc}" "not running"
     fi
 done
 [[ -f "${CONF_DIR}/tgbot.env" ]] && {
-    systemctl is-active --quiet 5gpn-tgbot 2>/dev/null && ok "服务 5gpn-tgbot" "running" || bad "服务 5gpn-tgbot" "not running"
+    svc_active 5gpn-tgbot && ok "服务 5gpn-tgbot" "running" || bad "服务 5gpn-tgbot" "not running"
 }
 [[ -f "${CONF_DIR}/api.env" ]] && {
-    systemctl is-active --quiet 5gpn-api 2>/dev/null && ok "服务 5gpn-api" "running" || bad "服务 5gpn-api" "not running"
+    svc_active 5gpn-api && ok "服务 5gpn-api" "running" || bad "服务 5gpn-api" "not running"
 }
 if [[ -f "${CONF_DIR}/client-socks.enabled" ]]; then
-    if systemctl is-active --quiet 5gpn-client-socks 2>/dev/null; then
+    if svc_active 5gpn-client-socks; then
         ok "服务 client-socks" "running"
     else
         bad "服务 client-socks" "enabled but not running"
@@ -110,10 +119,10 @@ else
     note "私网 SOCKS5" "disabled"
 fi
 if [[ "$CURRENT" == "smart" ]]; then
-    systemctl is-active --quiet 5gpn-mihomo@smart 2>/dev/null \
+    svc_active 5gpn-mihomo@smart \
         && ok "服务 smart" "running" || bad "服务 smart" "5gpn-mihomo@smart not running"
 elif [[ "$CURRENT" != "local" ]]; then
-    systemctl is-active --quiet "5gpn-mihomo@${CURRENT}" 2>/dev/null \
+    svc_active "5gpn-mihomo@${CURRENT}" \
         && ok "服务出口 ${CURRENT}" "running" || note "服务出口 ${CURRENT}" "mihomo unit not running"
 fi
 
@@ -194,9 +203,9 @@ ok "DNS 直连名单" "${dd_count} 条"
 # ----- egress path -----
 [[ "$JSON" -eq 0 && "$QUIET" -eq 0 ]] && echo "----- 出口链路 -----"
 if [[ "$CURRENT" == "smart" ]]; then
-    if ip link show pgw-smart >/dev/null 2>&1; then
+    if "$IP" link show pgw-smart >/dev/null 2>&1; then
         ok "TUN pgw-smart" "exists"
-        if ip route show table 100 2>/dev/null | grep -q "default.*pgw-smart"; then
+        if "$IP" route show table 100 2>/dev/null | grep -q "default.*pgw-smart"; then
             ok "路由表 100" "default via pgw-smart"
         else
             bad "路由表 100" "default not via pgw-smart"
@@ -209,7 +218,7 @@ if [[ "$CURRENT" == "smart" ]]; then
         bad "TUN pgw-smart" "missing"
     fi
 elif [[ "$CURRENT" != "local" ]]; then
-    ip link show "pgw-${CURRENT}" >/dev/null 2>&1 \
+    "$IP" link show "pgw-${CURRENT}" >/dev/null 2>&1 \
         && ok "TUN pgw-${CURRENT}" "exists" || bad "TUN pgw-${CURRENT}" "missing"
 else
     note "出口链路" "local 直出，跳过 TUN"
@@ -217,9 +226,10 @@ fi
 
 # ----- policy routing -----
 [[ "$JSON" -eq 0 && "$QUIET" -eq 0 ]] && echo "----- 策略路由 -----"
-fw_count="$(ip rule show 2>/dev/null | grep -c 'fwmark 0x1 lookup 100' || true)"
+fw_count="$("$IP" rule show 2>/dev/null | grep -c 'fwmark 0x1 lookup 100' || true)"
+[[ "$fw_count" =~ ^[0-9]+$ ]] || fw_count=0
 [[ "$fw_count" -ge 1 ]] && ok "fwmark 规则" "${fw_count} 条" || bad "fwmark 规则" "missing"
-nft list table inet pgw_exit >/dev/null 2>&1 && ok "pgw_exit 表" "present" || bad "pgw_exit 表" "missing"
+"$NFT" list table inet pgw_exit >/dev/null 2>&1 && ok "pgw_exit 表" "present" || bad "pgw_exit 表" "missing"
 
 # ----- API -----
 if [[ -f "${CONF_DIR}/api.env" ]]; then
@@ -243,7 +253,7 @@ if [[ -f /etc/systemd/system/5gpn-wloc.service ]]; then
     fi
     wstate="$(cat "${wloc_dir}/modifier.state" 2>/dev/null || echo paused)"
     if [[ "$wstate" == "active" ]]; then
-        systemctl is-active --quiet 5gpn-wloc 2>/dev/null \
+        svc_active 5gpn-wloc \
             && ok "WLOC" "active+running" || bad "WLOC" "active but service down"
         if ss -H -tln 2>/dev/null | grep -q "127.0.0.1:10451"; then
             ok "WLOC 端口" "127.0.0.1:10451"

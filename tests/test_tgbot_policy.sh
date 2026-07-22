@@ -114,8 +114,10 @@ PY
     || fail "diagnostic report must be sent as a Telegram document"
 [[ "${bot_body}" != *'send(chat_id, text or "(empty report)", mono=True)'* ]] \
     || fail "diagnostic report must not dump the full body into chat messages"
-[[ "${bot_body}" == *'"--doctor", "--json"'* ]] \
+[[ "${bot_body}" == *'"--doctor", "--json"'* || "${bot_body}" == *'doctor.sh", "--json"'* || "${bot_body}" == *"doctor, \"--json\""* ]] \
     || fail "op_doctor must use doctor --json for a compact Telegram summary"
+[[ "${bot_body}" == *'heal_mgmt_ctl'* ]] || fail "tgbot must heal legacy full-copy 5gpn-ctl"
+[[ "${bot_body}" == *'scripts/doctor.sh'* ]] || fail "op_doctor must call scripts/doctor.sh directly"
 [[ "${bot_body}" == *'menu:cidr'* ]] || fail "DoT menu must expose client CIDR management"
 [[ "${bot_body}" == *'cidr:set'* && "${bot_body}" == *'cidr:detect'* ]] \
     || fail "client CIDR menu must support set and detect"
