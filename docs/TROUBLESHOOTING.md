@@ -44,6 +44,25 @@ cat /etc/mosdns/.client_cidr
 
 也可在 Bot「DoT 管理 → 客户端网段」或网页控制台「设置」中修改。改完后会刷新 mosdns；若是 `FIREWALL_MODE=managed`，也会尝试重写白名单。自管防火墙需自行放行新网段的 53/80/443。
 
+## 私网 SOCKS5 连不上
+
+可选功能，默认关闭。默认端口 **38443**（非 1080）。
+
+```bash
+sudo 5gpn client-socks-status
+sudo 5gpn enable-client-socks          # 打印地址/用户/密码（只显示一次）
+sudo 5gpn reset-client-socks-creds     # 忘记密码时轮换
+```
+
+核对：
+
+1. 手机/客户端源 IP 必须在配置的客户端 CIDR 内（否则防火墙与进程 ACL 都会拒绝）。
+2. Telegram 等填的是**网关公网 IP** + `38443`，不是 `172.22` 主机地址。
+3. `FIREWALL_MODE=preserve` 时脚本会插入带 `5gpn-socks` 标签的临时规则；重启防火墙后可能丢失，需自行持久化。
+4. `journalctl -u 5gpn-client-socks -n 50 --no-pager`
+
+也可在 Bot「运维 → 私网 SOCKS5」或网页「设置」开关。
+
 ## SSH 到「主机名.域名」进了网关
 
 私网客户端对非 ChinaList、非直连名单的域名会得到网关 IP；SSH 无 SNI，落到本机 `sshd`。

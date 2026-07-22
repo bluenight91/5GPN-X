@@ -2060,10 +2060,52 @@ def ops_menu():
          {"text": "🧾 诊断报告", "callback_data": "act:report"}],
         [{"text": "💾 快照", "callback_data": "act:snapshot"},
          {"text": "⏪ 回滚", "callback_data": "act:rollback"}],
+        [{"text": "🧦 私网 SOCKS5", "callback_data": "menu:socks"}],
         [{"text": "♻️ 重启服务", "callback_data": "act:restart"},
          {"text": "📜 日志", "callback_data": "menu:logs"}],
         [{"text": "« 返回", "callback_data": "menu:main"}],
     ]
+
+
+def client_socks_menu():
+    return [
+        [{"text": "▶️ 开启", "callback_data": "socks:enable"},
+         {"text": "⏹ 关闭", "callback_data": "socks:disable"}],
+        [{"text": "🔑 重置密码", "callback_data": "socks:reset"},
+         {"text": "🔄 刷新状态", "callback_data": "socks:status"}],
+        [{"text": "« 返回", "callback_data": "menu:ops"}],
+    ]
+
+
+def op_client_socks_status():
+    ok, out = run2(["bash", MGMT, "--client-socks-status"], timeout=60)
+    body = html.escape(_strip_ansi(out)[-2000:] or "无输出")
+    return ("🧦 <b>私网 SOCKS5</b>\n<pre>%s</pre>\n"
+            "仅客户端网段可访问；出站跟随当前出口。" % body)
+
+
+def op_enable_client_socks():
+    ok, out = run2(["bash", MGMT, "--enable-client-socks"], timeout=180)
+    body = html.escape(_strip_ansi(out)[-2500:])
+    if ok:
+        return ("✅ <b>SOCKS5 已开启</b>\n<pre>%s</pre>\n"
+                "请立即保存用户名/密码；之后状态页会隐藏密码。" % body)
+    return "❌ <b>开启失败</b>\n%s" % html.escape(_reason(out))
+
+
+def op_disable_client_socks():
+    ok, out = run2(["bash", MGMT, "--disable-client-socks"], timeout=120)
+    if ok:
+        return "✅ <b>SOCKS5 已关闭</b>\n%s" % html.escape(_strip_ansi(out)[-800:])
+    return "❌ <b>关闭失败</b>\n%s" % html.escape(_reason(out))
+
+
+def op_reset_client_socks_creds():
+    ok, out = run2(["bash", MGMT, "--reset-client-socks-creds"], timeout=120)
+    body = html.escape(_strip_ansi(out)[-2000:])
+    if ok:
+        return ("✅ <b>凭据已轮换</b>\n<pre>%s</pre>\n请立即保存新密码。" % body)
+    return "❌ <b>轮换失败</b>\n%s" % html.escape(_reason(out))
 
 
 def rules_menu():
@@ -2491,6 +2533,9 @@ def handle_callback(cb):
         edit(cb, page, keyboard)
     elif data == "menu:ops":
         edit(cb, "🛠 <b>运维</b>\n选择一个操作：", ops_menu())
+    elif data == "menu:socks":
+        edit(cb, "⏳ 正在读取 SOCKS5 状态…")
+        edit_async(cb, op_client_socks_status, client_socks_menu())
     elif data == "menu:logs":
         edit(cb, "选择要查看日志的服务：", services_menu("logs", "menu:ops"))
 
@@ -2745,6 +2790,18 @@ def handle_callback(cb):
     elif data == "act:doctor":
         edit(cb, "⏳ 正在运行 doctor 自检…")
         edit_async(cb, op_doctor, back_kb("menu:ops"))
+    elif data == "socks:status":
+        edit(cb, "⏳ 正在读取 SOCKS5 状态…")
+        edit_async(cb, op_client_socks_status, client_socks_menu())
+    elif data == "socks:enable":
+        edit(cb, "⏳ 正在开启私网 SOCKS5…")
+        edit_async(cb, op_enable_client_socks, client_socks_menu())
+    elif data == "socks:disable":
+        edit(cb, "⏳ 正在关闭私网 SOCKS5…")
+        edit_async(cb, op_disable_client_socks, client_socks_menu())
+    elif data == "socks:reset":
+        edit(cb, "⏳ 正在轮换 SOCKS5 凭据…")
+        edit_async(cb, op_reset_client_socks_creds, client_socks_menu())
     elif data == "act:report":
         edit(cb, "⏳ 正在生成脱敏诊断报告…")
         edit_report_async(cb, chat_id)

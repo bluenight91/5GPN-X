@@ -119,8 +119,12 @@ if [[ "${install_body}" != *'+refs/heads/main:refs/remotes/origin/main'* ]]; the
     echo "repo sync must force-update refs/remotes/origin/main (shallow-clone safe)." >&2
     exit 1
 fi
-if [[ "${install_body}" != *'--smoke)'* || "${install_body}" != *'scripts/smoke-check.sh'* ]]; then
-    echo "install.sh must provide a --smoke command running the smoke check." >&2
+if [[ "${install_body}" != *'--smoke)'* ]]; then
+    echo "install.sh must provide a --smoke command." >&2
+    exit 1
+fi
+if [[ "${install_body}" != *'scripts/doctor.sh" --deep'* && "${install_body}" != *"scripts/doctor.sh' --deep"* && "${install_body}" != *'scripts/smoke-check.sh'* ]]; then
+    echo "install.sh --smoke must run doctor --deep (or smoke-check.sh)." >&2
     exit 1
 fi
 if [[ "${install_body}" != *'set -- "--$1" "${@:2}"'* ]]; then

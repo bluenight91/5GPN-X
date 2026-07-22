@@ -36,6 +36,7 @@ assert bot.ops_menu() == [
      {"text": "🧾 诊断报告", "callback_data": "act:report"}],
     [{"text": "💾 快照", "callback_data": "act:snapshot"},
      {"text": "⏪ 回滚", "callback_data": "act:rollback"}],
+    [{"text": "🧦 私网 SOCKS5", "callback_data": "menu:socks"}],
     [{"text": "♻️ 重启服务", "callback_data": "act:restart"},
      {"text": "📜 日志", "callback_data": "menu:logs"}],
     [{"text": "« 返回", "callback_data": "menu:main"}],

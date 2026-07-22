@@ -392,6 +392,18 @@
         <div id="cidr_hint" class="muted small" style="margin-top:6px"></div>
       </div>
       <div class="card">
+        <h2>私网 SOCKS5</h2>
+        <p class="muted small" style="margin:0 0 8px">可选：仅客户端网段可访问的用户名/密码 SOCKS5（默认端口 <span class="mono">38443</span>，出站跟随当前出口）。手机 Telegram 可填网关公网 IP + 端口。</p>
+        <div id="socks_state" class="mono small" style="margin-bottom:8px">（加载中…）</div>
+        <div class="row">
+          <button class="primary" onclick="socksAction('enable')">▶️ 开启</button>
+          <button class="danger" onclick="socksAction('disable')">⏹ 关闭</button>
+          <button onclick="socksAction('reset-creds')">🔑 重置密码</button>
+          <button onclick="loadClientSocks()">🔄</button>
+        </div>
+        <div id="socks_creds" class="mono small" style="margin-top:8px;white-space:pre-wrap"></div>
+      </div>
+      <div class="card">
         <h2>DNS 直连域名</h2>
         <p class="muted small" style="margin:0 0 8px">私网客户端默认把非 ChinaList 域名解析成网关 IP。把 SSH 等主机名加入此名单后返回真实 A 记录。公网 DoT 本身不劫持。</p>
         <div class="row"><input id="dd_add" type="text" placeholder="例如 box2.example.com 或 servers.example.com" autocomplete="off" style="flex:1"></div>
@@ -508,7 +520,7 @@ function onEnter(sec){
   else if(sec==="rules"){ loadStatus(); loadRules(); }
   else if(sec==="monitor"){ loadMihomoOverview(); loadXdFrame(); }
   else if(sec==="ai"){ aiLoadConfig(); }
-  else if(sec==="settings"){ fillSettings(); loadClientCidr(); loadDirectDomains(); }
+  else if(sec==="settings"){ fillSettings(); loadClientCidr(); loadClientSocks(); loadDirectDomains(); }
 }
 document.querySelectorAll('[data-section]').forEach(el=>el.addEventListener('click',()=>{
   showSection(el.dataset.section);
@@ -1054,6 +1066,43 @@ async function saveClientCidr(){
 }
 async function detectClientCidr(){
   await mutate("/api/client-cidr",{detect:true},"探测并应用客户端网段", loadClientCidr);
+}
+
+/* ---- private client SOCKS5 ---- */
+async function loadClientSocks(){
+  const box=$("socks_state"), cred=$("socks_creds");
+  if(!box) return;
+  try{
+    const r=await api("/api/client-socks");
+    const st = r.enabled ? (r.running ? "已开启 · 运行中" : "已开启 · 未运行") : "已关闭";
+    box.textContent = st+"\n"+
+      (r.host||"?")+":"+(r.port||"38443")+
+      "  user="+(r.user||"?")+
+      "  allow="+(r.allow_cidr||"?");
+    if(cred && !cred.dataset.keep) cred.textContent="";
+  }catch(e){ box.textContent="加载失败："+e.message; }
+}
+async function socksAction(action){
+  const cred=$("socks_creds");
+  if(action==="disable" && !confirm("关闭私网 SOCKS5？")) return;
+  if(action==="reset-creds" && !confirm("轮换用户名/密码？旧密码立即失效。")) return;
+  busy(true);
+  try{
+    const r=await api("/api/client-socks","POST",{action});
+    log((r.ok?"✅ ":"❌ ")+(action)+" SOCKS5");
+    if(cred){
+      if(r.ok && (r.password||"").length>3){
+        cred.dataset.keep="1";
+        cred.textContent = "请立即保存（仅显示一次）：\n"+
+          "host "+(r.host||"")+"\nport "+(r.port||"")+"\nuser "+(r.user||"")+"\npass "+r.password;
+      } else if(action==="disable"){
+        delete cred.dataset.keep;
+        cred.textContent="";
+      }
+    }
+    await loadClientSocks();
+  }catch(e){ log("❌ SOCKS5："+e.message); }
+  finally{ busy(false); }
 }
 
 /* ---- DNS direct-domains (private-client hijack bypass) ---- */

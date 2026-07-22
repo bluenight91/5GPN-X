@@ -30,7 +30,7 @@ tmp="$(mktemp)"
 redact() {
     # Strip tokens, passwords, secrets, long hex/base64-ish blobs.
     sed -E \
-        -e 's/(API_TOKEN|TG_BOT_TOKEN|token|password|passwd|secret|uuid)=[^[:space:]]+/\1=***REDACTED***/Ig' \
+        -e 's/(API_TOKEN|TG_BOT_TOKEN|SOCKS_PASS|token|password|passwd|secret|uuid)=[^[:space:]]+/\1=***REDACTED***/Ig' \
         -e 's#(ss|vmess|vless|trojan|hysteria2|hy2|tuic|anytls|socks5h?|https?)://[^[:space:]]+#\1://***REDACTED***#Ig' \
         -e 's/[A-Za-z0-9_-]{32,}/***REDACTED***/g'
 }

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added
+
+- **私网 SOCKS5（可选）**：仅客户端 CIDR 可连、用户名/密码鉴权；默认监听 **TCP 38443**（避开 1080/7890 等常见口）；进程以 `pxout` 运行，出站跟随当前出口。
+  - CLI：`5gpn enable-client-socks` / `disable-client-socks` / `client-socks-status` / `reset-client-socks-creds`
+  - WebUI「设置 → 私网 SOCKS5」、API `GET/POST /api/client-socks`、Bot「运维 → 私网 SOCKS5」
+  - 防火墙按模式放行（managed 写入规则槽；preserve/auto 打 `5gpn-socks` 标签）；doctor / report / uninstall / `set-client-cidr` 已挂钩
+
 ### Changed
 
 - Telegram「诊断报告」：只发脱敏 `.txt` 附件，聊天中不再刷全文。

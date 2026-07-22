@@ -1281,6 +1281,24 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/client-cidr":
             return self._send(200, {"ok": True, "cidr": get_client_cidr(),
                                     "default": CLIENT_CIDR_DEFAULT})
+        if path == "/api/client-socks":
+            enabled = os.path.isfile(os.path.join(CONF_DIR, "client-socks.enabled"))
+            port = read_file(os.path.join(CONF_DIR, "client-socks.port")).strip() or "38443"
+            user = ""
+            env = read_file(os.path.join(CONF_DIR, "client-socks.env"))
+            for line in env.splitlines():
+                if line.startswith("SOCKS_USER="):
+                    user = line.split("=", 1)[1].strip()
+            running = False
+            if enabled:
+                running = run(["systemctl", "is-active", "5gpn-client-socks"], timeout=5)[0]
+            host = read_file("/etc/mosdns/.public_ip").strip() or ""
+            return self._send(200, {
+                "ok": True, "enabled": enabled, "running": running,
+                "host": host, "port": port, "user": user,
+                "password": "***" if enabled or user else "",
+                "allow_cidr": get_client_cidr(),
+            })
         return self._send(404, {"ok": False, "error": "not found"})
 
     def do_POST(self):
@@ -1495,6 +1513,36 @@ class Handler(BaseHTTPRequestHandler):
             ok, out = ctl("--set-client-cidr", cidr, timeout=180)
             return self._send(200 if ok else 500, {"ok": ok, "output": out,
                                                     "cidr": get_client_cidr()})
+
+        if path == "/api/client-socks":
+            action = str(b.get("action", "")).strip().lower()
+            if action == "enable":
+                ok, out = ctl("--enable-client-socks", timeout=180)
+            elif action == "disable":
+                ok, out = ctl("--disable-client-socks", timeout=120)
+            elif action == "reset-creds":
+                ok, out = ctl("--reset-client-socks-creds", timeout=120)
+            else:
+                return self._send(400, {"ok": False,
+                                        "error": "action must be enable|disable|reset-creds"})
+            host = port = user = password = ""
+            for line in (out or "").splitlines():
+                s = line.strip()
+                if "地址:" in s or "地址：" in s:
+                    val = s.split(":", 1)[-1].split("：", 1)[-1].strip()
+                    # drop leading spaces after OK prefix noise
+                    if ":" in val and not val.startswith("http"):
+                        host, port = val.rsplit(":", 1)
+                elif "用户:" in s or "用户：" in s:
+                    user = s.split(":", 1)[-1].split("：", 1)[-1].strip()
+                elif "密码:" in s or "密码：" in s:
+                    password = s.split(":", 1)[-1].split("：", 1)[-1].strip()
+            return self._send(200 if ok else 500, {
+                "ok": ok, "output": out,
+                "enabled": os.path.isfile(os.path.join(CONF_DIR, "client-socks.enabled")),
+                "host": host, "port": port, "user": user, "password": password,
+                "allow_cidr": get_client_cidr(),
+            })
 
         if path == "/api/restore":
             try:

@@ -428,6 +428,7 @@ table inet filter {
         ip saddr __CLIENT_CIDR__ udp dport 53 meter dns_rate_udp53 { ip saddr limit rate over 10000/second } drop
         ip saddr __CLIENT_CIDR__ tcp dport 53 accept
         ip saddr __CLIENT_CIDR__ udp dport 53 accept
+        __SOCKS_RULE__
         # ICMP for basic network health
         ip protocol icmp accept
         ip6 nexthdr icmpv6 accept
@@ -445,10 +446,18 @@ table inet filter {
 include "/etc/5gpn/pgw-exit.nft"
 EOF
         sed -i "s/__TCP_PORTS__/${tcp_ports}/" "$tmp_conf"
-        local client_cidr
+        local client_cidr socks_port socks_rule
         client_cidr="$(cat /etc/mosdns/.client_cidr 2>/dev/null || echo '172.22.0.0/16')"
         # Escape for sed replacement (CIDR has dots/slashes).
         sed -i "s#__CLIENT_CIDR__#${client_cidr}#g" "$tmp_conf"
+        socks_port="$(cat /opt/5gpn/etc/client-socks.port 2>/dev/null || echo '')"
+        if [[ -f /opt/5gpn/etc/client-socks.enabled && "$socks_port" =~ ^[0-9]+$ ]]; then
+            socks_rule="ip saddr ${client_cidr} tcp dport ${socks_port} accept"
+        else
+            socks_rule="# client socks disabled"
+        fi
+        # Use | delimiter; socks_rule has no pipes.
+        sed -i "s#__SOCKS_RULE__#${socks_rule}#" "$tmp_conf"
         if ! nft -c -f "$tmp_conf" >/dev/null 2>&1; then
             rm -f "$tmp_conf"
             warn "Generated nftables config failed validation; existing firewall left unchanged."
@@ -480,6 +489,11 @@ EOF
         iptables -A INPUT -s "${client_cidr}" -p udp --dport 53 -m hashlimit --hashlimit-above 10000/sec --hashlimit-burst 10000 --hashlimit-mode srcip --hashlimit-name dns_udp53 -j DROP
         iptables -A INPUT -s "${client_cidr}" -p tcp -m multiport --dports 53,80,443 -j ACCEPT
         iptables -A INPUT -s "${client_cidr}" -p udp -m multiport --dports 53,443 -j ACCEPT
+        local socks_port
+        socks_port="$(cat /opt/5gpn/etc/client-socks.port 2>/dev/null || echo '')"
+        if [[ -f /opt/5gpn/etc/client-socks.enabled && "$socks_port" =~ ^[0-9]+$ ]]; then
+            iptables -A INPUT -s "${client_cidr}" -p tcp --dport "${socks_port}" -m comment --comment 5gpn-socks -j ACCEPT
+        fi
         iptables -A INPUT -p icmp -j ACCEPT
         iptables -P FORWARD ACCEPT
         iptables -P OUTPUT ACCEPT
@@ -559,6 +573,72 @@ setup_firewall() {
     local wl
     wl="$(cat /etc/mosdns/.client_cidr 2>/dev/null || echo '172.22.0.0/16')"
     ok "Firewall configured (reverse proxy whitelist: ${wl})"
+    # Re-apply optional client SOCKS allow if previously enabled.
+    if declare -F firewall_socks_sync >/dev/null 2>&1; then
+        firewall_socks_sync >/dev/null 2>&1 || true
+    fi
+}
+
+# Optional client-only SOCKS5 (5gpn-client-socks). Tagged rules so enable/disable
+# can update without rewriting the whole host firewall in preserve/auto modes.
+firewall_socks_remove_rules() {
+    if command -v nft >/dev/null 2>&1 && nft list chain inet filter input >/dev/null 2>&1; then
+        local handles
+        handles="$(nft -a list chain inet filter input 2>/dev/null | awk '/5gpn-socks/{print $NF}')"
+        for h in $handles; do
+            [[ "$h" =~ ^[0-9]+$ ]] && nft delete rule inet filter input handle "$h" 2>/dev/null || true
+        done
+    fi
+    if command -v iptables >/dev/null 2>&1; then
+        while iptables -D INPUT -m comment --comment 5gpn-socks -j ACCEPT 2>/dev/null; do :; done
+        # Also drop older forms that included -s/-p/--dport before the comment match fails.
+        local line
+        while read -r line; do
+            [[ "$line" == *5gpn-socks* ]] || continue
+            # shellcheck disable=SC2086
+            iptables -D INPUT $line 2>/dev/null || true
+        done < <(iptables -S INPUT 2>/dev/null | sed -n 's/^-A INPUT //p' | grep 5gpn-socks || true)
+    fi
+}
+
+firewall_socks_sync() {
+    # Ensure firewall matches /opt/5gpn/etc/client-socks.enabled + .port.
+    local port cidr mode
+    port="$(cat /opt/5gpn/etc/client-socks.port 2>/dev/null || echo '38443')"
+    cidr="$(cat /etc/mosdns/.client_cidr 2>/dev/null || echo '172.22.0.0/16')"
+    [[ "$port" =~ ^[0-9]+$ ]] || port=38443
+    firewall_socks_remove_rules
+    if [[ ! -f /opt/5gpn/etc/client-socks.enabled ]]; then
+        # Managed ruleset may still need a rewrite to drop the socks line.
+        if [[ -f /etc/5gpn/.firewall-managed ]] && declare -F firewall_managed_apply >/dev/null 2>&1; then
+            local ssh_ports tcp_ports tcp_ports_ipt
+            ssh_ports="$(detect_ssh_ports 2>/dev/null || echo 22)"
+            tcp_ports_ipt="${ssh_ports},8111"
+            tcp_ports="${tcp_ports_ipt//,/, }"
+            firewall_managed_apply "$tcp_ports" "$tcp_ports_ipt" >/dev/null 2>&1 || true
+        fi
+        return 0
+    fi
+    mode="$(resolve_firewall_mode 2>/dev/null || echo preserve)"
+    case "$mode" in
+        managed)
+            local ssh_ports tcp_ports tcp_ports_ipt
+            ssh_ports="$(detect_ssh_ports 2>/dev/null || echo 22)"
+            tcp_ports_ipt="${ssh_ports},8111"
+            tcp_ports="${tcp_ports_ipt//,/, }"
+            firewall_managed_apply "$tcp_ports" "$tcp_ports_ipt" >/dev/null 2>&1 || true
+            ;;
+        auto|preserve|*)
+            if command -v nft >/dev/null 2>&1 && nft list chain inet filter input >/dev/null 2>&1; then
+                nft insert rule inet filter input ip saddr "$cidr" tcp dport "$port" accept comment '"5gpn-socks"' 2>/dev/null || true
+            elif command -v iptables >/dev/null 2>&1; then
+                iptables -I INPUT 1 -s "$cidr" -p tcp --dport "$port" -m comment --comment 5gpn-socks -j ACCEPT 2>/dev/null || true
+            fi
+            if [[ "$mode" == "preserve" ]]; then
+                info "FIREWALL_MODE=preserve: inserted ephemeral SOCKS allow ${cidr} → TCP ${port} (tag 5gpn-socks); persist it in your own firewall if needed."
+            fi
+            ;;
+    esac
 }
 open_cert_http_port() {
     info "Temporarily opening TCP/80 for Let's Encrypt HTTP-01..."

@@ -18,6 +18,7 @@ function Assert-Contains {
 }
 
 Assert-Contains $install 'ip saddr __CLIENT_CIDR__ tcp dport { 80, 443 } accept' 'nft TCP reverse proxy private allow'
+Assert-Contains $install '__SOCKS_RULE__' 'nft managed template reserves client SOCKS slot'
 Assert-Contains $install 'ip saddr __CLIENT_CIDR__ udp dport 443 accept' 'nft UDP reverse proxy private allow'
 Assert-Contains $install 'tcp dport 853 meter dns_rate_dot' 'nft DoT per-IP QPS rate limit'
 Assert-Contains $install 'meter dns_rate_tcp53' 'nft DNS TCP per-IP QPS rate limit'

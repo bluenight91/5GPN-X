@@ -9,7 +9,8 @@ CONF_DIR="${BASE_DIR}/etc"
 SRC_DIR="${BASE_DIR}/src"
 WWW_DIR="${BASE_DIR}/www"
 IOS_PROFILE_PORT=8111
-API_PORT_DEFAULT=8444
+CLIENT_SOCKS_PORT_DEFAULT=38443
+CLIENT_SOCKS_USER_DEFAULT=5gpn
 EXIT_USER="pxout"
 EXIT_MARK="0x1"
 EXIT_TABLE="100"
@@ -34,7 +35,7 @@ DEFAULT_LOCAL_DNS=("101.226.4.6" "218.30.118.6" "180.76.76.76" "119.29.29.29")
 bootstrap_from_repo_if_needed() {
     local required=(
         install.sh
-        lib/renew-hook.sh lib/sniproxy.conf lib/quic-proxy.go
+        lib/renew-hook.sh lib/sniproxy.conf lib/quic-proxy.go lib/client-socks.go
         lib/mosdns.yaml.template lib/update-rules.sh lib/ios-http.py lib/tgbot.py
         lib/wa-shim.py lib/rules-import.py lib/mihomo-exit-config.py
         lib/mihomo-router-config.py lib/rules-default.conf lib/host-setup.sh
@@ -426,6 +427,14 @@ Options:
                  TG_ADMIN_IDS env vars, or prompts interactively).
   --setup-api    Install/enable the HTTP control API + web panel (env API_TOKEN
                  / API_PORT, or generates a token; reuses existing token).
+  --enable-client-socks
+                 Enable private SOCKS5 (user/pass; only client CIDR; default TCP 38443)
+  --disable-client-socks
+                 Disable the private SOCKS5 proxy
+  --client-socks-status
+                 Show SOCKS5 status (password omitted)
+  --reset-client-socks-creds
+                 Rotate SOCKS5 username/password (prints once)
   --setup-whatsapp
                  Install/repair the iOS WhatsApp no-SNI TCP/443 shim.
   --uninstall    Remove all installed components
@@ -1252,6 +1261,161 @@ EOF
     systemctl enable quic-proxy
     ok "quic-proxy installed"
 }
+
+# ----- private client SOCKS5 (opt-in; uncommon port; pxout egress) -----
+CLIENT_SOCKS_BIN="${BASE_DIR}/bin/client-socks"
+CLIENT_SOCKS_ENV="${CONF_DIR}/client-socks.env"
+CLIENT_SOCKS_ENABLED="${CONF_DIR}/client-socks.enabled"
+CLIENT_SOCKS_PORT_FILE="${CONF_DIR}/client-socks.port"
+
+install_client_socks_binary() {
+    ensure_proxy_user
+    mkdir -p "${BASE_DIR}/bin" "${SRC_DIR}" "${CONF_DIR}"
+    [[ -f "${LIB_DIR}/client-socks.go" ]] || { err "client-socks.go missing"; return 1; }
+    if ! cmp -s "${LIB_DIR}/client-socks.go" "${SRC_DIR}/client-socks.go" 2>/dev/null \
+        || [[ ! -x "${CLIENT_SOCKS_BIN}" ]]; then
+        info "Compiling client-socks (private SOCKS5)..."
+        cp "${LIB_DIR}/client-socks.go" "${SRC_DIR}/client-socks.go"
+        (
+            cd "${SRC_DIR}"
+            export PATH=$PATH:/usr/local/go/bin
+            go build -ldflags="-s -w" -o "${CLIENT_SOCKS_BIN}" client-socks.go
+        )
+    fi
+    cat > /etc/systemd/system/5gpn-client-socks.service <<EOF
+[Unit]
+Description=5GPN-X private client SOCKS5 (CIDR ACL + user/pass)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-${CLIENT_SOCKS_ENV}
+ExecStart=${CLIENT_SOCKS_BIN} -l 0.0.0.0:\${SOCKS_PORT} -u \${SOCKS_USER} -P \${SOCKS_PASS} -a \${SOCKS_ALLOW_CIDR} -q
+Restart=on-failure
+RestartSec=3
+User=${EXIT_USER}
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+}
+
+client_socks_ensure_creds() {
+    mkdir -p "${CONF_DIR}"
+    local port user pass cidr
+    port="$(cat "${CLIENT_SOCKS_PORT_FILE}" 2>/dev/null || echo "${CLIENT_SOCKS_PORT_DEFAULT}")"
+    [[ "$port" =~ ^[0-9]+$ ]] || port="${CLIENT_SOCKS_PORT_DEFAULT}"
+    echo "$port" > "${CLIENT_SOCKS_PORT_FILE}"
+    cidr="$(cat /etc/mosdns/.client_cidr 2>/dev/null || echo '172.22.0.0/16')"
+    if [[ -f "${CLIENT_SOCKS_ENV}" ]]; then
+        # shellcheck disable=SC1090
+        set -a; source "${CLIENT_SOCKS_ENV}"; set +a
+    fi
+    user="${SOCKS_USER:-${CLIENT_SOCKS_USER_DEFAULT}}"
+    pass="${SOCKS_PASS:-}"
+    if [[ -z "$pass" ]]; then
+        pass="$(openssl rand -hex 12 2>/dev/null || head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+    fi
+    umask 077
+    cat > "${CLIENT_SOCKS_ENV}" <<EOF
+SOCKS_PORT=${port}
+SOCKS_USER=${user}
+SOCKS_PASS=${pass}
+SOCKS_ALLOW_CIDR=${cidr}
+EOF
+    chmod 600 "${CLIENT_SOCKS_ENV}"
+}
+
+client_socks_host_ip() {
+    cat /etc/mosdns/.public_ip 2>/dev/null \
+        || ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}' \
+        || echo "127.0.0.1"
+}
+
+enable_client_socks() {
+    check_root
+    install_client_socks_binary
+    client_socks_ensure_creds
+    # shellcheck disable=SC1090
+    set -a; source "${CLIENT_SOCKS_ENV}"; set +a
+    : > "${CLIENT_SOCKS_ENABLED}"
+    chmod 644 "${CLIENT_SOCKS_ENABLED}"
+    declare -F firewall_socks_sync >/dev/null 2>&1 && firewall_socks_sync || true
+    systemctl enable --now 5gpn-client-socks.service
+    systemctl restart 5gpn-client-socks.service
+    local host; host="$(client_socks_host_ip)"
+    ok "私网 SOCKS5 已开启"
+    echo "  地址:   ${host}:${SOCKS_PORT}"
+    echo "  用户:   ${SOCKS_USER}"
+    echo "  密码:   ${SOCKS_PASS}"
+    echo "  允许源: ${SOCKS_ALLOW_CIDR}"
+    echo "  Telegram: 设置 → 代理 → SOCKS5，填以上信息"
+    warn "密码仅此时完整显示；之后 status 会隐藏。需要时可 --reset-client-socks-creds"
+}
+
+disable_client_socks() {
+    check_root
+    systemctl disable --now 5gpn-client-socks.service 2>/dev/null || true
+    rm -f "${CLIENT_SOCKS_ENABLED}"
+    declare -F firewall_socks_sync >/dev/null 2>&1 && firewall_socks_sync || true
+    ok "私网 SOCKS5 已关闭"
+}
+
+client_socks_status() {
+    local on=0 host port user cidr
+    [[ -f "${CLIENT_SOCKS_ENABLED}" ]] && on=1
+    port="$(cat "${CLIENT_SOCKS_PORT_FILE}" 2>/dev/null || echo "${CLIENT_SOCKS_PORT_DEFAULT}")"
+    host="$(client_socks_host_ip)"
+    cidr="$(cat /etc/mosdns/.client_cidr 2>/dev/null || echo '172.22.0.0/16')"
+    user="?"
+    if [[ -f "${CLIENT_SOCKS_ENV}" ]]; then
+        user="$(sed -n 's/^SOCKS_USER=//p' "${CLIENT_SOCKS_ENV}" | head -1)"
+    fi
+    echo "client-socks: $([[ $on -eq 1 ]] && echo enabled || echo disabled)"
+    echo "listen: ${host}:${port}"
+    echo "user: ${user}"
+    echo "password: ***"
+    echo "allow: ${cidr}"
+    if [[ $on -eq 1 ]]; then
+        systemctl is-active --quiet 5gpn-client-socks.service \
+            && echo "service: running" || echo "service: not running"
+    fi
+}
+
+reset_client_socks_creds() {
+    check_root
+    mkdir -p "${CONF_DIR}"
+    local port user pass cidr
+    port="$(cat "${CLIENT_SOCKS_PORT_FILE}" 2>/dev/null || echo "${CLIENT_SOCKS_PORT_DEFAULT}")"
+    user="${CLIENT_SOCKS_USER_DEFAULT}"
+    pass="$(openssl rand -hex 12 2>/dev/null || head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+    cidr="$(cat /etc/mosdns/.client_cidr 2>/dev/null || echo '172.22.0.0/16')"
+    echo "$port" > "${CLIENT_SOCKS_PORT_FILE}"
+    umask 077
+    cat > "${CLIENT_SOCKS_ENV}" <<EOF
+SOCKS_PORT=${port}
+SOCKS_USER=${user}
+SOCKS_PASS=${pass}
+SOCKS_ALLOW_CIDR=${cidr}
+EOF
+    chmod 600 "${CLIENT_SOCKS_ENV}"
+    if [[ -f "${CLIENT_SOCKS_ENABLED}" ]]; then
+        systemctl restart 5gpn-client-socks.service 2>/dev/null || true
+    fi
+    local host; host="$(client_socks_host_ip)"
+    ok "SOCKS5 凭据已轮换"
+    echo "  地址: ${host}:${port}"
+    echo "  用户: ${user}"
+    echo "  密码: ${pass}"
+}
+
 install_mosdns() {
     info "Configuring mosdns..."
     ensure_mosdns_user
@@ -3212,6 +3376,13 @@ do_update() {
     install_wloc
     cmp -s "${LIB_DIR}/quic-proxy.go" "${SRC_DIR}/quic-proxy.go" 2>/dev/null || rm -f "${BASE_DIR}/bin/quic-proxy"
     install_quic_proxy
+    cmp -s "${LIB_DIR}/client-socks.go" "${SRC_DIR}/client-socks.go" 2>/dev/null || rm -f "${BASE_DIR}/bin/client-socks"
+    install_client_socks_binary
+    if [[ -f "${CLIENT_SOCKS_ENABLED}" ]]; then
+        client_socks_ensure_creds
+        systemctl restart 5gpn-client-socks.service 2>/dev/null || true
+        declare -F firewall_socks_sync >/dev/null 2>&1 && firewall_socks_sync || true
+    fi
     install_mosdns_binary
     cp "${LIB_DIR}/mosdns.yaml.template" /etc/mosdns/config.yaml.template
     install -m 0755 "${LIB_DIR}/update-rules.sh" /usr/local/bin/update-mosdns-rules.sh
@@ -3264,12 +3435,14 @@ do_uninstall() {
         systemctl stop "5gpn-singbox@$(basename "$f" .type).service" 2>/dev/null || true
     done
     shopt -u nullglob
-    systemctl stop mosdns dnsdist sniproxy wa-shim quic-proxy china-dns-race-proxy 5gpn-ios-profile.socket 5gpn-ios-profile 5gpn-exit 5gpn-tgbot 5gpn-api 5gpn-wloc 5gpn-health.timer 5gpn-health.service 2>/dev/null || true
-    systemctl disable mosdns dnsdist sniproxy wa-shim quic-proxy china-dns-race-proxy 5gpn-ios-profile.socket 5gpn-ios-profile 5gpn-exit 5gpn-tgbot 5gpn-api 5gpn-wloc 5gpn-health.timer 5gpn-health.service 2>/dev/null || true
+    systemctl stop mosdns dnsdist sniproxy wa-shim quic-proxy china-dns-race-proxy 5gpn-ios-profile.socket 5gpn-ios-profile 5gpn-exit 5gpn-tgbot 5gpn-api 5gpn-wloc 5gpn-health.timer 5gpn-health.service 5gpn-client-socks 2>/dev/null || true
+    systemctl disable mosdns dnsdist sniproxy wa-shim quic-proxy china-dns-race-proxy 5gpn-ios-profile.socket 5gpn-ios-profile 5gpn-exit 5gpn-tgbot 5gpn-api 5gpn-wloc 5gpn-health.timer 5gpn-health.service 5gpn-client-socks 2>/dev/null || true
     rm -f /etc/systemd/system/{mosdns,sniproxy,wa-shim,quic-proxy,china-dns-race-proxy,5gpn-ios-profile,update-mosdns-rules,5gpn-exit,5gpn-tgbot}.*
     rm -f /etc/systemd/system/5gpn-api.*
     rm -f /etc/systemd/system/5gpn-wloc.*
     rm -f /etc/systemd/system/5gpn-health.service /etc/systemd/system/5gpn-health.timer
+    rm -f /etc/systemd/system/5gpn-client-socks.service
+    declare -F firewall_socks_remove_rules >/dev/null 2>&1 && firewall_socks_remove_rules || true
     rm -f /usr/local/bin/5gpn
     rm -f /etc/systemd/system/5gpn-ios-profile@.service \
         /etc/systemd/system/5gpn-mihomo@.service \
@@ -3521,6 +3694,14 @@ PY
         fi
         systemctl restart wa-shim 2>/dev/null || true
     fi
+    if [[ -f "${CLIENT_SOCKS_ENV}" ]]; then
+        if grep -q '^SOCKS_ALLOW_CIDR=' "${CLIENT_SOCKS_ENV}"; then
+            sed -i -E "s#^SOCKS_ALLOW_CIDR=.*#SOCKS_ALLOW_CIDR=${cidr}#" "${CLIENT_SOCKS_ENV}"
+        else
+            echo "SOCKS_ALLOW_CIDR=${cidr}" >> "${CLIENT_SOCKS_ENV}"
+        fi
+        [[ -f "${CLIENT_SOCKS_ENABLED}" ]] && systemctl restart 5gpn-client-socks.service 2>/dev/null || true
+    fi
     /usr/local/bin/update-mosdns-rules.sh >/dev/null 2>&1 || warn "mosdns 刷新失败，请手动 --update-rules"
     if [[ -f /etc/5gpn/.firewall-managed ]] && declare -F firewall_managed_apply >/dev/null 2>&1; then
         local ssh_ports tcp_ports tcp_ports_ipt
@@ -3532,6 +3713,7 @@ PY
     else
         info "若使用自管防火墙，请自行放行来源 ${cidr} 的 53/80/443"
     fi
+    declare -F firewall_socks_sync >/dev/null 2>&1 && firewall_socks_sync || true
     ok "客户端网段已设置为 ${cidr}"
 }
 detect_client_cidr() {
@@ -3704,6 +3886,7 @@ main_install() {
     install_whatsapp_shim
     install_wloc
     install_quic_proxy
+    install_client_socks_binary
     install_mosdns
     init_rules
     system_tuning
@@ -3904,6 +4087,18 @@ case "${1:-}" in
     --setup-api)
         check_root
         setup_api
+        ;;
+    --enable-client-socks)
+        enable_client_socks
+        ;;
+    --disable-client-socks)
+        disable_client_socks
+        ;;
+    --client-socks-status)
+        client_socks_status
+        ;;
+    --reset-client-socks-creds)
+        reset_client_socks_creds
         ;;
     --uninstall)
         do_uninstall

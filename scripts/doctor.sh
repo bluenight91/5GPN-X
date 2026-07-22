@@ -92,6 +92,15 @@ done
 [[ -f "${CONF_DIR}/api.env" ]] && {
     systemctl is-active --quiet 5gpn-api 2>/dev/null && ok "服务 5gpn-api" "running" || bad "服务 5gpn-api" "not running"
 }
+if [[ -f "${CONF_DIR}/client-socks.enabled" ]]; then
+    if systemctl is-active --quiet 5gpn-client-socks 2>/dev/null; then
+        ok "服务 client-socks" "running"
+    else
+        bad "服务 client-socks" "enabled but not running"
+    fi
+else
+    note "私网 SOCKS5" "disabled"
+fi
 if [[ "$CURRENT" == "smart" ]]; then
     systemctl is-active --quiet 5gpn-mihomo@smart 2>/dev/null \
         && ok "服务 smart" "running" || bad "服务 smart" "5gpn-mihomo@smart not running"
@@ -115,6 +124,10 @@ check_listen tcp 853 "DoT"
 check_listen udp 53 "DNS"
 check_listen tcp 443 "HTTPS/SNI"
 [[ -f "${CONF_DIR}/api.env" ]] && check_listen tcp 8444 "控制 API"
+if [[ -f "${CONF_DIR}/client-socks.enabled" ]]; then
+    socks_port="$(cat "${CONF_DIR}/client-socks.port" 2>/dev/null || echo 38443)"
+    check_listen tcp "$socks_port" "私网 SOCKS5"
+fi
 if [[ "$CURRENT" == "smart" ]]; then
     if ss -H -tln 2>/dev/null | grep -q "127.0.0.1:9090"; then
         ok "Clash API" "127.0.0.1:9090"

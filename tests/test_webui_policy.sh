@@ -36,6 +36,9 @@ done
 [[ "${ui}" == *'客户端网段'* ]] || fail "settings must expose client CIDR management"
 [[ "${ui}" == *'/api/client-cidr'* ]] || fail "settings must call /api/client-cidr"
 [[ "${ui}" == *'saveClientCidr'* ]] || fail "settings must support saving client CIDR"
+[[ "${ui}" == *'私网 SOCKS5'* ]] || fail "settings must expose private SOCKS5 card"
+[[ "${ui}" == *'/api/client-socks'* ]] || fail "settings must call /api/client-socks"
+[[ "${ui}" == *'socksAction'* ]] || fail "settings must support SOCKS enable/disable"
 
 # --- auth model unchanged ------------------------------------------------------
 [[ "${ui}" == *'Bearer'* ]] || fail "panel must keep bearer-token auth"
