@@ -2957,6 +2957,9 @@ show_status() {
     echo "=========================================="
     echo "      Proxy Gateway Status"
     echo "=========================================="
+    local deploy_line
+    deploy_line="$(deployed_revision_line)"
+    [[ -n "$deploy_line" ]] && echo -e "Deployed: ${GREEN}${deploy_line}${NC}"
     for svc in mosdns sniproxy wa-shim quic-proxy; do
         status=$(systemctl is-active "$svc" 2>/dev/null || echo "unknown")
         if [[ "$status" == "active" ]]; then
@@ -2975,6 +2978,10 @@ show_status() {
         tg_status=$(systemctl is-active 5gpn-tgbot 2>/dev/null || echo "unknown")
         echo -e "5gpn-tgbot: $([[ "$tg_status" == active ]] && echo "${GREEN}running${NC}" || echo "${RED}$tg_status${NC}")"
     fi
+    if systemctl list-unit-files 2>/dev/null | grep -q '^5gpn-api\.service'; then
+        api_status=$(systemctl is-active 5gpn-api 2>/dev/null || echo "unknown")
+        echo -e "5gpn-api: $([[ "$api_status" == active ]] && echo "${GREEN}running${NC}" || echo "${RED}$api_status${NC}")"
+    fi
     echo ""
     if [[ -f "${CONF_DIR}/.domain" ]]; then
         echo "Domain: $(cat "${CONF_DIR}/.domain")"
@@ -2989,6 +2996,107 @@ show_status() {
     fi
     echo "=========================================="
 }
+
+# Record / display the git revision currently deployed under /opt/5gpn.
+repo_head_full() {
+    git -C "${BASE_DIR}" rev-parse HEAD 2>/dev/null || true
+}
+
+repo_origin_main_full() {
+    # Prefer the remote-tracking ref; fall back to FETCH_HEAD from an explicit
+    # `git fetch origin main` (some shallow clones only update FETCH_HEAD).
+    local rev
+    rev="$(git -C "${BASE_DIR}" rev-parse origin/main 2>/dev/null || true)"
+    if [[ -z "$rev" || "$rev" == *'needed'* ]]; then
+        rev="$(git -C "${BASE_DIR}" rev-parse FETCH_HEAD 2>/dev/null || true)"
+    fi
+    printf '%s' "$rev"
+}
+
+record_deployed_revision() {
+    local full short subject branch file="${CONF_DIR}/.deployed-rev"
+    mkdir -p "${CONF_DIR}"
+    full="$(repo_head_full)"
+    [[ -n "$full" ]] || return 0
+    short="$(git -C "${BASE_DIR}" rev-parse --short HEAD 2>/dev/null || echo "${full:0:7}")"
+    subject="$(git -C "${BASE_DIR}" log -1 --pretty=%s 2>/dev/null | tr '\n' ' ' || true)"
+    branch="$(git -C "${BASE_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)"
+    {
+        echo "full=${full}"
+        echo "short=${short}"
+        echo "branch=${branch}"
+        echo "subject=${subject}"
+        echo "recorded_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    } > "$file"
+    chmod 0644 "$file" 2>/dev/null || true
+}
+
+deployed_revision_line() {
+    local full short subject branch dirty="" file="${CONF_DIR}/.deployed-rev"
+    if [[ -d "${BASE_DIR}/.git" ]]; then
+        full="$(repo_head_full)"
+        if [[ -n "$full" ]]; then
+            short="$(git -C "${BASE_DIR}" rev-parse --short HEAD 2>/dev/null || echo "${full:0:7}")"
+            subject="$(git -C "${BASE_DIR}" log -1 --pretty=%s 2>/dev/null | tr '\n' ' ' || true)"
+            branch="$(git -C "${BASE_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)"
+            if [[ -n "$(git -C "${BASE_DIR}" status --porcelain 2>/dev/null || true)" ]]; then
+                dirty=" (dirty)"
+            fi
+            printf '%s %s [%s]%s' "$short" "$subject" "$branch" "$dirty"
+            return 0
+        fi
+    fi
+    if [[ -f "$file" ]]; then
+        short="$(awk -F= '/^short=/{print substr($0,7); exit}' "$file")"
+        subject="$(awk -F= '/^subject=/{print substr($0,9); exit}' "$file")"
+        branch="$(awk -F= '/^branch=/{print substr($0,8); exit}' "$file")"
+        [[ -n "$short" ]] || return 0
+        printf '%s %s [%s] (recorded)' "$short" "${subject:-?}" "${branch:-?}"
+        return 0
+    fi
+    return 0
+}
+
+# Fetch origin/main into the checkout and hard-reset onto it. Returns 0 when
+# HEAD moved, 1 when already current, 2 on fetch failure.
+sync_repo_to_origin_main() {
+    local before after remote_rev
+    command -v git >/dev/null 2>&1 || return 2
+    [[ -d "${BASE_DIR}/.git" ]] || return 2
+
+    before="$(repo_head_full)"
+    # Force-update the remote-tracking ref (works for shallow clones and avoids
+    # relying on a possibly stale origin/main after plain `git pull`).
+    if ! git -C "${BASE_DIR}" fetch --prune origin \
+            "+refs/heads/main:refs/remotes/origin/main" 2>/dev/null; then
+        # Fallback for older git / odd remotes.
+        if ! git -C "${BASE_DIR}" fetch --depth 1 origin main 2>/dev/null; then
+            return 2
+        fi
+    fi
+    remote_rev="$(repo_origin_main_full)"
+    if [[ -z "$remote_rev" ]]; then
+        return 2
+    fi
+    if [[ "$before" == "$remote_rev" ]]; then
+        return 1
+    fi
+    # Detach/feature-branch safe: recreate local main on origin/main.
+    git -C "${BASE_DIR}" checkout -B main "$remote_rev" >/dev/null 2>&1 \
+        || git -C "${BASE_DIR}" reset --hard "$remote_rev" >/dev/null 2>&1 \
+        || return 2
+    git -C "${BASE_DIR}" reset --hard "$remote_rev" >/dev/null 2>&1 || return 2
+    git -C "${BASE_DIR}" branch --set-upstream-to=origin/main main >/dev/null 2>&1 || true
+    after="$(repo_head_full)"
+    if [[ -z "$after" || "$after" == "$before" ]]; then
+        # remote_rev differed but reset didn't move HEAD — treat as failure.
+        [[ "$after" == "$remote_rev" ]] && return 1
+        return 2
+    fi
+    info "代码已更新: ${before:0:7} → ${after:0:7} ($(git -C "${BASE_DIR}" log -1 --pretty=%s 2>/dev/null || true))"
+    return 0
+}
+
 do_update() {
     check_root
     detect_os
@@ -2998,18 +3106,22 @@ do_update() {
     PUBLIC_IP="${PUBLIC_IP:-$(cat /etc/mosdns/.public_ip 2>/dev/null || true)}"
     info "更新 5GPN-X（保留全部配置）..."
     if [[ -z "${G5PNX_UPDATED:-}" ]]; then
-        info "拉取最新代码..."
-        if git -C "${BASE_DIR}" fetch -q origin main 2>/dev/null; then
-            if [[ "$(git -C "${BASE_DIR}" rev-parse HEAD 2>/dev/null || true)" != \
-                  "$(git -C "${BASE_DIR}" rev-parse origin/main 2>/dev/null || true)" ]]; then
-                git -C "${BASE_DIR}" reset --hard -q origin/main
+        info "拉取最新代码 (origin/main)..."
+        local sync_rc=0
+        sync_repo_to_origin_main || sync_rc=$?
+        case "$sync_rc" in
+            0)
                 export G5PNX_UPDATED=1
                 exec bash "${BASE_DIR}/install.sh" --update
-            fi
-            ok "代码已是最新"
-        else
-            warn "git fetch 失败（网络问题？），将使用当前代码更新运行时"
-        fi
+                ;;
+            1)
+                ok "代码已是最新 ($(git -C "${BASE_DIR}" rev-parse --short HEAD 2>/dev/null || echo unknown))"
+                ;;
+            *)
+                warn "git fetch 失败（网络问题？），将使用当前代码更新运行时"
+                warn "也可手动: cd ${BASE_DIR} && git fetch origin main && git reset --hard origin/main"
+                ;;
+        esac
     fi
     install_deps
     cur_ns="$(cat /etc/mosdns/.remote_dns 2>/dev/null || cat "${CONF_DIR}/.remote_dns" 2>/dev/null || echo "${DEFAULT_REMOTE_DNS[*]}")"
@@ -3057,7 +3169,9 @@ do_update() {
     # it or restart is refused even with the config fixed.
     systemctl reset-failed mosdns sniproxy wa-shim quic-proxy 2>/dev/null || true
     systemctl restart mosdns sniproxy wa-shim quic-proxy 2>/dev/null || true
-    ok "更新完成"
+    # After a successful runtime redeploy, stamp the revision we actually ran.
+    record_deployed_revision
+    ok "更新完成 ($(deployed_revision_line))"
 }
 do_uninstall() {
     warn "This will remove sniproxy, quic-proxy, mosdns configs, and rules."
@@ -3441,11 +3555,13 @@ main_install() {
     setup_tgbot
     maybe_setup_api
     install_cli
+    record_deployed_revision
     echo ""
     echo "=========================================="
     echo "         部署完成！"
     echo "=========================================="
     echo ""
+    echo "版本:     $(deployed_revision_line)"
     echo "DoT 地址:  tls://${DOMAIN}:853"
     echo "TCP 代理:  ${PUBLIC_IP}:80, ${PUBLIC_IP}:443 (sniproxy)"
     echo "UDP 代理:  ${PUBLIC_IP}:443 (quic-proxy)"

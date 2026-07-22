@@ -80,7 +80,20 @@ sudo ./install.sh
 sudo 5gpn update
 ```
 
-一条命令完成：`git fetch + reset --hard origin/main` 自更新（有新代码则以新代码 re-exec）→ 重部署运行时——重渲染 sniproxy 配置（保留当前 DNS）、按需重编译 quic-proxy、刷新 mosdns/mihomo 二进制与生成器、从保存的 `.uri` 链接重建出口配置、刷新 api-server/metacubexd/tgbot（**令牌不变**）、重建 smart 配置并重启服务（先 `reset-failed` 清除启动频率限制）。防火墙、内核调优、DNS 设置、出口、分流规则、证书全部保持原样。
+一条命令完成：`git fetch` 强制更新 `origin/main` + `reset --hard` 自更新（有新代码则以新代码 re-exec）→ 重部署运行时——重渲染 sniproxy 配置（保留当前 DNS）、按需重编译 quic-proxy、刷新 mosdns/mihomo 二进制与生成器、从保存的 `.uri` 链接重建出口配置、刷新 api-server/metacubexd/tgbot（**令牌不变**）、重建 smart 配置并重启服务（先 `reset-failed` 清除启动频率限制）。防火墙、内核调优、DNS 设置、出口、分流规则、证书全部保持原样。
+
+若 `git pull` 显示 `Already up to date` 但功能未出现，多半是当前分支未对齐 `origin/main`（例如只拉到了功能分支）。可手动：
+
+```bash
+cd /opt/5gpn
+git fetch origin +refs/heads/main:refs/remotes/origin/main
+git checkout -B main origin/main
+git reset --hard origin/main
+git log -1 --oneline
+sudo 5gpn update
+```
+
+`sudo 5gpn status` 会显示当前部署的 commit 短哈希、提交说明与分支。
 
 ## 客户端配置
 

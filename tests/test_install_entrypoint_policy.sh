@@ -103,6 +103,22 @@ if [[ "${update_body}" != *'install_cli'* ]]; then
     echo "do_update must install the global 5gpn cli." >&2
     exit 1
 fi
+if [[ "${update_body}" != *'sync_repo_to_origin_main'* ]]; then
+    echo "do_update must sync via sync_repo_to_origin_main (explicit origin/main refspec)." >&2
+    exit 1
+fi
+if [[ "${update_body}" != *'record_deployed_revision'* ]]; then
+    echo "do_update must stamp the deployed git revision for status." >&2
+    exit 1
+fi
+if [[ "${install_body}" != *'deployed_revision_line'* || "${install_body}" != *'Deployed:'* ]]; then
+    echo "show_status must print the deployed commit via deployed_revision_line." >&2
+    exit 1
+fi
+if [[ "${install_body}" != *'+refs/heads/main:refs/remotes/origin/main'* ]]; then
+    echo "repo sync must force-update refs/remotes/origin/main (shallow-clone safe)." >&2
+    exit 1
+fi
 if [[ "${install_body}" != *'--smoke)'* || "${install_body}" != *'scripts/smoke-check.sh'* ]]; then
     echo "install.sh must provide a --smoke command running the smoke check." >&2
     exit 1
