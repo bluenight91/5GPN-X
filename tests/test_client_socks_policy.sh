@@ -16,6 +16,7 @@ doctor="$(cat "${root}/scripts/doctor.sh")"
     || fail "client-socks.go must compile"
 rm -f /tmp/client-socks-test /tmp/client-socks.go
 
+[[ "${install}" == *'API_PORT_DEFAULT=8444'* ]] || fail "API_PORT_DEFAULT=8444 must remain defined (set -u)"
 [[ "${install}" == *'CLIENT_SOCKS_PORT_DEFAULT=38443'* ]] || fail "default socks port must be uncommon 38443"
 [[ "${install}" == *'enable_client_socks()'* ]] || fail "install must define enable_client_socks"
 [[ "${install}" == *'--enable-client-socks)'* ]] || fail "CLI must expose --enable-client-socks"

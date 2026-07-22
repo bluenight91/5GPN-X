@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- **`5gpn update` 在 setup_api 中断**：`API_PORT_DEFAULT` 被误删导致 `set -u` 报 *unbound variable*；已恢复默认 `8444`。
+
 ### Added
 
 - **私网 SOCKS5（可选）**：仅客户端 CIDR 可连、用户名/密码鉴权；默认监听 **TCP 38443**（避开 1080/7890 等常见口）；进程以 `pxout` 运行，出站跟随当前出口。
