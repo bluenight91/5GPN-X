@@ -33,6 +33,9 @@ done
 [[ "${ui}" == *'/mihomo/'* ]] || fail "monitor section must embed the metacubexd iframe"
 [[ "${ui}" == *'DNS 直连域名'* ]] || fail "settings must expose DNS direct-domains management"
 [[ "${ui}" == *'/api/direct-domains'* ]] || fail "settings must call /api/direct-domains"
+[[ "${ui}" == *'客户端网段'* ]] || fail "settings must expose client CIDR management"
+[[ "${ui}" == *'/api/client-cidr'* ]] || fail "settings must call /api/client-cidr"
+[[ "${ui}" == *'saveClientCidr'* ]] || fail "settings must support saving client CIDR"
 
 # --- auth model unchanged ------------------------------------------------------
 [[ "${ui}" == *'Bearer'* ]] || fail "panel must keep bearer-token auth"

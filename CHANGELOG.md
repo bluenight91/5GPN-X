@@ -4,8 +4,15 @@
 
 ### Changed
 
-- Telegram「诊断报告」：以 `.txt` 文件附件发送（聊天中不再刷全文）。
-- 健康告警文案改为引导使用 Bot「运维」菜单查看详情。
+- Telegram「诊断报告」：只发脱敏 `.txt` 附件，聊天中不再刷全文。
+- Telegram「自检 doctor」：改为摘要（失败/警告列表），完整现场用诊断报告。
+- 健康告警文案改为引导使用 Bot「运维」菜单；告警中列出失败项。
+
+### Added
+
+- Bot「DoT 管理 → 客户端网段」：查看 / 设置 / 自动探测。
+- WebUI「设置 → 客户端网段」与 API `GET/POST /api/client-cidr`。
+- doctor：检测 git HEAD 与 `.deployed-rev` 不一致（半更新）、健康定时器未启用。
 
 ### Fixed
 

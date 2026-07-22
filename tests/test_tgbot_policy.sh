@@ -113,6 +113,12 @@ PY
     || fail "diagnostic report must be sent as a Telegram document"
 [[ "${bot_body}" != *'send(chat_id, text or "(empty report)", mono=True)'* ]] \
     || fail "diagnostic report must not dump the full body into chat messages"
+[[ "${bot_body}" == *'"--doctor", "--json"'* ]] \
+    || fail "op_doctor must use doctor --json for a compact Telegram summary"
+[[ "${bot_body}" == *'menu:cidr'* ]] || fail "DoT menu must expose client CIDR management"
+[[ "${bot_body}" == *'cidr:set'* && "${bot_body}" == *'cidr:detect'* ]] \
+    || fail "client CIDR menu must support set and detect"
+[[ "${bot_body}" == *'def op_set_client_cidr('* ]] || fail "tgbot must implement op_set_client_cidr"
 [[ "${bot_body}" == *'"♻️ 重启服务", "callback_data": "act:restart"'* ]] || fail "operations menu must restart services directly"
 [[ "${bot_body}" == *'services_menu("logs", "menu:ops")'* ]] || fail "log service selection must return to operations"
 [[ "${bot_body}" == *'edit_async(cb, op_restart_services, back_kb("menu:ops"))'* ]] || fail "restart results must return to operations"

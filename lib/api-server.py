@@ -22,6 +22,7 @@ Env (systemd EnvironmentFile):
 import base64
 import hmac
 import io
+import ipaddress
 import json
 import os
 import re
@@ -65,6 +66,8 @@ CAT_RE = re.compile(r"^[A-Za-z0-9_一-鿿-]{1,40}$")
 DOMAIN_RE = re.compile(
     r"^(?=.{1,253}$)([A-Za-z0-9]([A-Za-z0-9_-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,}$")
 DIRECT_DOMAINS_FILE = "/etc/mosdns/direct-domains.txt"
+CLIENT_CIDR_FILE = "/etc/mosdns/.client_cidr"
+CLIENT_CIDR_DEFAULT = "172.22.0.0/16"
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 SERVICES = ["mosdns", "sniproxy", "wa-shim", "quic-proxy",
             "5gpn-tgbot", "5gpn-api"]
@@ -924,6 +927,27 @@ def list_direct_domains():
     return uniq
 
 
+def get_client_cidr():
+    raw = (read_file(CLIENT_CIDR_FILE) or CLIENT_CIDR_DEFAULT).strip()
+    try:
+        net = ipaddress.ip_network(raw, strict=False)
+        if net.version != 4 or not (8 <= net.prefixlen <= 30):
+            return CLIENT_CIDR_DEFAULT
+        return str(net)
+    except ValueError:
+        return CLIENT_CIDR_DEFAULT
+
+
+def validate_client_cidr(value):
+    try:
+        net = ipaddress.ip_network(str(value or "").strip(), strict=False)
+    except ValueError:
+        return None
+    if net.version != 4 or not (8 <= net.prefixlen <= 30):
+        return None
+    return str(net)
+
+
 def route_test(domain):
     d = (domain or "").lower().strip().strip(".").lstrip("*.")
     if not d or "." not in d:
@@ -1206,7 +1230,8 @@ class Handler(BaseHTTPRequestHandler):
             res = resources()
             return self._send(200, {"ok": True, "current": cur, "exits": exits,
                                     "resources": res, "memory": res, "services": services,
-                                    "policy": policy_map()})
+                                    "policy": policy_map(),
+                                    "client_cidr": get_client_cidr()})
         if path == "/api/traffic":
             with _traffic_lock:
                 data = _load_traffic()
@@ -1253,6 +1278,9 @@ class Handler(BaseHTTPRequestHandler):
             domains = list_direct_domains()
             return self._send(200, {"ok": True, "count": len(domains), "domains": domains,
                                     "text": "\n".join(domains) + ("\n" if domains else "")})
+        if path == "/api/client-cidr":
+            return self._send(200, {"ok": True, "cidr": get_client_cidr(),
+                                    "default": CLIENT_CIDR_DEFAULT})
         return self._send(404, {"ok": False, "error": "not found"})
 
     def do_POST(self):
@@ -1454,6 +1482,19 @@ class Handler(BaseHTTPRequestHandler):
                           timeout=120)
             return self._send(200 if ok else 500, {"ok": ok, "output": out,
                                                    "count": len(cleaned)})
+
+        if path == "/api/client-cidr":
+            if b.get("detect"):
+                ok, out = ctl("--detect-client-cidr", timeout=180)
+                return self._send(200 if ok else 500, {"ok": ok, "output": out,
+                                                        "cidr": get_client_cidr()})
+            cidr = validate_client_cidr(b.get("cidr", ""))
+            if not cidr:
+                return self._send(400, {"ok": False,
+                                        "error": "invalid cidr (IPv4 /8../30, e.g. 172.22.0.0/16)"})
+            ok, out = ctl("--set-client-cidr", cidr, timeout=180)
+            return self._send(200 if ok else 500, {"ok": ok, "output": out,
+                                                    "cidr": get_client_cidr()})
 
         if path == "/api/restore":
             try:

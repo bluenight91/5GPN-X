@@ -42,7 +42,7 @@ sudo 5gpn set-client-cidr 10.10.0.0/16
 cat /etc/mosdns/.client_cidr
 ```
 
-改完后会刷新 mosdns；若是 `FIREWALL_MODE=managed`，也会尝试重写白名单。自管防火墙需自行放行新网段的 53/80/443。
+也可在 Bot「DoT 管理 → 客户端网段」或网页控制台「设置」中修改。改完后会刷新 mosdns；若是 `FIREWALL_MODE=managed`，也会尝试重写白名单。自管防火墙需自行放行新网段的 53/80/443。
 
 ## SSH 到「主机名.域名」进了网关
 

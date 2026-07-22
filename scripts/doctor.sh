@@ -48,7 +48,9 @@ CLIENT_CIDR="$(cat /etc/mosdns/.client_cidr 2>/dev/null || echo '172.22.0.0/16')
     echo "===== 5GPN-X doctor $(date '+%F %T') (exit=${CURRENT}, client=${CLIENT_CIDR}) ====="
 
 # ----- deployed revision -----
+git_head=""
 if [[ -d "${BASE_DIR}/.git" ]]; then
+    git_head="$(git -C "${BASE_DIR}" rev-parse HEAD 2>/dev/null || true)"
     short="$(git -C "${BASE_DIR}" rev-parse --short HEAD 2>/dev/null || echo '?')"
     subj="$(git -C "${BASE_DIR}" log -1 --pretty=%s 2>/dev/null | tr -d '\n' || true)"
     ok "部署版本" "${short} ${subj}"
@@ -57,6 +59,22 @@ elif [[ -f "${CONF_DIR}/.deployed-rev" ]]; then
     ok "部署版本" "${short:-unknown} (recorded)"
 else
     note "部署版本" "无法读取 git HEAD"
+fi
+
+# Half-update detector: code pulled but runtime refresh not finished.
+if [[ -n "$git_head" && -f "${CONF_DIR}/.deployed-rev" ]]; then
+    recorded="$(awk -F= '/^full=/{print substr($0,6); exit}' "${CONF_DIR}/.deployed-rev")"
+    if [[ -n "$recorded" && "$git_head" != "$recorded" ]]; then
+        note "运行时一致性" "git HEAD≠已部署记录，建议 sudo 5gpn update 完成刷新"
+    fi
+fi
+if [[ -f "${BASE_DIR}/scripts/health-notify.sh" ]]; then
+    if systemctl is-enabled --quiet 5gpn-health.timer 2>/dev/null \
+        || systemctl is-active --quiet 5gpn-health.timer 2>/dev/null; then
+        ok "健康定时器" "enabled"
+    else
+        note "健康定时器" "未启用，建议 sudo 5gpn update"
+    fi
 fi
 
 # ----- services -----

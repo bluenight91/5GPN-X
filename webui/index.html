@@ -381,8 +381,19 @@
 
     <section id="sec-settings" hidden>
       <div class="card">
+        <h2>客户端网段</h2>
+        <p class="muted small" style="margin:0 0 8px">私网客户端来自此 IPv4 CIDR 时走劫持/透明代理策略（默认 <span class="mono">172.22.0.0/16</span>）。改后会刷新 mosdns；managed 防火墙会尝试同步白名单。</p>
+        <div class="row">
+          <input id="cidr_val" type="text" placeholder="例如 172.22.0.0/16" autocomplete="off" style="flex:1" class="mono">
+          <button class="primary" onclick="saveClientCidr()">💾 保存</button>
+          <button onclick="detectClientCidr()">🔎 探测</button>
+          <button onclick="loadClientCidr()">🔄</button>
+        </div>
+        <div id="cidr_hint" class="muted small" style="margin-top:6px"></div>
+      </div>
+      <div class="card">
         <h2>DNS 直连域名</h2>
-        <p class="muted small" style="margin:0 0 8px">私网客户端（172.22.0.0/16）默认把非 ChinaList 域名解析成网关 IP。把 SSH 等主机名加入此名单后返回真实 A 记录。公网 DoT 本身不劫持。</p>
+        <p class="muted small" style="margin:0 0 8px">私网客户端默认把非 ChinaList 域名解析成网关 IP。把 SSH 等主机名加入此名单后返回真实 A 记录。公网 DoT 本身不劫持。</p>
         <div class="row"><input id="dd_add" type="text" placeholder="例如 box2.example.com 或 servers.example.com" autocomplete="off" style="flex:1"></div>
         <div class="row">
           <button class="primary" onclick="addDirectDomain()">➕ 添加</button>
@@ -497,7 +508,7 @@ function onEnter(sec){
   else if(sec==="rules"){ loadStatus(); loadRules(); }
   else if(sec==="monitor"){ loadMihomoOverview(); loadXdFrame(); }
   else if(sec==="ai"){ aiLoadConfig(); }
-  else if(sec==="settings"){ fillSettings(); loadDirectDomains(); }
+  else if(sec==="settings"){ fillSettings(); loadClientCidr(); loadDirectDomains(); }
 }
 document.querySelectorAll('[data-section]').forEach(el=>el.addEventListener('click',()=>{
   showSection(el.dataset.section);
@@ -1022,6 +1033,27 @@ function copyText(t){
   if(navigator.clipboard && navigator.clipboard.writeText){
     navigator.clipboard.writeText(t).then(()=>toast("已复制","ok"),()=>toast("复制失败","bad"));
   } else { toast("当前环境不支持剪贴板 API","bad"); }
+}
+
+/* ---- client CIDR (private-client source network) ---- */
+async function loadClientCidr(){
+  const inp=$("cidr_val"), hint=$("cidr_hint");
+  if(!inp) return;
+  try{
+    const r=await api("/api/client-cidr");
+    inp.value=r.cidr||"";
+    if(hint) hint.textContent = r.cidr ? ("当前："+r.cidr) : "";
+  }catch(e){
+    if(hint) hint.textContent="加载失败："+e.message;
+  }
+}
+async function saveClientCidr(){
+  const cidr=($("cidr_val")&&$("cidr_val").value||"").trim();
+  if(!cidr){ log("请输入 CIDR"); return; }
+  await mutate("/api/client-cidr",{cidr},"设置客户端网段 "+cidr, loadClientCidr);
+}
+async function detectClientCidr(){
+  await mutate("/api/client-cidr",{detect:true},"探测并应用客户端网段", loadClientCidr);
 }
 
 /* ---- DNS direct-domains (private-client hijack bypass) ---- */

@@ -1195,6 +1195,9 @@ def op_dot_status():
                   _read_file("/etc/mosdns/.overseas_dns") or "?")
     local_dns = (_read_file("/etc/mosdns/.local_dns") or "?")
     direct_n = len(_direct_domain_entries())
+    cidr = (_read_file("/etc/mosdns/.client_cidr")
+            or _read_file("/opt/5gpn/etc/.client_cidr")
+            or "172.22.0.0/16").strip()
     lines = [
         "🔐 <b>DoT 管理</b>",
         "当前域名：<code>%s</code>" % html.escape(domain),
@@ -1202,6 +1205,7 @@ def op_dot_status():
     lines.extend([
         "国际 DNS：<code>%s</code>" % html.escape(remote_dns),
         "国内 DNS：<code>%s</code>" % html.escape(local_dns),
+        "客户端网段：<code>%s</code>" % html.escape(cidr),
         "DNS 直连名单：<code>%d</code> 个域名" % direct_n,
         _cert_status_line(),
     ])
@@ -1417,11 +1421,73 @@ def op_restart_services():
 
 
 def op_doctor():
-    ok, out = run2(["bash", MGMT, "--doctor"], timeout=180)
-    body = html.escape(_strip_ansi(out)[-3500:])
-    if ok:
-        return "✅ <b>doctor 通过</b>\n<pre>%s</pre>" % body
-    return "❌ <b>doctor 发现问题</b>\n<pre>%s</pre>" % body
+    """Compact FAIL/WARN summary for Telegram (full detail → 诊断报告)."""
+    ok, out = run2(["bash", MGMT, "--doctor", "--json"], timeout=180)
+    raw = (out or "").strip()
+    data = None
+    if raw:
+        # doctor --json prints a single JSON object; tolerate trailing noise.
+        for line in reversed(raw.splitlines()):
+            line = line.strip()
+            if line.startswith("{") and line.endswith("}"):
+                try:
+                    data = json.loads(line)
+                    break
+                except ValueError:
+                    continue
+        if data is None:
+            try:
+                data = json.loads(raw)
+            except ValueError:
+                data = None
+    if data is None:
+        body = html.escape(_strip_ansi(out)[-2500:] or "无输出")
+        head = "✅ <b>doctor 通过</b>" if ok else "❌ <b>doctor 发现问题</b>"
+        return "%s\n<pre>%s</pre>" % (head, body)
+
+    fail_n = int(data.get("fail", 0) or 0)
+    warn_n = int(data.get("warn", 0) or 0)
+    pass_n = int(data.get("pass", 0) or 0)
+    cidr = data.get("client_cidr") or "?"
+    checks = data.get("checks") or []
+    fails = [c for c in checks if c.get("level") == "fail"]
+    warns = [c for c in checks if c.get("level") == "warn"]
+
+    if fail_n == 0:
+        head = "✅ <b>doctor 通过</b>"
+    else:
+        head = "❌ <b>doctor 发现问题</b>"
+    lines = [
+        head,
+        "失败 <code>%d</code> / 警告 <code>%d</code> / 通过 <code>%d</code>"
+        % (fail_n, warn_n, pass_n),
+        "客户端网段：<code>%s</code>" % html.escape(str(cidr)),
+        "出口：<code>%s</code>" % html.escape(str(data.get("current_exit") or "?")),
+    ]
+    if fails:
+        lines.append("")
+        lines.append("<b>失败</b>")
+        for c in fails[:12]:
+            lines.append("• %s：%s" % (
+                html.escape(str(c.get("check") or "?")),
+                html.escape(str(c.get("detail") or ""))))
+        if len(fails) > 12:
+            lines.append("… 另有 %d 项失败" % (len(fails) - 12))
+    if warns:
+        lines.append("")
+        lines.append("<b>警告</b>")
+        for c in warns[:8]:
+            lines.append("• %s：%s" % (
+                html.escape(str(c.get("check") or "?")),
+                html.escape(str(c.get("detail") or ""))))
+        if len(warns) > 8:
+            lines.append("… 另有 %d 项警告" % (len(warns) - 8))
+    if any("运行时一致性" in str(c.get("check") or "") for c in warns + fails):
+        lines.append("")
+        lines.append("💡 建议执行 <code>sudo 5gpn update</code> 完成运行时刷新")
+    lines.append("")
+    lines.append("完整现场请用「诊断报告」下载文件。")
+    return "\n".join(lines)
 
 
 def op_report():
@@ -1471,6 +1537,48 @@ def edit_report_async(cb, chat_id):
 
     BUSY.add(key)
     background(go)
+
+
+def _client_cidr():
+    return (_read_file("/etc/mosdns/.client_cidr")
+            or _read_file("/opt/5gpn/etc/.client_cidr")
+            or "172.22.0.0/16").strip()
+
+
+def op_show_client_cidr():
+    cidr = _client_cidr()
+    return ("🛡 <b>客户端网段</b>\n"
+            "当前：<code>%s</code>\n"
+            "私网客户端来自此段时走劫持/透明代理策略；"
+            "改后会刷新 mosdns（managed 防火墙也会尝试同步）。"
+            % html.escape(cidr))
+
+
+def client_cidr_menu():
+    return [
+        [{"text": "✏️ 设置网段", "callback_data": "cidr:set"},
+         {"text": "🔎 自动探测", "callback_data": "cidr:detect"}],
+        [{"text": "« 返回", "callback_data": "menu:dot"}],
+    ]
+
+
+def op_set_client_cidr(text):
+    cidr = (text or "").strip()
+    if not cidr:
+        return "请发送 IPv4 CIDR，例如 <code>172.22.0.0/16</code>"
+    ok, out = run2(["bash", MGMT, "--set-client-cidr", cidr], timeout=180)
+    if ok:
+        return ("✅ <b>客户端网段已更新</b>\n<code>%s</code>\n%s"
+                % (html.escape(_client_cidr()), html.escape(_strip_ansi(out)[-800:])))
+    return "❌ <b>设置失败</b>\n%s" % html.escape(_reason(out))
+
+
+def op_detect_client_cidr():
+    ok, out = run2(["bash", MGMT, "--detect-client-cidr"], timeout=180)
+    if ok:
+        return ("✅ <b>已探测并应用客户端网段</b>\n当前：<code>%s</code>\n%s"
+                % (html.escape(_client_cidr()), html.escape(_strip_ansi(out)[-800:])))
+    return "❌ <b>探测失败</b>\n%s" % html.escape(_reason(out))
 
 
 def op_snapshot():
@@ -2080,6 +2188,7 @@ def dot_menu():
         [{"text": "🌐 更改域名", "callback_data": "dot:domain"}],
         [{"text": "🌍 更改国际 DNS", "callback_data": "dot:dns_remote"}],
         [{"text": "🇨🇳 更改国内 DNS", "callback_data": "dot:dns_local"}],
+        [{"text": "🛡 客户端网段", "callback_data": "menu:cidr"}],
         [{"text": "🔓 DNS 直连域名", "callback_data": "menu:direct"}],
         [{"text": "🔄 续期证书", "callback_data": "act:renew"}],
         [{"text": "« 返回", "callback_data": "menu:main"}],
@@ -2303,6 +2412,15 @@ def handle_message(msg):
         console_async(chat_id, lambda: op_set_direct_domains(list_text),
                       direct_domains_menu(), message_id=mid)
         return
+    if state and state.get("action") == "cidr_set":
+        prompt_mid = state.get("prompt_mid")
+        PENDING.pop(chat_id, None)
+        cidr_text = text
+        background(delete_message, chat_id, msg.get("message_id"))
+        mid = upsert_console(chat_id, "⏳ 正在设置客户端网段…", message_id=prompt_mid)
+        console_async(chat_id, lambda: op_set_client_cidr(cidr_text),
+                      client_cidr_menu(), message_id=mid)
+        return
 
     send(chat_id, "未知命令。发送 /menu 打开操作面板。")
 
@@ -2363,6 +2481,8 @@ def handle_callback(cb):
         edit(cb, "选择要删除的出口：", exits_del_menu())
     elif data == "menu:dot":
         edit(cb, op_dot_status(), dot_menu())
+    elif data == "menu:cidr":
+        edit(cb, op_show_client_cidr(), client_cidr_menu())
     elif data == "menu:direct":
         edit(cb, "🔓 <b>DNS 直连域名</b>\n私网客户端跳过劫持、返回真实 A 记录的域名名单。",
              direct_domains_menu())
@@ -2510,6 +2630,18 @@ def handle_callback(cb):
     elif data == "dd:show":
         edit(cb, "⏳ 正在读取 DNS 直连名单…")
         edit_async(cb, op_show_direct_domains, direct_domains_menu())
+    elif data == "cidr:set":
+        PENDING[chat_id] = {"action": "cidr_set", "prompt_mid": cb_mid}
+        edit(cb,
+             ("✏️ <b>设置客户端网段</b>\n\n"
+              "发送一个 IPv4 CIDR（前缀 /8–/30）。\n\n"
+              "当前：<code>%s</code>\n"
+              "示例：<code>172.22.0.0/16</code> 或 <code>10.10.0.0/16</code>"
+              % html.escape(_client_cidr())),
+             cancel_kb("dot"))
+    elif data == "cidr:detect":
+        edit(cb, "⏳ 正在从本机网卡探测客户端网段…")
+        edit_async(cb, op_detect_client_cidr, client_cidr_menu())
     elif data == "dd:add":
         PENDING[chat_id] = {"action": "dd_add", "prompt_mid": cb_mid}
         edit(cb,

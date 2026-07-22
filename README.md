@@ -34,7 +34,7 @@
 
 - 网页控制台（可选）：六页静态控制台——仪表盘、出口管理、分流规则、mihomo 监控、AI 助手、设置；深浅双主题跟随系统，移动端底部标签栏（可滑动、滚动自动隐藏），适配 iOS Safari。
 - mihomo 监控面板：metacubexd 经 api-server 同源反代接入，secret 不出服务端；支持连接查看、延迟测试、断开连接、规则集刷新。
-- Telegram Bot：状态、出口管理、分流规则、DNS/DoT 设置、日志、iOS 二维码。
+- Telegram Bot：状态、出口管理、分流规则、DNS/DoT 设置（含客户端网段）、日志、iOS 二维码、运维自检。
 - AI 助手：绑定自己的 OpenAI 兼容接口，自然语言生成分流方案，人工确认后才生效。
 
 **运维**
@@ -42,7 +42,7 @@
 - `--update` 一键更新：git 自更新 + 重部署运行时（保留全部配置）；更新前自动快照，失败可回滚。
 - `/opt/5gpn` 自动成为 git 检出，管理命令全部在该目录执行。
 - `doctor` / `report`：结构化自检与脱敏诊断报告；`smoke` 为 `doctor --deep` 别名。
-- 可配置客户端网段（`--set-client-cidr` / `--detect-client-cidr`）；健康定时器可经 Telegram 告警。
+- 可配置客户端网段（CLI / Bot / WebUI）；健康定时器可经 Telegram 告警。
 - API 安全加固：全响应安全响应头（HSTS/XFO/nosniff/CSP）、每源 IP 限流（429）、PII 静默日志。
 
 ## 环境要求

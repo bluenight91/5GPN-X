@@ -32,6 +32,8 @@ body="$(cat "${doctor}")"
 [[ "${body}" == *'10451'* ]] || fail "doctor must check the WLOC interceptor port when active"
 [[ "${body}" == *'gs-loc.apple.com'* ]] || fail "doctor must verify WLOC DNS hijack entries when active"
 [[ "${body}" == *'人工步骤'* ]] || fail "doctor --deep must end with manual verification steps"
+[[ "${body}" == *'运行时一致性'* ]] || fail "doctor must detect git HEAD vs .deployed-rev mismatch"
+[[ "${body}" == *'健康定时器'* ]] || fail "doctor must check 5gpn-health.timer when health-notify exists"
 [[ "${body}" == *'--json'* ]] || fail "doctor must support --json for health-notify"
 
 echo "test_smoke_check_policy: OK"
