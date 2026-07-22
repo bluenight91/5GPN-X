@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- **Bot doctor 在 #12 后仍误报**：`doctor --json` 改为经临时文件传 RESULTS（避免 argv/locale 丢检查项）；Bot 侧隔离 stderr、用干净 PATH 调用，并对 tgbot/api/smart/fwmark/pgw_exit 做主机侧复核纠错（Bot 进程存活即认定 tgbot 在跑）。
+
+### Fixed
+
 - **Bot doctor 仍误报服务/fwmark 全挂**：即便 #11 已合入，若未跑完 `5gpn update`，磁盘上旧的整份 `5gpn-ctl` 仍会 bootstrap。Bot 现启动时自动把 legacy ctl 修成薄包装，且 `op_doctor` 直接调用 `/opt/5gpn/scripts/doctor.sh`；doctor 内 `systemctl`/`ip`/`nft` 改用绝对路径。
 - **Bot doctor 误报服务全挂**：`/opt/5gpn/bin/5gpn-ctl` 曾是整份 `install.sh` 拷贝，`SCRIPT_DIR` 变成 `/opt/5gpn/bin`，每次调用都会 bootstrap `git clone`，自检结果不可靠。改为与 `5gpn` 相同的薄包装，转调 `/opt/5gpn/install.sh`。
 - **mihomo 面板看不到出口**：smart 配置缺少 `proxy-groups` 时，metacubexd「代理」页不易列出仅作为规则目标的出口；现会预加载全部出口，并增加仅供展示的 `EXITS` 选择组（规则仍直接指向出口名，不影响分流）。

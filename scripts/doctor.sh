@@ -317,29 +317,48 @@ fi
 
 # ----- output -----
 if [[ "$JSON" -eq 1 ]]; then
-    # systemd / cron often use LANG=C (ASCII stdout). Write UTF-8 explicitly so
-    # Chinese check names do not raise UnicodeEncodeError (Bot doctor / health).
-    PYTHONIOENCODING=utf-8 PYTHONUTF8=1 python3 - "$PASS" "$FAIL" "$WARN" "$CURRENT" "$CLIENT_CIDR" "${RESULTS[@]}" <<'PY'
-import json, sys
-pass_n, fail_n, warn_n, current, cidr = sys.argv[1:6]
+    # Pass RESULTS via a temp file — argv packing breaks under some locales and
+    # can drop/corrupt checks when Bot/cron invoke doctor --json.
+    _json_results="$(mktemp)"
+    if ((${#RESULTS[@]})); then
+        printf '%s\n' "${RESULTS[@]}" > "${_json_results}"
+    else
+        : > "${_json_results}"
+    fi
+    PYTHONIOENCODING=utf-8 PYTHONUTF8=1 python3 - "$PASS" "$FAIL" "$WARN" "$CURRENT" "$CLIENT_CIDR" "${_json_results}" <<'PY'
+import json, os, sys
+pass_n, fail_n, warn_n, current, cidr, path = sys.argv[1:7]
 items = []
-for raw in sys.argv[6:]:
-    parts = raw.split("|", 2)
-    if len(parts) < 3:
-        continue
-    level, label, detail = parts
-    items.append({"level": level, "check": label, "detail": detail})
+with open(path, encoding="utf-8") as fh:
+    for raw in fh:
+        raw = raw.rstrip("\n")
+        if not raw:
+            continue
+        parts = raw.split("|", 2)
+        if len(parts) < 3:
+            continue
+        level, label, detail = parts
+        items.append({"level": level, "check": label, "detail": detail})
+try:
+    os.remove(path)
+except OSError:
+    pass
+# Prefer recounting from items so output stays self-consistent.
+pass_n = sum(1 for i in items if i["level"] == "ok")
+fail_n = sum(1 for i in items if i["level"] == "fail")
+warn_n = sum(1 for i in items if i["level"] == "warn")
 payload = json.dumps({
-    "ok": int(fail_n) == 0,
-    "pass": int(pass_n),
-    "fail": int(fail_n),
-    "warn": int(warn_n),
+    "ok": fail_n == 0,
+    "pass": pass_n,
+    "fail": fail_n,
+    "warn": warn_n,
     "current_exit": current,
     "client_cidr": cidr,
     "checks": items,
 }, ensure_ascii=False) + "\n"
 sys.stdout.buffer.write(payload.encode("utf-8"))
 PY
+    rm -f "${_json_results}"
 else
     [[ "$QUIET" -eq 0 ]] && echo "" && echo "===== 结果: ${PASS} 通过, ${FAIL} 失败, ${WARN} 警告 ====="
     if [[ "$DEEP" -eq 1 && "$QUIET" -eq 0 ]]; then

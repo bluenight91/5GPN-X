@@ -59,6 +59,8 @@ doctor="$(cat "${root}/scripts/doctor.sh")"
     || fail "doctor --json must write UTF-8 via stdout.buffer"
 [[ "${doctor}" == *'PYTHONIOENCODING=utf-8'* ]] \
     || fail "doctor --json must set PYTHONIOENCODING=utf-8"
+[[ "${doctor}" == *'_json_results'* || "${doctor}" == *'mktemp'* ]] \
+    || fail "doctor --json must pass RESULTS via temp file (not argv)"
 [[ "${doctor}" == *"dd_count=\"\$(grep -cE"* || "${doctor}" == *'dd_count="$(grep -cE'* ]] \
     || fail "doctor must count direct-domains with grep -cE"
 # Zero-match grep -c must not use `|| echo 0` (duplicates the 0 on stdout).

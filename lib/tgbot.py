@@ -608,19 +608,209 @@ def _strip_ansi(s):
     return _ANSI_RE.sub("", s or "")
 
 
-def run2(argv, timeout=120, inp=None):
+def run2(argv, timeout=120, inp=None, env=None, merge_stderr=True):
     """Run a command; return (ok, stripped_output)."""
     try:
-        p = subprocess.run(argv, input=inp, stdout=subprocess.PIPE,
-                           stderr=subprocess.STDOUT, text=True,
-                           encoding="utf-8", errors="replace", timeout=timeout)
-        return p.returncode == 0, _strip_ansi(p.stdout or "")
+        kwargs = dict(input=inp, stdout=subprocess.PIPE, text=True,
+                      encoding="utf-8", errors="replace", timeout=timeout)
+        if env is not None:
+            kwargs["env"] = env
+        if merge_stderr:
+            kwargs["stderr"] = subprocess.STDOUT
+        else:
+            kwargs["stderr"] = subprocess.PIPE
+        p = subprocess.run(argv, **kwargs)
+        out = p.stdout or ""
+        if not merge_stderr and p.stderr:
+            # Keep stderr available for callers that only want stdout parsed,
+            # but append a short marker when the command failed.
+            if p.returncode != 0 and not out.strip():
+                out = p.stderr
+        return p.returncode == 0, _strip_ansi(out)
     except subprocess.TimeoutExpired:
         return False, "执行超时（%ds）" % timeout
     except FileNotFoundError:
         return False, "命令不存在：%s" % argv[0]
     except Exception as e:  # pragma: no cover
         return False, "错误：%s" % e
+
+
+def _host_unit_active(unit):
+    for binary in ("/usr/bin/systemctl", "/bin/systemctl", "systemctl"):
+        try:
+            p = subprocess.run(
+                [binary, "is-active", unit],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                text=True, encoding="utf-8", errors="replace", timeout=5,
+            )
+            if (p.stdout or "").strip() in ("active", "activating"):
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _host_port_listen(port):
+    try:
+        p = subprocess.run(
+            ["bash", "-lc",
+             "ss -H -tln 2>/dev/null | grep -qE ':%s( |$)'" % int(port)],
+            timeout=5,
+        )
+        return p.returncode == 0
+    except Exception:
+        return False
+
+
+def _host_fwmark_ok():
+    try:
+        p = subprocess.run(
+            ["bash", "-lc",
+             "ip rule show 2>/dev/null | grep -q 'fwmark 0x1 lookup 100'"],
+            timeout=5,
+        )
+        return p.returncode == 0
+    except Exception:
+        return False
+
+
+def _host_pgw_exit_ok():
+    try:
+        p = subprocess.run(
+            ["bash", "-lc", "nft list table inet pgw_exit >/dev/null 2>&1"],
+            timeout=5,
+        )
+        return p.returncode == 0
+    except Exception:
+        return False
+
+
+def _reconcile_doctor_data(data):
+    """Fix classic false negatives when host probes disagree with doctor.sh."""
+    if not isinstance(data, dict):
+        return data, []
+    checks = list(data.get("checks") or [])
+    fixed = []
+
+    def bump(check_name, probe_ok, ok_detail="running (bot-verified)"):
+        nonlocal checks
+        for c in checks:
+            if c.get("check") == check_name and c.get("level") == "fail" and probe_ok:
+                c["level"] = "ok"
+                c["detail"] = ok_detail
+                fixed.append(check_name)
+                return
+
+    # If this Bot code is answering, 5gpn-tgbot is necessarily up.
+    bump("服务 5gpn-tgbot", True, "running (bot process alive)")
+    bump("服务 5gpn-api",
+         _host_unit_active("5gpn-api") or _host_port_listen(8444),
+         "running (bot-verified)")
+    cur = str(data.get("current_exit") or "")
+    if cur == "smart":
+        bump("服务 smart",
+             _host_unit_active("5gpn-mihomo@smart") or _host_port_listen(9090),
+             "running (bot-verified)")
+    bump("fwmark 规则", _host_fwmark_ok(), "present (bot-verified)")
+    bump("pgw_exit 表", _host_pgw_exit_ok(), "present (bot-verified)")
+
+    pass_n = sum(1 for c in checks if c.get("level") == "ok")
+    fail_n = sum(1 for c in checks if c.get("level") == "fail")
+    warn_n = sum(1 for c in checks if c.get("level") == "warn")
+    data["checks"] = checks
+    data["pass"] = pass_n
+    data["fail"] = fail_n
+    data["warn"] = warn_n
+    data["ok"] = fail_n == 0
+    return data, fixed
+
+
+def op_doctor():
+    """Compact FAIL/WARN summary for Telegram (full detail → 诊断报告)."""
+    doctor = DOCTOR if os.path.isfile(DOCTOR) else "/opt/5gpn/scripts/doctor.sh"
+    env = {
+        "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "HOME": os.environ.get("HOME") or "/root",
+        "BASE_DIR": "/opt/5gpn",
+        "CONF_DIR": "/opt/5gpn/etc",
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1",
+    }
+    ok, out = run2(["/bin/bash", doctor, "--json"], timeout=180,
+                   env=env, merge_stderr=False)
+    raw = (out or "").strip()
+    data = None
+    if raw:
+        # doctor --json prints a single JSON object; tolerate trailing noise.
+        for line in reversed(raw.splitlines()):
+            line = line.strip()
+            if line.startswith("{") and line.endswith("}"):
+                try:
+                    data = json.loads(line)
+                    break
+                except ValueError:
+                    continue
+        if data is None:
+            try:
+                data = json.loads(raw)
+            except ValueError:
+                data = None
+    if data is None:
+        body = html.escape(_strip_ansi(out)[-2500:] or "无输出")
+        head = "✅ <b>doctor 通过</b>" if ok else "❌ <b>doctor 发现问题</b>"
+        return "%s\n<pre>%s</pre>" % (head, body)
+
+    data, fixed = _reconcile_doctor_data(data)
+
+    fail_n = int(data.get("fail", 0) or 0)
+    warn_n = int(data.get("warn", 0) or 0)
+    pass_n = int(data.get("pass", 0) or 0)
+    cidr = data.get("client_cidr") or "?"
+    checks = data.get("checks") or []
+    fails = [c for c in checks if c.get("level") == "fail"]
+    warns = [c for c in checks if c.get("level") == "warn"]
+
+    if fail_n == 0:
+        head = "✅ <b>doctor 通过</b>"
+    else:
+        head = "❌ <b>doctor 发现问题</b>"
+    lines = [
+        head,
+        "失败 <code>%d</code> / 警告 <code>%d</code> / 通过 <code>%d</code>"
+        % (fail_n, warn_n, pass_n),
+        "客户端网段：<code>%s</code>" % html.escape(str(cidr)),
+        "出口：<code>%s</code>" % html.escape(str(data.get("current_exit") or "?")),
+    ]
+    if fails:
+        lines.append("")
+        lines.append("<b>失败</b>")
+        for c in fails[:12]:
+            lines.append("• %s：%s" % (
+                html.escape(str(c.get("check") or "?")),
+                html.escape(str(c.get("detail") or ""))))
+        if len(fails) > 12:
+            lines.append("… 另有 %d 项失败" % (len(fails) - 12))
+    if warns:
+        lines.append("")
+        lines.append("<b>警告</b>")
+        for c in warns[:8]:
+            lines.append("• %s：%s" % (
+                html.escape(str(c.get("check") or "?")),
+                html.escape(str(c.get("detail") or ""))))
+        if len(warns) > 8:
+            lines.append("… 另有 %d 项警告" % (len(warns) - 8))
+    if any("运行时一致性" in str(c.get("check") or "") for c in warns + fails):
+        lines.append("")
+        lines.append("💡 建议执行 <code>sudo 5gpn update</code> 完成运行时刷新")
+    if fixed:
+        lines.append("")
+        lines.append("ℹ️ 已自动纠正 Bot 环境下的误报：<code>%s</code>"
+                     % html.escape(", ".join(fixed)))
+    lines.append("")
+    lines.append("完整现场请用「诊断报告」下载文件。")
+    return "\n".join(lines)
 
 
 def _reason(out, n=4):
@@ -1457,79 +1647,6 @@ def op_restart_services():
         results.append(("✅" if ok else "❌") + " " + html.escape(label) + "（%s）" % html.escape(state))
     head = "❌ <b>部分服务重启异常</b>" if failed else "✅ <b>服务已重启</b>"
     return head + "\n" + "\n".join(results)
-
-
-def op_doctor():
-    """Compact FAIL/WARN summary for Telegram (full detail → 诊断报告)."""
-    # Call doctor.sh directly — do not go through 5gpn-ctl/install.sh. A legacy
-    # full-copy ctl bootstrap-clones on every call and yields false negatives.
-    doctor = DOCTOR if os.path.isfile(DOCTOR) else "/opt/5gpn/scripts/doctor.sh"
-    ok, out = run2(["bash", doctor, "--json"], timeout=180)
-    raw = (out or "").strip()
-    data = None
-    if raw:
-        # doctor --json prints a single JSON object; tolerate trailing noise.
-        for line in reversed(raw.splitlines()):
-            line = line.strip()
-            if line.startswith("{") and line.endswith("}"):
-                try:
-                    data = json.loads(line)
-                    break
-                except ValueError:
-                    continue
-        if data is None:
-            try:
-                data = json.loads(raw)
-            except ValueError:
-                data = None
-    if data is None:
-        body = html.escape(_strip_ansi(out)[-2500:] or "无输出")
-        head = "✅ <b>doctor 通过</b>" if ok else "❌ <b>doctor 发现问题</b>"
-        return "%s\n<pre>%s</pre>" % (head, body)
-
-    fail_n = int(data.get("fail", 0) or 0)
-    warn_n = int(data.get("warn", 0) or 0)
-    pass_n = int(data.get("pass", 0) or 0)
-    cidr = data.get("client_cidr") or "?"
-    checks = data.get("checks") or []
-    fails = [c for c in checks if c.get("level") == "fail"]
-    warns = [c for c in checks if c.get("level") == "warn"]
-
-    if fail_n == 0:
-        head = "✅ <b>doctor 通过</b>"
-    else:
-        head = "❌ <b>doctor 发现问题</b>"
-    lines = [
-        head,
-        "失败 <code>%d</code> / 警告 <code>%d</code> / 通过 <code>%d</code>"
-        % (fail_n, warn_n, pass_n),
-        "客户端网段：<code>%s</code>" % html.escape(str(cidr)),
-        "出口：<code>%s</code>" % html.escape(str(data.get("current_exit") or "?")),
-    ]
-    if fails:
-        lines.append("")
-        lines.append("<b>失败</b>")
-        for c in fails[:12]:
-            lines.append("• %s：%s" % (
-                html.escape(str(c.get("check") or "?")),
-                html.escape(str(c.get("detail") or ""))))
-        if len(fails) > 12:
-            lines.append("… 另有 %d 项失败" % (len(fails) - 12))
-    if warns:
-        lines.append("")
-        lines.append("<b>警告</b>")
-        for c in warns[:8]:
-            lines.append("• %s：%s" % (
-                html.escape(str(c.get("check") or "?")),
-                html.escape(str(c.get("detail") or ""))))
-        if len(warns) > 8:
-            lines.append("… 另有 %d 项警告" % (len(warns) - 8))
-    if any("运行时一致性" in str(c.get("check") or "") for c in warns + fails):
-        lines.append("")
-        lines.append("💡 建议执行 <code>sudo 5gpn update</code> 完成运行时刷新")
-    lines.append("")
-    lines.append("完整现场请用「诊断报告」下载文件。")
-    return "\n".join(lines)
 
 
 def op_report():

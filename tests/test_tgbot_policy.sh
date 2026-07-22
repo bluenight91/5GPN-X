@@ -118,6 +118,8 @@ PY
     || fail "op_doctor must use doctor --json for a compact Telegram summary"
 [[ "${bot_body}" == *'heal_mgmt_ctl'* ]] || fail "tgbot must heal legacy full-copy 5gpn-ctl"
 [[ "${bot_body}" == *'scripts/doctor.sh'* ]] || fail "op_doctor must call scripts/doctor.sh directly"
+[[ "${bot_body}" == *'_reconcile_doctor_data'* ]] || fail "op_doctor must reconcile classic false negatives"
+[[ "${bot_body}" == *'merge_stderr=False'* ]] || fail "op_doctor must keep doctor JSON free of stderr noise"
 [[ "${bot_body}" == *'menu:cidr'* ]] || fail "DoT menu must expose client CIDR management"
 [[ "${bot_body}" == *'cidr:set'* && "${bot_body}" == *'cidr:detect'* ]] \
     || fail "client CIDR menu must support set and detect"
