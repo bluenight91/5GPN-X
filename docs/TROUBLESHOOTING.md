@@ -67,7 +67,7 @@ sudo bash /opt/5gpn/scripts/health-notify.sh
 
 ## 需要把现场发给维护者
 
-在 Bot「运维 → 诊断报告」可直接查看全文并下载附件；或：
+在 Bot「运维 → 诊断报告」会收到脱敏 `.txt` 附件；或：
 
 ```bash
 sudo 5gpn report

@@ -1425,7 +1425,7 @@ def op_doctor():
 
 
 def op_report():
-    """Generate a redacted report; returns (ok, path_or_error, text_or_empty)."""
+    """Generate a redacted report; returns (ok, path_or_error)."""
     ok, out = run2(["bash", MGMT, "--report"], timeout=240)
     path = ""
     for line in (out or "").splitlines():
@@ -1435,34 +1435,29 @@ def op_report():
         elif "report written:" in line:
             path = line.split()[-1]
     if not (ok and path and os.path.isfile(path)):
-        return False, html.escape(_reason(out) or "report missing"), ""
-    try:
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
-            text = f.read()
-    except OSError as e:
-        return False, "报告已生成但无法读取：%s" % html.escape(str(e)), ""
-    return True, path, text
+        return False, html.escape(_reason(out) or "report missing")
+    return True, path
 
 
 def deliver_report(cb, chat_id):
-    """Show report inline (paginated) and attach the .txt document."""
-    ok, path_or_err, text = op_report()
+    """Send the redacted report as a Telegram document (no inline dump)."""
+    ok, path_or_err = op_report()
     if not ok:
         edit(cb, "❌ <b>报告生成失败</b>\n%s" % path_or_err, back_kb("menu:ops"))
         return
     path = path_or_err
+    if send_document(chat_id, path,
+                     caption="5GPN 脱敏诊断报告",
+                     filename=os.path.basename(path)):
+        edit(cb,
+             ("✅ <b>诊断报告已发送</b>（已脱敏）\n"
+              "请查看上方文件附件。"),
+             back_kb("menu:ops"))
+        return
     edit(cb,
-         ("✅ <b>诊断报告已生成</b>（已脱敏）\n"
-          "全文见下方消息；完整文件见附件。\n"
-          "<code>%s</code>" % html.escape(path)),
+         ("❌ <b>报告文件发送失败</b>\n"
+          "服务器本地文件：<code>%s</code>" % html.escape(path)),
          back_kb("menu:ops"))
-    # Paginated monospace messages so the report is readable in-chat.
-    send(chat_id, text or "(empty report)", mono=True)
-    if not send_document(chat_id, path,
-                         caption="5GPN 脱敏诊断报告",
-                         filename=os.path.basename(path)):
-        send(chat_id, "⚠️ 报告正文已发送，但附件上传失败；服务器文件：<code>%s</code>"
-             % html.escape(path))
 
 
 def edit_report_async(cb, chat_id):
