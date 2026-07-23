@@ -89,7 +89,11 @@ _session_next_prune = 0.0
 
 # CSP for the vendored metacubexd (same-origin app; frames allowed same-origin
 # so our console can embed it, everything else locked down).
-XD_CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+# metacubexd (Nuxt) boots via small inline scripts; script-src 'self' alone
+# blocks them and the UI white-screens with TypeError on undefined `app`.
+XD_CSP = ("default-src 'self'; "
+          "script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'; "
+          "style-src 'self' 'unsafe-inline'; "
           "img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; "
           "worker-src 'self' blob:; frame-ancestors 'self'; base-uri 'self'; form-action 'self'")
 
@@ -1423,6 +1427,11 @@ class Handler(BaseHTTPRequestHandler):
         if is_static or path.startswith("/api/mihomo/"):
             m = re.search(r"(?:^|;\s*)pgw_mihomo=([^;]*)", self.headers.get("Cookie", ""))
             if m and valid_mihomo_session(urllib.parse.unquote(m.group(1))):
+                return True
+        # PWA metadata is often fetched without cookies; it has no secrets.
+        if self.command == "GET" and is_static:
+            base = os.path.basename(path.split("?", 1)[0]).lower()
+            if base in ("manifest.webmanifest", "favicon.ico", "favicon.svg"):
                 return True
         if self.command != "GET":
             return False

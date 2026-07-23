@@ -341,6 +341,8 @@ class ProxyHandlerTests(unittest.TestCase):
         cls.static = tempfile.mkdtemp()
         with open(os.path.join(cls.static, "index.html"), "w", encoding="utf-8") as f:
             f.write("<html>xd</html>")
+        with open(os.path.join(cls.static, "manifest.webmanifest"), "w", encoding="utf-8") as f:
+            f.write('{"name":"xd"}')
         os.makedirs(os.path.join(cls.static, "_nuxt"))
         with open(os.path.join(cls.static, "_nuxt", "app.js"), "w", encoding="utf-8") as f:
             f.write("js")
@@ -608,7 +610,12 @@ class ProxyHandlerTests(unittest.TestCase):
         csp = hdrs.get("Content-Security-Policy") or ""
         self.assertIn("frame-ancestors 'self'", csp)
         self.assertIn("default-src 'self'", csp)
+        self.assertIn("unsafe-inline", csp)
+        self.assertIn("script-src", csp)
         self.assertEqual(hdrs.get("X-Frame-Options"), "SAMEORIGIN")
+        # PWA manifest must load without ?token= / cookie (Chrome fetches it bare).
+        status, _ = self._get("/mihomo/manifest.webmanifest")
+        self.assertEqual(status, 200)
 
     def test_rate_limit_429(self):
         self.api._rate.clear()
