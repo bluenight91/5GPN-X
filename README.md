@@ -272,7 +272,7 @@ sudo 5gpn smoke           # doctor --deep 别名
 sudo 5gpn report          # 脱敏报告写入 /tmp
 ```
 
-只读、约一分钟：服务状态、端口监听、DNS/DoT 应答（区分无应答与上游拒绝）、客户端网段、TUN 链路（`--deep` 含 `--interface pgw-smart` 出网探测）、fwmark 规则健康度、API 健康、证书有效期、WLOC 状态；配置了域名 DoH 上游时还会做一次 wire-format 直连探测。结尾附人工核对步骤。配置了 Telegram Bot 时，`5gpn-health.timer` 每 10 分钟复检并在失败/恢复时告警。
+只读、约一分钟：服务状态、端口监听、DNS/DoT 应答（区分无应答与上游拒绝）、客户端网段、TUN 链路（`--deep` 含 `--interface pgw-smart` 出网探测）、fwmark 规则健康度、API 健康、证书有效期、WLOC 状态；配置了域名 DoH 上游时还会做一次 wire-format 直连探测。结尾附人工核对步骤。配置了 Telegram Bot 或 webhook 时，`5gpn-health.timer` 每 20 分钟复检并在失败/恢复时告警。
 
 ## 配置参考
 

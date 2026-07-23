@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Changed
+
+- Hardening defaults: API now binds to `127.0.0.1` by default with empty CORS, mosdns cache/logging and China-DNS concurrency are reduced, and health checks run every 20 minutes.
+- Runtime units now include restart throttles and memory caps; mihomo Go memory limits scale with RAM.
+- Client CIDR handling supports comma-separated multi-CIDR lists across mosdns/firewall paths, with wide CIDRs gated by `FORCE_WIDE_CIDR=1`.
+- WebUI stores API tokens in `sessionStorage`, distinguishes lightweight config packages from runtime snapshots, and exposes doctor/report/snapshot operations.
+
+### Added
+
+- Optional health-change webhook via `/opt/5gpn/etc/webhook.env` (`WEBHOOK_URL=...`) in addition to Telegram alerts.
+
+### Fixed
+
+- `5gpn snapshot list` and `5gpn snapshot restore [id]` now dispatch to snapshot subcommands correctly.
+- Private SOCKS5 enablement now aborts if firewall synchronization fails.
+
 ### Fixed
 
 - **Bot doctor 在 #12 后仍误报**：`doctor --json` 改为经临时文件传 RESULTS（避免 argv/locale 丢检查项）；Bot 侧隔离 stderr、用干净 PATH 调用，并对 tgbot/api/smart/fwmark/pgw_exit 做主机侧复核纠错（Bot 进程存活即认定 tgbot 在跑）。
@@ -44,7 +60,7 @@
 - **`5gpn snapshot` / `5gpn rollback`**：配置快照与回滚（默认保留 5 份，目录 `/var/lib/5gpn/snapshots`）。
 - **更新前自动快照**：`5gpn update` 在改动运行时前创建 `pre-update` 快照；失败时尝试自动回滚。
 - **`5gpn set-client-cidr` / `detect-client-cidr`**：可配置私网客户端源网段（写入 `/etc/mosdns/.client_cidr`，默认仍为 `172.22.0.0/16`）；mosdns 与 managed 防火墙随之渲染。
-- **`5gpn-health.timer`**：每 10 分钟跑 doctor；在配置了 Telegram Bot 时，失败/恢复会推送告警。
+- **`5gpn-health.timer`**：每 20 分钟跑 doctor；在配置了 Telegram Bot 或 webhook 时，失败/恢复会推送告警。
 - Telegram Bot 运维菜单：自检、诊断报告、快照、回滚。
 - 文档：`docs/TROUBLESHOOTING.md` 排查手册。
 

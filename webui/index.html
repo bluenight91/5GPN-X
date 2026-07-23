@@ -382,14 +382,18 @@
     <section id="sec-settings" hidden>
       <div class="card">
         <h2>客户端网段</h2>
-        <p class="muted small" style="margin:0 0 8px">私网客户端来自此 IPv4 CIDR 时走劫持/透明代理策略（默认 <span class="mono">172.22.0.0/16</span>）。改后会刷新 mosdns；managed 防火墙会尝试同步白名单。</p>
+        <p class="muted small" style="margin:0 0 8px">私网客户端来自这些 IPv4 CIDR 时走劫持/透明代理策略（默认 <span class="mono">172.22.0.0/16</span>；多段用英文逗号分隔）。改后会刷新 mosdns；managed 防火墙会尝试同步白名单。</p>
         <div class="row">
-          <input id="cidr_val" type="text" placeholder="例如 172.22.0.0/16" autocomplete="off" style="flex:1" class="mono">
+          <input id="cidr_val" type="text" placeholder="例如 172.22.0.0/16,10.10.0.0/16" autocomplete="off" style="flex:1" class="mono">
           <button class="primary" onclick="saveClientCidr()">💾 保存</button>
           <button onclick="detectClientCidr()">🔎 探测</button>
           <button onclick="loadClientCidr()">🔄</button>
         </div>
         <div id="cidr_hint" class="muted small" style="margin-top:6px"></div>
+      </div>
+      <div class="card">
+        <h2>首次运行提示</h2>
+        <div class="muted small">建议依次确认：客户端网段 → 添加出口 → 运行 doctor 自检。API 默认只绑定 <span class="mono">127.0.0.1</span>；如需公网访问，请在服务器上显式配置 <span class="mono">API_BIND=0.0.0.0</span> 并限制防火墙来源。</div>
       </div>
       <div class="card">
         <h2>私网 SOCKS5</h2>
@@ -419,11 +423,23 @@
         </details>
       </div>
       <div class="card">
-        <h2>备份 / 恢复</h2>
+        <h2>运维自检 / 诊断报告 / 运行时快照</h2>
         <div class="row">
-          <button onclick="backupConfig()">⬇️ 下载备份</button>
+          <button onclick="runDoctor()">🩺 doctor 自检</button>
+          <button onclick="downloadReport()">🧾 下载诊断报告结果</button>
+          <button onclick="loadSnapshots()">📜 快照列表</button>
+          <button onclick="createSnapshot()">💾 创建快照</button>
+          <button class="danger" onclick="restoreSnapshot()">⏪ 恢复快照</button>
+        </div>
+        <div id="ops_result" class="mono small" style="margin-top:8px"></div>
+      </div>
+      <div class="card">
+        <h2>轻量配置包（非运行时快照）</h2>
+        <p class="muted small" style="margin:0 0 8px">配置包只包含可导入的轻量配置；运行时快照用于服务器本机回滚，见上方「运行时快照」。</p>
+        <div class="row">
+          <button onclick="backupConfig()">⬇️ 下载轻量配置包</button>
           <input type="file" id="restoreFile" accept=".tar.gz,.tgz,application/gzip" class="hide" onchange="restoreConfig(this)">
-          <button onclick="$('restoreFile').click()">⬆️ 恢复备份</button>
+          <button onclick="$('restoreFile').click()">⬆️ 恢复轻量配置包</button>
         </div>
       </div>
       <div class="card">
@@ -435,6 +451,7 @@
         <div class="row small">
           <span class="muted">API 地址</span><span class="mono grow" id="set_url">-</span>
           <button onclick="copyText(BASE)">复制</button>
+          <a class="btn" id="consoleLink" hidden href="/console">同源 /console</a>
         </div>
         <div class="row small">
           <span class="muted">API 令牌</span><span class="mono grow" id="set_tok">-</span>
@@ -586,7 +603,7 @@ async function connect() {
   try {
     await fetch(BASE+"/api/health").then(r=>r.json());
     await api("/api/status");
-    localStorage.setItem("pgw_url", BASE); localStorage.setItem("pgw_token", TOKEN);
+    localStorage.setItem("pgw_url", BASE); sessionStorage.setItem("pgw_token", TOKEN); localStorage.removeItem("pgw_token");
     $("login").classList.add("hide"); $("app").classList.remove("hide");
     $("brandDot").classList.add("on"); $("sideUrl").textContent = BASE;
     syncThemeSel();
@@ -595,7 +612,7 @@ async function connect() {
     $("conn").textContent = "连接失败：" + e.message + "（检查地址/端口/证书/令牌）";
   }
 }
-function clearCreds(){ localStorage.removeItem("pgw_url"); localStorage.removeItem("pgw_token");
+function clearCreds(){ localStorage.removeItem("pgw_url"); localStorage.removeItem("pgw_token"); sessionStorage.removeItem("pgw_token");
   if(liveTimer){clearInterval(liveTimer);liveTimer=null;}
   if(autoTimer){clearInterval(autoTimer);autoTimer=null;}
   const xf=$("xdframe"); if(xf) xf.removeAttribute("src");   // 下次登录用新令牌重新懒加载
@@ -1009,6 +1026,52 @@ async function proxyDomain(){
   if(ok) $("pd_domain").value="";
 }
 
+/* ---- operations: doctor / report / runtime snapshots ---- */
+function opsOut(text){ const box=$("ops_result"); if(box) box.textContent=text||""; }
+async function runDoctor(){
+  log("⏳ 运行 doctor 自检…"); busy(true);
+  try{
+    const r=await api("/api/doctor");
+    const d=r.data||{};
+    opsOut("doctor: fail="+(d.fail||0)+" warn="+(d.warn||0)+" ok="+(d.ok||0)+"\n\n"+(r.output||JSON.stringify(d,null,2)));
+    log((r.ok?"✅ ":"❌ ")+"doctor 自检完成");
+  }catch(e){ log("❌ doctor："+e.message); }
+  finally{ busy(false); }
+}
+async function downloadReport(){
+  log("⏳ 生成诊断报告…"); busy(true);
+  try{
+    const r=await api("/api/report");
+    const text="5GPN-X diagnostic report result\npath: "+(r.path||"")+"\n\n"+(r.output||"");
+    const url=URL.createObjectURL(new Blob([text],{type:"text/plain;charset=utf-8"}));
+    const a=document.createElement("a"); a.href=url; a.download="5gpn-report-result.txt"; a.click();
+    setTimeout(()=>URL.revokeObjectURL(url),2000);
+    opsOut(text); log((r.ok?"✅ ":"❌ ")+"诊断报告已生成"+(r.path?("："+r.path):""));
+  }catch(e){ log("❌ 诊断报告："+e.message); }
+  finally{ busy(false); }
+}
+async function loadSnapshots(){
+  log("⏳ 读取运行时快照…"); busy(true);
+  try{
+    const r=await api("/api/snapshots");
+    const rows=(r.snapshots||[]).map(s=>[s.id,s.label||"",s.created||"",s.size||""].filter(Boolean).join("  "));
+    opsOut((r.output||rows.join("\n")||"（没有快照）"));
+    log((r.ok?"✅ ":"❌ ")+"运行时快照列表已刷新");
+  }catch(e){ log("❌ 快照列表："+e.message); }
+  finally{ busy(false); }
+}
+async function createSnapshot(){
+  const label=(prompt("快照标签：","manual-webui")||"manual-webui").trim()||"manual-webui";
+  await mutate("/api/snapshots",{action:"create",label},"创建运行时快照 "+label, loadSnapshots);
+}
+async function restoreSnapshot(){
+  const id=(prompt("恢复哪个快照？输入 latest 或快照 ID：","latest")||"").trim();
+  if(!id) return;
+  if(!confirm("确认恢复运行时快照「"+id+"」？当前配置会被覆盖。")) return;
+  await mutate("/api/snapshots",{action:"restore",id},"恢复运行时快照 "+id, refreshState);
+  loadSnapshots();
+}
+
 /* ---- config backup / restore ---- */
 async function backupConfig(){
   log("⏳ 生成备份…"); busy(true);
@@ -1037,6 +1100,12 @@ let TOK_VIS=false;
 function fillSettings(){
   if($("set_url")) $("set_url").textContent = BASE||"-";
   if($("set_tok")) $("set_tok").textContent = TOK_VIS ? (TOKEN||"-") : (TOKEN ? TOKEN.slice(0,3)+"…（"+TOKEN.length+" 字符）" : "-");
+  const cl=$("consoleLink");
+  if(cl){
+    let same=false; try{ same=new URL(BASE).origin===location.origin; }catch(e){}
+    cl.hidden=!same;
+    cl.href=same?"/console":"#";
+  }
   syncThemeSel();
 }
 function revealTok(){ TOK_VIS=!TOK_VIS; const b=$("tokBtn"); if(b) b.textContent=TOK_VIS?"隐藏":"显示"; fillSettings(); }
@@ -1194,8 +1263,11 @@ async function aiApply(){
   if(ok){ AIPLAN=null; $("ai_plan").innerHTML=""; }
 }
 
-// restore saved creds
-(function(){ const u=localStorage.getItem("pgw_url"), t=localStorage.getItem("pgw_token");
+// restore saved URL and session-scoped token. Remove old localStorage tokens if upgrading.
+(function(){ const u=localStorage.getItem("pgw_url"), old=localStorage.getItem("pgw_token");
+  if(old && !sessionStorage.getItem("pgw_token")) sessionStorage.setItem("pgw_token", old);
+  if(old) localStorage.removeItem("pgw_token");
+  const t=sessionStorage.getItem("pgw_token");
   if(u) $("url").value=u; if(t) $("token").value=t; if(u&&t) connect(); })();
 </script>
 </body>

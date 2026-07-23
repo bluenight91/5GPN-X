@@ -357,11 +357,14 @@ Options:
   --smoke        Run the read-only post-deploy smoke check (alias of doctor --deep)
   --doctor       Structured health check (--json / --deep supported via scripts/doctor.sh)
   --report       Write a redacted diagnostic report under /tmp
-  --snapshot     Save a config snapshot (also done automatically before --update)
+  --snapshot [list|restore [id]|label]
+                 List snapshots, restore one, or save a config snapshot
+                 (also done automatically before --update)
   --rollback [id]
                  Restore the latest (or named) config snapshot
   --set-client-cidr <cidr>
-                 Set private-client source CIDR for mosdns hijack (default 172.22.0.0/16)
+                 Set private-client source CIDR(s) for mosdns hijack
+                 (default 172.22.0.0/16; comma-separated multi-CIDR supported)
   --detect-client-cidr
                  Detect a private-client CIDR from local interfaces and apply it
   --update-rules Update GFWList/ChinaList and reload mosdns
@@ -456,6 +459,14 @@ Environment variables (for non-interactive use):
   EMAIL          Email for Let's Encrypt
   TG_BOT_TOKEN   Telegram bot token; enables the control bot when set
   TG_ADMIN_IDS   Comma-separated Telegram numeric IDs allowed to operate the bot
+  CLIENT_CIDR    Initial private-client CIDR(s), comma-separated
+  FORCE_WIDE_CIDR=1
+                 Allow/confirm wide client CIDR prefixes below /16
+  API_BIND       API listen address (default 127.0.0.1; public bind needs 0.0.0.0 + firewall)
+  API_ALLOW_ORIGIN
+                 CORS origin (default empty/same-origin; set * explicitly for wildcard)
+  API_TOKEN/API_PORT
+                 API token/listen port for --setup-api or first install
   MIHOMO_VERSION Override the locked mihomo version (default: ${MIHOMO_VERSION_DEFAULT})
   FIREWALL_MODE  preserve (default) | auto | managed.
                  preserve keeps the existing host firewall untouched and only
@@ -521,7 +532,7 @@ detect_memory_profile() {
         warn "Low-memory mode ENABLED (RAM: ${MEM_TOTAL_MB}MB). Reducing caches, sysctl, build jobs; iOS server is on-demand; swap will be checked."
     else
         MAKE_JOBS="$(nproc 2>/dev/null || echo 2)"
-        PACKET_CACHE_SIZE=500000
+        PACKET_CACHE_SIZE=100000
         info "Standard memory mode (RAM: ${MEM_TOTAL_MB}MB)."
     fi
 }
@@ -1051,6 +1062,8 @@ PYEOF
 [Unit]
 Description=sniproxy (TCP SNI transparent proxy)
 After=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -1060,6 +1073,7 @@ Restart=on-failure
 RestartSec=5
 User=root
 LimitNOFILE=65535
+MemoryMax=256M
 
 [Install]
 WantedBy=multi-user.target
@@ -1098,13 +1112,15 @@ Description=5GPN-X iOS WhatsApp no-SNI shim
 After=network-online.target sniproxy.service
 Wants=network-online.target
 Requires=sniproxy.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple
 EnvironmentFile=${CONF_DIR}/wa-shim.env
 ExecStart=/usr/bin/python3 ${BASE_DIR}/bin/wa-shim.py
-Restart=always
-RestartSec=2
+Restart=on-failure
+RestartSec=5
 User=${EXIT_USER}
 NoNewPrivileges=true
 PrivateTmp=true
@@ -1113,6 +1129,7 @@ ProtectHome=true
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 LimitNOFILE=65535
+MemoryMax=128M
 
 [Install]
 WantedBy=multi-user.target
@@ -1244,6 +1261,8 @@ install_quic_proxy() {
 [Unit]
 Description=quic-proxy (UDP/QUIC SNI transparent proxy)
 After=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -1254,6 +1273,7 @@ RestartSec=5
 User=pxout
 LimitNOFILE=65535
 AmbientCapabilities=CAP_NET_BIND_SERVICE
+MemoryMax=256M
 
 [Install]
 WantedBy=multi-user.target
@@ -1348,7 +1368,9 @@ enable_client_socks() {
     set -a; source "${CLIENT_SOCKS_ENV}"; set +a
     : > "${CLIENT_SOCKS_ENABLED}"
     chmod 644 "${CLIENT_SOCKS_ENABLED}"
-    declare -F firewall_socks_sync >/dev/null 2>&1 && firewall_socks_sync || true
+    if declare -F firewall_socks_sync >/dev/null 2>&1; then
+        firewall_socks_sync || { rm -f "${CLIENT_SOCKS_ENABLED}"; err "SOCKS firewall sync failed; SOCKS5 not enabled"; return 1; }
+    fi
     systemctl enable --now 5gpn-client-socks.service
     systemctl restart 5gpn-client-socks.service
     local host; host="$(client_socks_host_ip)"
@@ -1434,16 +1456,20 @@ install_mosdns() {
     echo "$REMOTE_DNS" > /etc/mosdns/.overseas_public_dns
     echo "$REMOTE_DNS" > /etc/mosdns/.sniproxy_dns
     echo "${PGW_ECS:-139.226.48.0/24}" > /etc/mosdns/.ecs
-    echo "${PACKET_CACHE_SIZE:-500000}" > /etc/mosdns/.cache_size
+    echo "${PACKET_CACHE_SIZE:-100000}" > /etc/mosdns/.cache_size
     echo "${CLIENT_CIDR:-172.22.0.0/16}" > /etc/mosdns/.client_cidr
     touch /etc/mosdns/gfwlist.txt /etc/mosdns/chinalist.txt /etc/mosdns/gfwlist-extra-local.txt /etc/mosdns/wloc.txt /etc/mosdns/direct-domains.txt
     chown -R mosdns:mosdns /etc/mosdns
     chmod 0750 /etc/mosdns /etc/mosdns/certs
-    cat > /etc/systemd/system/mosdns.service <<'EOF'
+    local mosdns_memory_max="512M"
+    [[ "${LOWMEM:-0}" == "1" ]] && mosdns_memory_max="256M"
+    cat > /etc/systemd/system/mosdns.service <<EOF
 [Unit]
 Description=mosdns smart DNS and DNS-over-TLS
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -1460,6 +1486,7 @@ ProtectHome=true
 ProtectSystem=strict
 ReadWritePaths=/etc/mosdns
 LimitNOFILE=65535
+MemoryMax=${mosdns_memory_max}
 
 [Install]
 WantedBy=multi-user.target
@@ -1777,7 +1804,22 @@ ensure_mihomo() {
     rm -rf "$tmp"
     ok "mihomo ${ver} installed: ${MIHOMO_BIN}"
 }
+resolve_mihomo_gomemlimit() {
+    local mem_mb="${MEM_TOTAL_MB:-}"
+    if [[ -z "$mem_mb" || ! "$mem_mb" =~ ^[0-9]+$ ]]; then
+        mem_mb="$(awk '/MemTotal/ { printf "%d", $2 / 1024 }' /proc/meminfo 2>/dev/null || echo 0)"
+    fi
+    if [[ "${LOWMEM:-0}" == "1" ]]; then
+        echo "64MiB"
+    elif [[ "${mem_mb:-0}" -le 2048 ]]; then
+        echo "128MiB"
+    else
+        echo "256MiB"
+    fi
+}
 install_mihomo_unit() {
+    local gomemlimit
+    gomemlimit="$(resolve_mihomo_gomemlimit)"
     cat > /etc/systemd/system/5gpn-mihomo@.service <<EOF
 [Unit]
 Description=Proxy Gateway mihomo exit (%i)
@@ -1797,7 +1839,7 @@ User=root
 LimitNOFILE=65535
 Environment=SKIP_SYSTEM_IPV6_CHECK=1
 Environment=GOGC=50
-Environment=GOMEMLIMIT=128MiB
+Environment=GOMEMLIMIT=${gomemlimit}
 
 [Install]
 WantedBy=multi-user.target
@@ -1923,9 +1965,8 @@ check_exits() {
 }
 exit_wait_device() {
     local iface i; iface="$(exit_iface "$1")"
-    # Low-RAM boxes take >10s to start mihomo (memconservative geodata load);
-    # 5s was too short and caused false "failed to start" rollbacks.
-    for i in $(seq 1 300); do
+    # Low-RAM boxes can take close to two minutes to start mihomo/geodata.
+    for i in $(seq 1 1200); do
         ip link show up "$iface" >/dev/null 2>&1 && return 0
         sleep 0.1
     done
@@ -2975,12 +3016,21 @@ install_metacubexd() {
 setup_api() {
     local token="${API_TOKEN:-}"
     local port="${API_PORT:-${API_PORT_DEFAULT}}"
+    local bind="${API_BIND:-}"
+    local allow_origin="${API_ALLOW_ORIGIN:-}"
     port="$(printf '%s' "$port" | tr -dc '0-9')"; [[ -n "$port" ]] || port="${API_PORT_DEFAULT}"
 
-    # Reuse the existing token on re-runs.
+    # Reuse existing API settings on re-runs; explicit environment wins.
     if [[ -z "$token" && -f "${CONF_DIR}/api.env" ]]; then
         token="$(sed -n 's/^API_TOKEN=//p' "${CONF_DIR}/api.env" | head -n1)"
     fi
+    if [[ -z "$bind" && -f "${CONF_DIR}/api.env" ]]; then
+        bind="$(sed -n 's/^API_BIND=//p' "${CONF_DIR}/api.env" | head -n1)"
+    fi
+    if [[ -z "$allow_origin" && -f "${CONF_DIR}/api.env" ]]; then
+        allow_origin="$(sed -n 's/^API_ALLOW_ORIGIN=//p' "${CONF_DIR}/api.env" | head -n1)"
+    fi
+    bind="${bind:-127.0.0.1}"
     if [[ -z "$token" ]]; then
         token="$(openssl rand -hex 24 2>/dev/null || head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
     fi
@@ -3021,10 +3071,10 @@ setup_api() {
     cat > "${CONF_DIR}/api.env" <<EOF
 API_TOKEN=${token}
 API_PORT=${port}
-API_BIND=0.0.0.0
+API_BIND=${bind}
 API_TLS_CERT=${cert}
 API_TLS_KEY=${key}
-API_ALLOW_ORIGIN=*
+API_ALLOW_ORIGIN=${allow_origin}
 MGMT=${BASE_DIR}/bin/5gpn-ctl
 CONF_DIR=${CONF_DIR}
 EOF
@@ -3055,13 +3105,19 @@ EOF
 
     echo ""
     ok "HTTP 控制 API 已启用。"
+    echo "  绑定地址:             ${bind}"
     echo "  地址 (API Base URL): https://${domain:-<你的域名>}:${port}"
+    echo "  本机 WebUI/API:       https://127.0.0.1:${port}/"
     echo "  令牌 (API_TOKEN):    ${token}"
     echo "  健康检查:            curl -k https://${domain:-<域名>}:${port}/api/health"
-    echo "  网页面板:            打开仓库里的 webui/index.html，填入上面的地址和令牌即可。"
+    echo "  网页面板:            API 服务会同源提供 WebUI；也可打开仓库里的 webui/index.html。"
     echo "  令牌存放:            ${CONF_DIR}/api.env (chmod 600)"
     warn "API 可控制出口/分流，务必保管好令牌；只用 HTTPS 访问。"
-    warn "默认不接管主机防火墙：请自行放行 TCP ${port}（或重装时 FIREWALL_MODE=auto 增量放行）。"
+    if [[ "$bind" == "0.0.0.0" || "$bind" == "::" ]]; then
+        warn "API 已公开绑定；请确认主机防火墙只向可信来源放行 TCP ${port}，详见 docs/TROUBLESHOOTING.md。"
+    else
+        warn "API 默认仅绑定本机。公网访问需显式 API_BIND=0.0.0.0 并配置防火墙，详见 docs/TROUBLESHOOTING.md。"
+    fi
 }
 
 # Opt-in API + web panel during install (API_SETUP=1 / API_TOKEN set / prompt).
@@ -3081,7 +3137,7 @@ maybe_setup_api() {
     fi
 }
 apply_lowmem_go_limits() {
-    local d
+    local d mihomo_limit
     for svc in quic-proxy mosdns; do
         d="/etc/systemd/system/${svc}.service.d"
         if [[ "${LOWMEM:-0}" == "1" ]]; then
@@ -3094,7 +3150,26 @@ EOF
             rm -f "$d/lowmem.conf" 2>/dev/null || true
         fi
     done
+    mihomo_limit="$(resolve_mihomo_gomemlimit)"
+    d="/etc/systemd/system/5gpn-mihomo@.service.d"
+    mkdir -p "$d"
+    cat > "$d/gomemlimit.conf" <<EOF
+[Service]
+Environment=GOGC=50 GOMEMLIMIT=${mihomo_limit}
+EOF
     systemctl daemon-reload
+}
+clamp_mosdns_cache_size() {
+    local target current
+    target=100000
+    [[ "${LOWMEM:-0}" == "1" ]] && target=20000
+    mkdir -p /etc/mosdns
+    current="$(cat /etc/mosdns/.cache_size 2>/dev/null || true)"
+    if [[ ! "$current" =~ ^[0-9]+$ || -z "$current" ]]; then
+        echo "$target" > /etc/mosdns/.cache_size
+    elif [[ "$current" -gt "$target" ]]; then
+        echo "$target" > /etc/mosdns/.cache_size
+    fi
 }
 start_services() {
     info "Starting services..."
@@ -3161,7 +3236,7 @@ EOF
     done
     cat > /etc/systemd/system/5gpn-health.service <<EOF
 [Unit]
-Description=5GPN-X periodic health check (Telegram alert on failure)
+Description=5GPN-X periodic health check (alert on state change)
 
 [Service]
 Type=oneshot
@@ -3169,11 +3244,11 @@ ExecStart=/bin/bash ${BASE_DIR}/scripts/health-notify.sh
 EOF
     cat > /etc/systemd/system/5gpn-health.timer <<'EOF'
 [Unit]
-Description=Run 5GPN-X health check every 10 minutes
+Description=Run 5GPN-X health check every 20 minutes
 
 [Timer]
 OnBootSec=3min
-OnUnitActiveSec=10min
+OnUnitActiveSec=20min
 Persistent=true
 
 [Install]
@@ -3184,7 +3259,7 @@ EOF
     systemctl enable --now 5gpn-health.timer 2>/dev/null || true
     install_certbot_firewall_hooks
     systemctl enable --now certbot.timer 2>/dev/null || true
-    ok "Schedules configured (rules: weekly, health: 10m, cert: auto)"
+    ok "Schedules configured (rules: weekly, health: 20m, cert: auto)"
 }
 show_status() {
     echo "=========================================="
@@ -3406,6 +3481,7 @@ do_update() {
     install_mosdns_binary
     cp "${LIB_DIR}/mosdns.yaml.template" /etc/mosdns/config.yaml.template
     install -m 0755 "${LIB_DIR}/update-rules.sh" /usr/local/bin/update-mosdns-rules.sh
+    clamp_mosdns_cache_size
     touch /etc/mosdns/direct-domains.txt 2>/dev/null || true
     [[ -f /etc/mosdns/.client_cidr ]] || echo "${CLIENT_CIDR:-172.22.0.0/16}" > /etc/mosdns/.client_cidr
     setup_exit_switching
@@ -3702,14 +3778,28 @@ PY
 }
 set_client_cidr() {
     local cidr="${1:-}"
-    [[ -n "$cidr" ]] || { err "Usage: $0 --set-client-cidr <a.b.c.0/16>"; exit 1; }
-    python3 - "$cidr" <<'PY' || { err "无效 CIDR（需 IPv4/8..30，如 172.22.0.0/16）"; exit 1; }
-import ipaddress, sys
-net = ipaddress.ip_network(sys.argv[1].strip(), strict=False)
-assert net.version == 4 and 8 <= net.prefixlen <= 30
-print(str(net))
+    [[ -n "$cidr" ]] || { err "Usage: $0 --set-client-cidr <a.b.c.0/16[,10.0.0.0/16...]>"; exit 1; }
+    if ! cidr="$(FORCE_WIDE_CIDR="${FORCE_WIDE_CIDR:-0}" python3 - "$cidr" <<'PY'
+import ipaddress, os, sys
+raw = sys.argv[1].replace(";", ",").replace(" ", ",")
+parts = [p.strip() for p in raw.split(",") if p.strip()]
+if not parts:
+    raise SystemExit(1)
+force = os.environ.get("FORCE_WIDE_CIDR", "0") == "1"
+out = []
+for p in parts:
+    net = ipaddress.ip_network(p, strict=False)
+    if net.version != 4 or not (8 <= net.prefixlen <= 30):
+        raise SystemExit(1)
+    if net.prefixlen < 16 and not force:
+        raise SystemExit(1)
+    out.append(str(net))
+print(",".join(out))
 PY
-    cidr="$(python3 -c 'import ipaddress,sys; print(ipaddress.ip_network(sys.argv[1].strip(), strict=False))' "$cidr")"
+)"; then
+        err "无效 CIDR（IPv4 /16../30，多段用逗号；宽网段需 FORCE_WIDE_CIDR=1）"; exit 1
+    fi
+    [[ -n "$cidr" ]] || { err "无效 CIDR"; exit 1; }
     mkdir -p /etc/mosdns "$CONF_DIR"
     echo "$cidr" > /etc/mosdns/.client_cidr
     echo "$cidr" > "${CONF_DIR}/.client_cidr"
@@ -3744,6 +3834,108 @@ PY
     declare -F firewall_socks_sync >/dev/null 2>&1 && firewall_socks_sync || true
     ok "客户端网段已设置为 ${cidr}"
 }
+confirm_client_cidr_choice() {
+    # Interactive confirm for a guessed/env CIDR. Wide nets (/8../15) need FORCE_WIDE_CIDR=1
+    # or an explicit typed confirmation of the same CIDR.
+    local cidr="$1" ans=""
+    local plen
+    plen="$(python3 -c 'import ipaddress,sys; print(ipaddress.ip_network(sys.argv[1], strict=False).prefixlen)' "$cidr" 2>/dev/null || echo 0)"
+    if [[ "${plen:-0}" -lt 16 ]]; then
+        if [[ "${FORCE_WIDE_CIDR:-0}" == "1" ]]; then
+            warn "宽网段 ${cidr}（</16）已由 FORCE_WIDE_CIDR=1 放行"
+        elif [[ -t 0 ]]; then
+            warn "检测到宽网段 ${cidr}（前缀 < /16）。误配会扩大劫持/放行面。"
+            read -r -p "确认使用该宽网段？请再次输入完整 CIDR 以确认: " ans || true
+            [[ "$ans" == "$cidr" ]] || { err "未确认宽网段；请改用 /16../30，或 FORCE_WIDE_CIDR=1"; return 1; }
+        else
+            err "宽网段 ${cidr}（</16）在非交互安装需 FORCE_WIDE_CIDR=1 显式确认"
+            return 1
+        fi
+    fi
+    if [[ -t 0 && -z "${CLIENT_CIDR_CONFIRMED:-}" ]]; then
+        echo ""
+        info "客户端网段候选: ${cidr}"
+        read -r -p "使用该网段？[Y/n] 或输入其他 CIDR: " ans || true
+        ans="${ans## }"; ans="${ans%% }"
+        if [[ -z "$ans" || "$ans" =~ ^[Yy]$ ]]; then
+            :
+        elif [[ "$ans" =~ ^[Nn]$ ]]; then
+            read -r -p "请输入客户端 CIDR (IPv4 /16../30，宽网段需再确认): " ans || true
+            [[ -n "$ans" ]] || { err "未提供客户端网段"; return 1; }
+            cidr="$ans"
+            CLIENT_CIDR_CONFIRMED=1 confirm_client_cidr_choice "$cidr" || return 1
+            return 0
+        else
+            cidr="$ans"
+            CLIENT_CIDR_CONFIRMED=1 confirm_client_cidr_choice "$cidr" || return 1
+            return 0
+        fi
+    fi
+    export CLIENT_CIDR="$cidr"
+    set_client_cidr "$cidr"
+}
+
+prompt_client_cidr_install() {
+    # First-install CIDR: interactive detect+confirm; non-interactive uses CLIENT_CIDR env.
+    if [[ -n "${CLIENT_CIDR:-}" ]]; then
+        info "使用预置 CLIENT_CIDR=${CLIENT_CIDR}"
+        confirm_client_cidr_choice "${CLIENT_CIDR}" || exit 1
+        return 0
+    fi
+    if [[ -t 0 ]]; then
+        local guessed
+        guessed="$(python3 <<'PY'
+import ipaddress, subprocess, re
+out = subprocess.check_output(["ip", "-o", "-4", "addr", "show"], text=True, stderr=subprocess.DEVNULL)
+default_if = ""
+try:
+    rt = subprocess.check_output(["ip", "route", "show", "default"], text=True, stderr=subprocess.DEVNULL)
+    m = re.search(r"dev\s+(\S+)", rt)
+    if m:
+        default_if = m.group(1)
+except Exception:
+    pass
+cands = []
+for line in out.splitlines():
+    parts = line.split()
+    if len(parts) < 4:
+        continue
+    iface, cidr = parts[1], parts[3]
+    try:
+        net = ipaddress.ip_network(cidr, strict=False)
+    except ValueError:
+        continue
+    if not net.is_private or net.is_loopback or net.prefixlen > 30:
+        continue
+    score = 0
+    if iface != default_if:
+        score += 10
+    if net.prefixlen == 16:
+        score += 3
+    elif 16 < net.prefixlen <= 24:
+        score += 2
+    if ipaddress.ip_address(str(net.network_address)) in ipaddress.ip_network("172.16.0.0/12"):
+        score += 5
+    cands.append((score, str(net), iface))
+cands.sort(reverse=True)
+if cands:
+    print(cands[0][1])
+PY
+)" || true
+        if [[ -n "$guessed" ]]; then
+            confirm_client_cidr_choice "$guessed" || exit 1
+        else
+            local ans=""
+            read -r -p "未能自动探测；请输入客户端 CIDR [172.22.0.0/16]: " ans || true
+            ans="${ans:-172.22.0.0/16}"
+            confirm_client_cidr_choice "$ans" || exit 1
+        fi
+    else
+        export CLIENT_CIDR="${CLIENT_CIDR:-172.22.0.0/16}"
+        confirm_client_cidr_choice "${CLIENT_CIDR}" || exit 1
+    fi
+}
+
 detect_client_cidr() {
     # Prefer RFC1918 addresses on non-default-route interfaces (typical NPN NIC).
     local guessed
@@ -3791,8 +3983,7 @@ PY
         err "未能从本机网卡识别私网客户端段；请手动: $0 --set-client-cidr 172.22.0.0/16"
         exit 1
     fi
-    info "检测到客户端网段候选: ${guessed}"
-    set_client_cidr "$guessed"
+    confirm_client_cidr_choice "$guessed" || exit 1
 }
 set_custom_dns() {
     local remote_dns local_dns backup_dir sniproxy_backup=""
@@ -3915,6 +4106,7 @@ main_install() {
     install_wloc
     install_quic_proxy
     install_client_socks_binary
+    prompt_client_cidr_install
     install_mosdns
     init_rules
     system_tuning
@@ -3930,7 +4122,7 @@ main_install() {
     record_deployed_revision
     echo ""
     echo "=========================================="
-    echo "         部署完成！"
+    echo "         部署完成 — 下一步清单"
     echo "=========================================="
     echo ""
     echo "版本:     $(deployed_revision_line)"
@@ -3938,28 +4130,26 @@ main_install() {
     echo "TCP 代理:  ${PUBLIC_IP}:80, ${PUBLIC_IP}:443 (sniproxy)"
     echo "UDP 代理:  ${PUBLIC_IP}:443 (quic-proxy)"
     echo "DNS 查询:  ${PUBLIC_IP}:53"
+    echo "客户端网段: $(cat /etc/mosdns/.client_cidr 2>/dev/null || echo "${CLIENT_CIDR:-172.22.0.0/16}")"
     echo "iOS 描述文件: http://${DOMAIN}:${IOS_PROFILE_PORT}/ios-dot.mobileconfig"
     echo ""
-    echo "客户端配置示例 (Android 私人 DNS):"
-    echo "  ${DOMAIN}"
+    echo "推荐收尾（按需）:"
+    echo "  5gpn doctor                     # 结构化自检"
+    echo "  5gpn detect-client-cidr         # 再确认客户端网段"
+    echo "  5gpn setup-api                  # HTTP 控制 API + WebUI（默认仅本机绑定）"
+    echo "  5gpn setup-tgbot                # Telegram 控制 Bot"
+    echo "  5gpn add-exit <name> <wg|uri>   # 添加出口后可 set-exit / smart"
+    echo ""
+    echo "排查手册: docs/TROUBLESHOOTING.md"
+    echo "  （规则组名 rules.conf → policy-map → mihomo 最终出口）"
+    echo ""
+    echo "客户端配置示例 (Android 私人 DNS): ${DOMAIN}"
     echo "iOS 扫码安装:"
     if [[ -f "${WWW_DIR}/ios-dot.qr.txt" ]]; then
         cat "${WWW_DIR}/ios-dot.qr.txt"
     fi
     echo ""
-    echo "出口 (Exit): local (直出，当前服务器公网 IP)"
-    echo ""
-    echo "管理命令:"
-    echo "  $0 --status"
-    echo "  $0 --update-rules"
-    echo "  $0 --renew-cert"
-    echo "  $0 -ios"
-    echo "  $0 --list-exits"
-    echo "  $0 --add-exit <name> <wg.conf|proxy-uri>"
-    echo "  $0 --rename-exit <old> <new>"
-    echo "  $0 --set-exit <name|local|smart>"
-    echo "  $0 --setup-tgbot                 # 配置/启用 Telegram 控制 Bot"
-    echo "  $0 --uninstall"
+    echo "其他常用: 5gpn status | update-rules | renew-cert | list-exits | uninstall"
     echo "=========================================="
 }
 case "${1:-}" in
@@ -3986,7 +4176,11 @@ case "${1:-}" in
         ;;
     --snapshot)
         check_root
-        bash "${SCRIPT_DIR}/scripts/snapshot.sh" create "${2:-manual}"
+        case "${2:-}" in
+            list) bash "${SCRIPT_DIR}/scripts/snapshot.sh" list ;;
+            restore) bash "${SCRIPT_DIR}/scripts/snapshot.sh" restore "${3:-latest}" ;;
+            *) bash "${SCRIPT_DIR}/scripts/snapshot.sh" create "${2:-manual}" ;;
+        esac
         ;;
     --rollback)
         check_root

@@ -12,8 +12,19 @@ has() { [[ "$1" == *"$2"* ]] || fail "$3"; }
 
 has "$template" 'client_ip __CLIENT_CIDR__' \
     "mosdns must identify the gateway client network by source address (CIDR placeholder)"
+has "$template" 'level: warn' "mosdns log level must default to warn"
+has "$template" 'concurrent: __LOCAL_CONCURRENT__' \
+    "China DNS forward concurrency must be rendered from cache/memory policy"
 has "$rules" '__CLIENT_CIDR__' \
     "update-rules must substitute the configured client CIDR into mosdns"
+has "$rules" 'client_match_cidrs' \
+    "update-rules must expand comma-separated client CIDRs for mosdns"
+has "$rules" 'FORCE_WIDE_CIDR' \
+    "update-rules must gate wide client CIDRs"
+has "$rules" 'echo 100000' \
+    "update-rules default cache fallback must be 100000"
+has "$rules" 'local_concurrent=2' \
+    "update-rules must reduce China DNS concurrency for low cache"
 has "$rules" '.client_cidr' \
     "update-rules must read /etc/mosdns/.client_cidr"
 has "$template" 'exec: goto private_client' \

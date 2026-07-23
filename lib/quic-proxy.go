@@ -95,7 +95,7 @@ func main() {
 			bc := sess.backendConn
 			sess.mu.Unlock()
 			if bc != nil {
-				if _, err := bc.Write(buf[:n]); err != nil {
+				if _, err := bc.Write(buf[:n]); err != nil && *debug {
 					log.Printf("[%s] Write to backend error: %v", key, err)
 				}
 			}
@@ -121,19 +121,25 @@ func (m *SessionManager) handleNewSession(data []byte, clientAddr *net.UDPAddr) 
 	// Resolve SNI
 	ips, err := net.LookupIP(sni)
 	if err != nil || len(ips) == 0 {
-		log.Printf("[%s] DNS lookup failed for '%s': %v", key, sni, err)
+		if *debug {
+			log.Printf("[%s] DNS lookup failed for '%s': %v", key, sni, err)
+		}
 		return
 	}
 	backendIP, ok := selectBackendIPv4(ips)
 	if !ok {
-		log.Printf("[%s] DNS lookup for '%s' returned no IPv4 address", key, sni)
+		if *debug {
+			log.Printf("[%s] DNS lookup for '%s' returned no IPv4 address", key, sni)
+		}
 		return
 	}
 
 	backendAddr := &net.UDPAddr{IP: backendIP, Port: 443}
 	bc, err := net.DialUDP("udp", nil, backendAddr)
 	if err != nil {
-		log.Printf("[%s] DialUDP to %s error: %v", key, backendAddr, err)
+		if *debug {
+			log.Printf("[%s] DialUDP to %s error: %v", key, backendAddr, err)
+		}
 		return
 	}
 
@@ -153,7 +159,7 @@ func (m *SessionManager) handleNewSession(data []byte, clientAddr *net.UDPAddr) 
 		ebc := existing.backendConn
 		existing.mu.Unlock()
 		if ebc != nil {
-			if _, err := ebc.Write(data); err != nil {
+			if _, err := ebc.Write(data); err != nil && *debug {
 				log.Printf("[%s] Write to backend error: %v", key, err)
 			}
 		}
@@ -163,7 +169,9 @@ func (m *SessionManager) handleNewSession(data []byte, clientAddr *net.UDPAddr) 
 	m.mu.Unlock()
 
 	if _, err := bc.Write(data); err != nil {
-		log.Printf("[%s] First packet forward error: %v", key, err)
+		if *debug {
+			log.Printf("[%s] First packet forward error: %v", key, err)
+		}
 		m.removeSession(key)
 		return
 	}
@@ -198,7 +206,9 @@ func (m *SessionManager) relayBackendToClient(sess *Session, key string) {
 		sess.lastActivity = time.Now()
 		sess.mu.Unlock()
 		if _, err := m.listener.WriteToUDP(buf[:n], sess.clientAddr); err != nil {
-			log.Printf("[%s] WriteToUDP error: %v", key, err)
+			if *debug {
+				log.Printf("[%s] WriteToUDP error: %v", key, err)
+			}
 			m.removeSession(key)
 			return
 		}

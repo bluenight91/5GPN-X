@@ -37,8 +37,10 @@ rules="$(cat "${root}/lib/update-rules.sh")"
 [[ "${rules}" == *'.client_cidr'* ]] || fail "update-rules must read .client_cidr"
 
 [[ "${host}" == *'__CLIENT_CIDR__'* ]] || fail "nft managed firewall must use __CLIENT_CIDR__ placeholder"
-[[ "${host}" == *'client_cidr="$(cat /etc/mosdns/.client_cidr'* ]] \
-    || fail "iptables managed firewall must read .client_cidr"
+[[ "${host}" == *'client_cidr_list()'* && "${host}" == *'for client_cidr in $(client_cidr_list)'* ]] \
+    || fail "iptables managed firewall must normalize and loop .client_cidr values"
+[[ "${host}" == *'client_cidr_nft_expr()'* && "${host}" == *'{ ${list// /, } }'* ]] \
+    || fail "nft firewall must render comma-separated client CIDRs as a set"
 
 snap="$(cat "${root}/scripts/snapshot.sh")"
 [[ "${snap}" == *'/var/lib/5gpn/snapshots'* ]] || fail "snapshots live under /var/lib/5gpn/snapshots"
@@ -51,6 +53,8 @@ report="$(cat "${root}/scripts/report.sh")"
 
 notify="$(cat "${root}/scripts/health-notify.sh")"
 [[ "${notify}" == *'tgbot.env'* ]] || fail "health-notify must read tgbot.env"
+[[ "${notify}" == *'webhook.env'* && "${notify}" == *'WEBHOOK_URL'* ]] \
+    || fail "health-notify must support WEBHOOK_URL"
 [[ "${notify}" == *'doctor.sh'* && "${notify}" == *'--json'* ]] \
     || fail "health-notify must run doctor --json"
 

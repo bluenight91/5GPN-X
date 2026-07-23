@@ -20,11 +20,13 @@ fail() { echo "$1" >&2; exit 1; }
 # --- mosdns cache must be parametrised, not hard-coded -----------------------
 [[ "$(cat "${tmpl}")" == *'size: __CACHE_SIZE__'* ]] || fail "template must use the cache-size placeholder"
 [[ "${install_body}" == *'PACKET_CACHE_SIZE=20000'* ]] || fail "low-memory mode must shrink the packet cache"
+[[ "${install_body}" == *'PACKET_CACHE_SIZE=100000'* ]] || fail "standard mode must cap the packet cache at 100000"
 [[ "$(cat "${update}")" == *'__CACHE_SIZE__'* ]] || fail "update-rules.sh must substitute the cache-size placeholder"
 [[ "$(cat "${update}")" == *'.cache_size'* ]] || fail "update-rules.sh must read the persisted cache size"
 
 # --- sysctl must scale down on low memory -----------------------------------
 [[ "${install_body}" == *'sy_conntrack_max=131072'* ]] || fail "low-memory mode must shrink nf_conntrack_max"
+[[ "${install_body}" == *'sy_conntrack_max=1048576'* ]] || fail "standard mode must use a softened nf_conntrack_max"
 [[ "${install_body}" == *'sy_somaxconn=4096'* ]] || fail "low-memory mode must shrink somaxconn"
 
 # --- Go runtime caps on low memory ------------------------------------------

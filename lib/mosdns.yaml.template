@@ -1,5 +1,5 @@
 log:
-  level: info
+  level: warn
 
 plugins:
   - tag: gfw_domains
@@ -44,11 +44,11 @@ __REMOTE_PRIMARY_UPSTREAMS__
       upstreams:
 __REMOTE_SECONDARY_UPSTREAMS__
 
-  # China DNS race: concurrent query to all 4 domestic resolvers over UDP.
+  # China DNS race: concurrent query to domestic resolvers over UDP.
   - tag: local_primary_forward
     type: forward
     args:
-      concurrent: 4
+      concurrent: __LOCAL_CONCURRENT__
       upstreams:
 __LOCAL_PRIMARY_UPSTREAMS__
 
@@ -56,7 +56,7 @@ __LOCAL_PRIMARY_UPSTREAMS__
   - tag: local_secondary_forward
     type: forward
     args:
-      concurrent: 4
+      concurrent: __LOCAL_CONCURRENT__
       upstreams:
 __LOCAL_SECONDARY_UPSTREAMS__
 

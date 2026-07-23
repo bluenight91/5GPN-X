@@ -39,9 +39,15 @@ done
 [[ "${ui}" == *'私网 SOCKS5'* ]] || fail "settings must expose private SOCKS5 card"
 [[ "${ui}" == *'/api/client-socks'* ]] || fail "settings must call /api/client-socks"
 [[ "${ui}" == *'socksAction'* ]] || fail "settings must support SOCKS enable/disable"
+[[ "${ui}" == *'/api/doctor'* ]] || fail "settings must expose doctor"
+[[ "${ui}" == *'/api/report'* ]] || fail "settings must expose report generation"
+[[ "${ui}" == *'/api/snapshots'* ]] || fail "settings must expose runtime snapshots"
+[[ "${ui}" == *'轻量配置包'* && "${ui}" == *'运行时快照'* ]] || fail "backup UI must distinguish config packages and snapshots"
 
 # --- auth model unchanged ------------------------------------------------------
 [[ "${ui}" == *'Bearer'* ]] || fail "panel must keep bearer-token auth"
+[[ "${ui}" == *'sessionStorage.setItem("pgw_token"'* ]] || fail "API token must be stored in sessionStorage"
+[[ "${ui}" != *'localStorage.setItem("pgw_token"'* ]] || fail "API token must not be stored in localStorage"
 
 # --- mobile tabbar: auto-hide on scroll down + horizontal overflow scroll -------
 [[ "${ui}" == *'.tabbar.hide'* ]] || fail "tabbar must support auto-hide"

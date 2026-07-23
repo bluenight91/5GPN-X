@@ -38,7 +38,7 @@ KNOWN = (bytes.fromhex("45440001"), bytes.fromhex("57410603"))
 ACTIVE = 0
 _CACHE = ([], 0.0)
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s wa-shim %(message)s")
+logging.basicConfig(level=logging.WARNING, format="%(asctime)s wa-shim %(message)s")
 LOG = logging.getLogger("wa-shim")
 
 
@@ -271,7 +271,7 @@ async def handle(reader, writer):
         if route == "whatsapp" and source_allowed(source):
             addresses = await resolve_edge()
             if addresses:
-                LOG.info("WhatsApp %s src=%s -> %s", version, source, addresses[0])
+                LOG.debug("WhatsApp %s src=%s -> %s", version, source, addresses[0])
                 if await relay(reader, writer, addresses[0], WA_PORT, first):
                     writer.close()
                     return
@@ -290,7 +290,7 @@ async def handle(reader, writer):
 
 async def main():
     server = await asyncio.start_server(handle, LISTEN, PORT, backlog=4096)
-    LOG.info("listening %s:%d backend=%s:%d allow=%s", LISTEN, PORT, BACKEND_HOST, BACKEND_PORT, ALLOW)
+    LOG.warning("listening %s:%d backend=%s:%d allow=%s", LISTEN, PORT, BACKEND_HOST, BACKEND_PORT, ALLOW)
     async with server:
         await server.serve_forever()
 

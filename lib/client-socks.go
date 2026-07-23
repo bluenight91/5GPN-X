@@ -7,6 +7,7 @@
 package main
 
 import (
+	"crypto/subtle"
 	"encoding/binary"
 	"flag"
 	"fmt"
@@ -87,6 +88,16 @@ func allowed(ip net.IP, nets []*net.IPNet) bool {
 	return false
 }
 
+func ctEq(a, b string) bool {
+	if len(a) != len(b) {
+		// Keep mismatch handling close to the equal-length path without accepting.
+		_ = subtle.ConstantTimeCompare([]byte(a), []byte(a))
+		_ = subtle.ConstantTimeCompare([]byte(b), []byte(b))
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
+
 func handle(c net.Conn, nets []*net.IPNet) {
 	defer c.Close()
 	_ = c.SetDeadline(time.Now().Add(30 * time.Second))
@@ -154,7 +165,7 @@ func handle(c net.Conn, nets []*net.IPNet) {
 		}
 	}
 	pass := string(buf[2+ulen+1 : need])
-	if user != *username || pass != *password {
+	if !ctEq(user, *username) || !ctEq(pass, *password) {
 		_, _ = c.Write([]byte{0x01, 0x01})
 		if !*quiet {
 			log.Printf("auth fail from %v", c.RemoteAddr())

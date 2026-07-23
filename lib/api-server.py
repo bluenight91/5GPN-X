@@ -12,10 +12,10 @@ Auth:  every /api/* call (except /api/health) needs  Authorization: Bearer <API_
 Env (systemd EnvironmentFile):
   API_TOKEN         required bearer token (service refuses to start if unset/short)
   API_PORT          listen port                     (default 8444; 8443 is sniproxy)
-  API_BIND          bind address                    (default 0.0.0.0)
+  API_BIND          bind address                    (default 127.0.0.1)
   API_TLS_CERT      TLS fullchain                   (default /etc/mosdns/certs/fullchain.pem)
   API_TLS_KEY       TLS private key                 (default /etc/mosdns/certs/privkey.pem)
-  API_ALLOW_ORIGIN  CORS allowed origin             (default *)
+  API_ALLOW_ORIGIN  CORS allowed origin             (default ""; set * explicitly for wildcard)
   MGMT              path to 5gpn-ctl                (default /opt/5gpn/bin/5gpn-ctl)
   CONF_DIR          gateway state dir               (default /opt/5gpn/etc)
 """
@@ -26,6 +26,7 @@ import ipaddress
 import json
 import os
 import re
+import secrets
 import select
 import socket
 import tarfile
@@ -41,12 +42,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 TOKEN = os.environ.get("API_TOKEN", "")
 PORT = int(re.sub(r"\D", "", os.environ.get("API_PORT", "8444")) or "8444")
-BIND = os.environ.get("API_BIND", "0.0.0.0")
+BIND = os.environ.get("API_BIND", "127.0.0.1")
 CERT = os.environ.get("API_TLS_CERT", "/etc/mosdns/certs/fullchain.pem")
 KEY = os.environ.get("API_TLS_KEY", "/etc/mosdns/certs/privkey.pem")
-ORIGIN = os.environ.get("API_ALLOW_ORIGIN", "*")
+ORIGIN = os.environ.get("API_ALLOW_ORIGIN", "").strip()
 MGMT = os.environ.get("MGMT", "/opt/5gpn/bin/5gpn-ctl")
 CONF_DIR = os.environ.get("CONF_DIR", "/opt/5gpn/etc")
+DOCTOR = os.environ.get("DOCTOR", "/opt/5gpn/scripts/doctor.sh")
+SNAPSHOT = os.environ.get("SNAPSHOT", "/opt/5gpn/scripts/snapshot.sh")
+REPORT = os.environ.get("REPORT", "/opt/5gpn/scripts/report.sh")
+WEBUI_DIR = os.environ.get("WEBUI_DIR", "/opt/5gpn/webui")
 
 PGW_DIR = "/etc/5gpn"
 EXITS_DIR = PGW_DIR + "/exits"
@@ -59,6 +64,7 @@ TRAFFIC_MAX = 24 * 3600 // TRAFFIC_INTERVAL + 2   # ~24h of samples
 LATENCY_FILE = os.environ.get("LATENCY_FILE", CONF_DIR + "/latency.json")
 LATENCY_INTERVAL = TRAFFIC_INTERVAL
 AI_CONF = os.environ.get("AI_CONF", CONF_DIR + "/ai.json")
+STARTED = time.time()
 
 # Matches install.sh's exit-name validator (letters/digits/Chinese/_/-, 1-16).
 EXIT_NAME_RE = re.compile(r"^[\w一-鿿-]{1,16}$")
@@ -76,6 +82,10 @@ CLASH_ADDR = os.environ.get("CLASH_ADDR", "127.0.0.1:9090")
 CLASH_SECRET_FILE = os.environ.get("MIHOMO_API_SECRET_FILE", "/etc/5gpn/mihomo-api-secret")
 MIHOMO_STATIC_DIR = os.environ.get("MIHOMO_STATIC_DIR", "/opt/5gpn/webui/mihomo")
 CLASH_WS_PATHS = {"traffic", "logs", "connections", "memory"}
+SESSION_TTL = 3600
+_mihomo_sessions = {}      # opaque sid -> expiry monotonic
+_session_lock = threading.Lock()
+_session_next_prune = 0.0
 
 # CSP for the vendored metacubexd (same-origin app; frames allowed same-origin
 # so our console can embed it, everything else locked down).
@@ -97,10 +107,50 @@ def rate_ok(ip):
         ent[0] = min(RATE_MAX, ent[0] + (now - ent[1]) * RATE_REFILL)
         ent[1] = now
         if len(_rate) > 4096:      # bound memory under spoofed-source floods
-            _rate.clear()
+            drop = max(1, len(_rate) // 4)
+            for old_ip, _ in sorted(_rate.items(), key=lambda kv: kv[1][1])[:drop]:
+                _rate.pop(old_ip, None)
         if ent[0] < 1.0:
             return False
         ent[0] -= 1.0
+        return True
+
+
+def rate_limited_path(path):
+    return path.startswith("/api/") or path.startswith("/mihomo")
+
+
+def _prune_mihomo_sessions(now):
+    expired = [sid for sid, exp in _mihomo_sessions.items() if exp <= now]
+    for sid in expired:
+        _mihomo_sessions.pop(sid, None)
+
+
+def mint_mihomo_session():
+    global _session_next_prune
+    now = time.monotonic()
+    sid = secrets.token_urlsafe(32)
+    with _session_lock:
+        if now >= _session_next_prune or len(_mihomo_sessions) > 4096:
+            _prune_mihomo_sessions(now)
+            _session_next_prune = now + 60
+        _mihomo_sessions[sid] = now + SESSION_TTL
+    return sid
+
+
+def valid_mihomo_session(sid):
+    global _session_next_prune
+    if not sid:
+        return False
+    now = time.monotonic()
+    with _session_lock:
+        if now >= _session_next_prune or len(_mihomo_sessions) > 4096:
+            _prune_mihomo_sessions(now)
+            _session_next_prune = now + 60
+        exp = _mihomo_sessions.get(sid)
+        if not exp or exp <= now:
+            _mihomo_sessions.pop(sid, None)
+            return False
         return True
 
 
@@ -460,19 +510,38 @@ def parse_check(out):
 
 
 # --- server resources (CPU / mem / disk / uptime / load) --------------------
+_cpu_lock = threading.Lock()
+_cpu_cache = (0.0, 0.0)
+_cpu_prev = None
+
+
+def _cpu_snap():
+    f = [int(x) for x in read_file("/proc/stat").splitlines()[0].split()[1:]]
+    idle = f[3] + (f[4] if len(f) > 4 else 0)
+    return sum(f), idle
+
+
 def cpu_percent(window=0.25):
-    def snap():
-        f = [int(x) for x in read_file("/proc/stat").splitlines()[0].split()[1:]]
-        idle = f[3] + (f[4] if len(f) > 4 else 0)
-        return sum(f), idle
-    try:
-        t1, i1 = snap()
-        time.sleep(window)
-        t2, i2 = snap()
-        dt, di = t2 - t1, i2 - i1
-        return round((1 - di / dt) * 100, 1) if dt > 0 else 0.0
-    except Exception:  # noqa: BLE001
-        return 0.0
+    del window  # kept for callers; sampling is cache/delta based and non-blocking.
+    global _cpu_cache, _cpu_prev
+    now = time.monotonic()
+    with _cpu_lock:
+        ts, val = _cpu_cache
+        if now - ts < 2.0:
+            return val
+        try:
+            cur = _cpu_snap()
+            if _cpu_prev:
+                dt, di = cur[0] - _cpu_prev[0], cur[1] - _cpu_prev[1]
+                val = round((1 - di / dt) * 100, 1) if dt > 0 else 0.0
+            else:
+                val = 0.0
+            _cpu_prev = cur
+            _cpu_cache = (now, val)
+            return val
+        except Exception:  # noqa: BLE001
+            _cpu_cache = (now, 0.0)
+            return 0.0
 
 
 def resources():
@@ -862,36 +931,69 @@ def ai_plan(repo, intent):
 
 
 # --- live stats (instantaneous rate + connection count) ----------------------
+_live_lock = threading.Lock()
+_live_prev = {"t": 0.0, "dev": {}}
+_conn_lock = threading.Lock()
+_conn_cache = {"t": 0.0, "conns": 0}
+
+
 def live_stats():
     primary = primary_iface()
-    a = read_net_dev()
-    time.sleep(1.0)
-    b = read_net_dev()
+    dev = read_net_dev()
+    now = time.monotonic()
+    with _live_lock:
+        prev_t = float(_live_prev.get("t") or 0.0)
+        prev_dev = _live_prev.get("dev") or {}
+        dt = now - prev_t
 
-    def rate(n):
-        if n in a and n in b:
-            return max(0, b[n]["rx"] - a[n]["rx"]), max(0, b[n]["tx"] - a[n]["tx"])
-        return 0, 0
-    srx, stx = rate(primary)
-    exits = {}
-    for n in b:
-        if n.startswith("pgw-"):
-            rx, tx = rate(n)
-            exits[n[4:]] = {"rx": rx, "tx": tx}
-    conns = 0
-    ok, out = run(["ss", "-tnH", "state", "established"], timeout=4)
-    if ok:
-        conns = len([x for x in out.splitlines() if x.strip()])
+        def rate(n):
+            if dt >= 0.5 and n in prev_dev and n in dev:
+                return (int(max(0, dev[n]["rx"] - prev_dev[n]["rx"]) / dt),
+                        int(max(0, dev[n]["tx"] - prev_dev[n]["tx"]) / dt))
+            return 0, 0
+
+        srx, stx = rate(primary)
+        exits = {}
+        for n in dev:
+            if n.startswith("pgw-"):
+                rx, tx = rate(n)
+                exits[n[4:]] = {"rx": rx, "tx": tx}
+        _live_prev["t"] = now
+        _live_prev["dev"] = dev
+
+    with _conn_lock:
+        conns = _conn_cache["conns"]
+        if now - _conn_cache["t"] >= 5.0:
+            ok, out = run(["ss", "-tnH", "state", "established"], timeout=4)
+            if ok:
+                conns = len([x for x in out.splitlines() if x.strip()])
+            _conn_cache["t"] = now
+            _conn_cache["conns"] = conns
     return {"server": {"rx": srx, "tx": stx}, "exits": exits, "conns": conns}
 
 
 # --- route tester: would this domain be hijacked, and to which exit? ----------
+_gfw_lock = threading.Lock()
+_gfw_cache = (None, set())
+
+
 def gfwlist_set():
+    global _gfw_cache
+    path = "/etc/mosdns/gfwlist.txt"
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        mtime = None
+    with _gfw_lock:
+        if _gfw_cache[0] == mtime:
+            return set(_gfw_cache[1])
     s = set()
-    for line in read_file("/etc/mosdns/gfwlist.txt").splitlines():
+    for line in read_file(path).splitlines():
         line = line.strip().lower()
         if line and not line.startswith("#"):
             s.add(line.strip("."))
+    with _gfw_lock:
+        _gfw_cache = (mtime, set(s))
     return s
 
 
@@ -927,25 +1029,47 @@ def list_direct_domains():
     return uniq
 
 
-def get_client_cidr():
-    raw = (read_file(CLIENT_CIDR_FILE) or CLIENT_CIDR_DEFAULT).strip()
-    try:
-        net = ipaddress.ip_network(raw, strict=False)
+def _split_client_cidrs(value):
+    raw = str(value or "").replace("\n", ",")
+    return [p.strip() for p in raw.split(",") if p.strip()]
+
+
+def _normalize_client_cidrs(value):
+    parts = _split_client_cidrs(value)
+    if not parts:
+        return None
+    force_wide = os.environ.get("FORCE_WIDE_CIDR", "0") == "1"
+    out = []
+    seen = set()
+    for part in parts:
+        try:
+            net = ipaddress.ip_network(part, strict=False)
+        except ValueError:
+            return None
         if net.version != 4 or not (8 <= net.prefixlen <= 30):
-            return CLIENT_CIDR_DEFAULT
-        return str(net)
-    except ValueError:
-        return CLIENT_CIDR_DEFAULT
+            return None
+        if net.prefixlen < 16 and not force_wide:
+            return None
+        norm = str(net)
+        if norm not in seen:
+            seen.add(norm)
+            out.append(norm)
+    return out
+
+
+def get_client_cidrs():
+    raw = (read_file(CLIENT_CIDR_FILE) or CLIENT_CIDR_DEFAULT).strip()
+    cidrs = _normalize_client_cidrs(raw)
+    return cidrs or [CLIENT_CIDR_DEFAULT]
+
+
+def get_client_cidr():
+    return ",".join(get_client_cidrs())
 
 
 def validate_client_cidr(value):
-    try:
-        net = ipaddress.ip_network(str(value or "").strip(), strict=False)
-    except ValueError:
-        return None
-    if net.version != 4 or not (8 <= net.prefixlen <= 30):
-        return None
-    return str(net)
+    cidrs = _normalize_client_cidrs(value)
+    return ",".join(cidrs) if cidrs else None
 
 
 def route_test(domain):
@@ -994,8 +1118,30 @@ def route_test(domain):
 
 # --- config backup / restore -------------------------------------------------
 BACKUP_PATHS = ["etc/5gpn", "etc/mosdns/gfwlist-extra-local.txt",
-                "etc/mosdns/direct-domains.txt",
-                "etc/wireguard", "opt/5gpn/etc/current-exit"]
+                "etc/mosdns/direct-domains.txt", "etc/mosdns/.client_cidr",
+                "etc/mosdns/.remote_dns", "etc/mosdns/.local_dns",
+                "etc/mosdns/.ecs", "etc/mosdns/.sniproxy_dns",
+                "etc/wireguard", "opt/5gpn/etc/current-exit",
+                "opt/5gpn/etc/.client_cidr", "opt/5gpn/etc/client-socks.port"]
+
+
+def _backup_secret_name(name):
+    base = os.path.basename(name).lower()
+    if base in ("api.env", "tgbot.env", "client-socks.env", "mihomo-api-secret"):
+        return True
+    if base.endswith(".pem"):
+        return True
+    return any(x in base for x in ("secret", "token", "passwd", "password"))
+
+
+def _backup_filter(ti):
+    """Default backup excludes secret-looking filenames. A future query/param
+    can opt into sensitive material explicitly; for now all API backups are
+    redacted by filename."""
+    name = ti.name.lstrip("./")
+    if "/rulesets" in name or _backup_secret_name(name):
+        return None
+    return ti
 
 
 def make_backup():
@@ -1008,11 +1154,12 @@ def make_backup():
             if rel == "etc/wireguard":
                 for f in os.listdir(full):           # only pgw-*.conf
                     if f.startswith("pgw-") and f.endswith(".conf"):
-                        tf.add(os.path.join(full, f), arcname=rel + "/" + f)
+                        tf.add(os.path.join(full, f), arcname=rel + "/" + f,
+                               filter=_backup_filter)
             elif rel == "etc/5gpn":
-                tf.add(full, arcname=rel, filter=lambda ti: None if "/rulesets" in ti.name else ti)
+                tf.add(full, arcname=rel, filter=_backup_filter)
             else:
-                tf.add(full, arcname=rel)
+                tf.add(full, arcname=rel, filter=_backup_filter)
     return buf.getvalue()
 
 
@@ -1020,10 +1167,17 @@ def _backup_allowed(name):
     name = name.lstrip("./")
     if ".." in name.split("/"):
         return False
-    return bool(name.startswith("etc/5gpn") or name == "etc/mosdns/gfwlist-extra-local.txt"
+    if _backup_secret_name(name):
+        return False
+    return bool((name == "etc/5gpn" or name.startswith("etc/5gpn/"))
+                or name == "etc/mosdns/gfwlist-extra-local.txt"
                 or name == "etc/mosdns/direct-domains.txt"
+                or name in ("etc/mosdns/.client_cidr", "etc/mosdns/.remote_dns",
+                            "etc/mosdns/.local_dns", "etc/mosdns/.ecs",
+                            "etc/mosdns/.sniproxy_dns")
                 or re.match(r"etc/wireguard/pgw-[^/]+\.conf$", name)
-                or name == "opt/5gpn/etc/current-exit")
+                or name in ("opt/5gpn/etc/current-exit", "opt/5gpn/etc/.client_cidr",
+                            "opt/5gpn/etc/client-socks.port"))
 
 
 def restore_backup(b64):
@@ -1047,6 +1201,93 @@ def _tok_eq(a, b):
         return False
 
 
+def _json_output(out):
+    try:
+        return json.loads(out or "{}")
+    except Exception:  # noqa: BLE001
+        return extract_json(out)
+
+
+def report_path(out):
+    for line in reversed((out or "").splitlines()):
+        s = line.strip()
+        if s.startswith("report written:"):
+            return s.split(":", 1)[1].strip()
+        if s.startswith("/"):
+            return s
+    return ""
+
+
+def parse_snapshots(out):
+    rows = []
+    for line in (out or "").splitlines()[1:]:
+        line = line.rstrip()
+        if not line.strip():
+            continue
+        parts = re.split(r"\s{2,}", line, maxsplit=2)
+        if len(parts) < 3:
+            continue
+        label = parts[2].strip()
+        latest = label.endswith("*")
+        if latest:
+            label = label[:-1].rstrip()
+        rows.append({"id": parts[0].strip(), "git": parts[1].strip(),
+                     "label": label, "latest": latest})
+    return rows
+
+
+def _metric_label(v):
+    return re.sub(r'["\\\n]', "_", str(v))
+
+
+def metrics_text():
+    live = live_stats()
+    mem = memory()
+    cpu = cpu_percent()
+    lines = [
+        "# HELP pgw_api_process_up API process liveness.",
+        "# TYPE pgw_api_process_up gauge",
+        "pgw_api_process_up 1",
+        "# HELP pgw_api_process_uptime_seconds API process uptime.",
+        "# TYPE pgw_api_process_uptime_seconds gauge",
+        "pgw_api_process_uptime_seconds %.0f" % max(0, time.time() - STARTED),
+        "# HELP pgw_api_cpu_percent CPU usage percent.",
+        "# TYPE pgw_api_cpu_percent gauge",
+        "pgw_api_cpu_percent %.1f" % cpu,
+        "# HELP pgw_api_memory_bytes Memory size in bytes.",
+        "# TYPE pgw_api_memory_bytes gauge",
+        'pgw_api_memory_bytes{kind="total"} %d' % (int(mem.get("total_mb", 0)) * 1024 * 1024),
+        'pgw_api_memory_bytes{kind="used"} %d' % (int(mem.get("used_mb", 0)) * 1024 * 1024),
+        "# HELP pgw_api_live_bytes_per_second Instantaneous network rate.",
+        "# TYPE pgw_api_live_bytes_per_second gauge",
+        'pgw_api_live_bytes_per_second{scope="server",direction="rx"} %d' % live["server"]["rx"],
+        'pgw_api_live_bytes_per_second{scope="server",direction="tx"} %d' % live["server"]["tx"],
+    ]
+    for name, vals in sorted(live.get("exits", {}).items()):
+        label = _metric_label(name)
+        lines.append('pgw_api_live_bytes_per_second{scope="exit",exit="%s",direction="rx"} %d'
+                     % (label, vals.get("rx", 0)))
+        lines.append('pgw_api_live_bytes_per_second{scope="exit",exit="%s",direction="tx"} %d'
+                     % (label, vals.get("tx", 0)))
+    lines += [
+        "# HELP pgw_api_live_connections Established TCP connections.",
+        "# TYPE pgw_api_live_connections gauge",
+        "pgw_api_live_connections %d" % int(live.get("conns", 0)),
+    ]
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+def webui_index_path():
+    full = os.path.realpath(os.path.join(WEBUI_DIR, "index.html"))
+    root = os.path.realpath(WEBUI_DIR)
+    try:
+        if os.path.commonpath((root, full)) != root:
+            return None
+    except ValueError:
+        return None
+    return full if os.path.isfile(full) else None
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "pgw-api"
 
@@ -1054,7 +1295,10 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def _cors(self):
-        self.send_header("Access-Control-Allow-Origin", ORIGIN)
+        """CORS is opt-in by default. Set API_ALLOW_ORIGIN to a concrete
+        origin, or explicitly to * for wildcard behavior."""
+        if ORIGIN:
+            self.send_header("Access-Control-Allow-Origin", ORIGIN)
         self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 
@@ -1100,7 +1344,7 @@ class Handler(BaseHTTPRequestHandler):
           (a) /mihomo 静态文件（iframe 文档及其资源）；
           (b) /api/mihomo/proxy/ 下且属 WS 白名单的 Upgrade 请求。
         其余路径一律不认 query token。query 鉴权成功的 /mihomo 响应会种一个
-        pgw_mihomo 同源会话 cookie；该 cookie 放行 /mihomo 静态与
+        pgw_mihomo 同源不透明短期会话 cookie；该 cookie 放行 /mihomo 静态与
         /api/mihomo/*（全部方法，含 WS Upgrade 与写方法），不覆盖其他 /api/*
         （最小权限，主控制台仍仅 Bearer）。放行写方法的两个前提，改动 cookie
         属性时必须保持：SameSite=Strict —— 跨站请求不携带 cookie，CSRF 不可行；
@@ -1113,7 +1357,7 @@ class Handler(BaseHTTPRequestHandler):
         is_static = path == "/mihomo" or path.startswith("/mihomo/")
         if is_static or path.startswith("/api/mihomo/"):
             m = re.search(r"(?:^|;\s*)pgw_mihomo=([^;]*)", self.headers.get("Cookie", ""))
-            if m and _tok_eq(urllib.parse.unquote(m.group(1)), TOKEN):
+            if m and valid_mihomo_session(urllib.parse.unquote(m.group(1))):
                 return True
         if self.command != "GET":
             return False
@@ -1168,14 +1412,26 @@ class Handler(BaseHTTPRequestHandler):
         if getattr(self, "_via_query", False):
             # iframe 内相对路径资源与面板 API 调用带不了 ?token=；种同源会话
             # cookie（Path=/ 覆盖 /mihomo 与 /api/mihomo/*）供其鉴权。
+            sid = mint_mihomo_session()
             extra.append(("Set-Cookie", "pgw_mihomo=%s; Path=/; HttpOnly; Secure; SameSite=Strict"
-                          % urllib.parse.quote(TOKEN, safe="")))
+                          % urllib.parse.quote(sid, safe="")))
         return self._send_raw(200, data, MIME.get(ext, "application/octet-stream"), extra=extra)
+
+    def _serve_webui_index(self):
+        full = webui_index_path()
+        if not full:
+            return self._send(404, {"ok": False, "error": "webui not installed"})
+        try:
+            with open(full, "rb") as f:
+                data = f.read()
+        except OSError:
+            return self._send(404, {"ok": False, "error": "webui not installed"})
+        return self._send_raw(200, data, "text/html")
 
     def _dispatch(self, method):
         """PUT/PATCH/DELETE are only routed to the mihomo reverse proxy."""
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
-        if path.startswith("/api/") and not rate_ok(self.client_address[0]):
+        if rate_limited_path(path) and not rate_ok(self.client_address[0]):
             return self._send(429, {"ok": False, "error": "请求过于频繁，请稍后再试"})
         if not self._auth():
             return self._send(401, {"ok": False, "error": "unauthorized"})
@@ -1199,10 +1455,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
-        if path.startswith("/api/") and not rate_ok(self.client_address[0]):
+        if rate_limited_path(path) and not rate_ok(self.client_address[0]):
             return self._send(429, {"ok": False, "error": "请求过于频繁，请稍后再试"})
         if path == "/api/health":
             return self._send(200, {"ok": True, "service": "5gpn-api"})
+        if path in ("/", "/console", "/webui"):
+            return self._serve_webui_index()
         if not self._auth():
             return self._send(401, {"ok": False, "error": "unauthorized"})
         if path == "/api/mihomo/overview":
@@ -1258,6 +1516,21 @@ class Handler(BaseHTTPRequestHandler):
                                     "base_url": c.get("base_url", ""), "model": c.get("model", "")})
         if path == "/api/live":
             return self._send(200, dict(ok=True, **live_stats()))
+        if path == "/api/doctor":
+            ok, out = run(["bash", DOCTOR, "--json"], timeout=180)
+            data = _json_output(out)
+            if data is None:
+                return self._send(500, {"ok": False, "data": None, "output": out})
+            return self._send(200, {"ok": bool(data.get("ok", ok)), "data": data, "output": out})
+        if path == "/api/report":
+            ok, out = run(["bash", REPORT], timeout=240)
+            return self._send(200 if ok else 500, {"ok": ok, "output": out, "path": report_path(out)})
+        if path == "/api/snapshots":
+            ok, out = run(["bash", SNAPSHOT, "list"], timeout=60)
+            return self._send(200 if ok else 500, {"ok": ok, "output": out,
+                                                   "snapshots": parse_snapshots(out)})
+        if path == "/api/metrics":
+            return self._send_raw(200, metrics_text(), "text/plain; version=0.0.4")
         if path == "/api/backup":
             try:
                 data = make_backup()
@@ -1280,6 +1553,7 @@ class Handler(BaseHTTPRequestHandler):
                                     "text": "\n".join(domains) + ("\n" if domains else "")})
         if path == "/api/client-cidr":
             return self._send(200, {"ok": True, "cidr": get_client_cidr(),
+                                    "cidrs": get_client_cidrs(),
                                     "default": CLIENT_CIDR_DEFAULT})
         if path == "/api/client-socks":
             enabled = os.path.isfile(os.path.join(CONF_DIR, "client-socks.enabled"))
@@ -1298,12 +1572,13 @@ class Handler(BaseHTTPRequestHandler):
                 "host": host, "port": port, "user": user,
                 "password": "***" if enabled or user else "",
                 "allow_cidr": get_client_cidr(),
+                "note": "password is masked; use enable/reset-creds to receive it once",
             })
         return self._send(404, {"ok": False, "error": "not found"})
 
     def do_POST(self):
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
-        if path.startswith("/api/") and not rate_ok(self.client_address[0]):
+        if rate_limited_path(path) and not rate_ok(self.client_address[0]):
             return self._send(429, {"ok": False, "error": "请求过于频繁，请稍后再试"})
         if not self._auth():
             return self._send(401, {"ok": False, "error": "unauthorized"})
@@ -1455,6 +1730,26 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/route/test":
             return self._send(200, {"ok": True, "result": route_test(str(b.get("domain", "")))})
 
+        if path == "/api/snapshots":
+            action = str(b.get("action", "")).strip().lower()
+            if action == "create":
+                label = str(b.get("label", "manual")).strip()[:64] or "manual"
+                ok, out = run(["bash", SNAPSHOT, "create", label], timeout=180)
+                snap_id = ""
+                for line in reversed(out.splitlines()):
+                    s = line.strip()
+                    if re.match(r"^[0-9TZ._A-Za-z-]+$", s):
+                        snap_id = s
+                        break
+                return self._send(200 if ok else 500, {"ok": ok, "id": snap_id, "output": out})
+            if action == "restore":
+                snap_id = str(b.get("id", "latest")).strip() or "latest"
+                if snap_id != "latest" and not re.match(r"^[0-9TZ._A-Za-z-]{1,96}$", snap_id):
+                    return self._send(400, {"ok": False, "error": "invalid snapshot id"})
+                ok, out = run(["bash", SNAPSHOT, "restore", snap_id], timeout=300)
+                return self._send(200 if ok else 500, {"ok": ok, "id": snap_id, "output": out})
+            return self._send(400, {"ok": False, "error": "action must be create|restore"})
+
         if path == "/api/proxy-domain":
             domain = str(b.get("domain", "")).strip().lower()
             target = str(b.get("target", "")).strip()
@@ -1509,7 +1804,7 @@ class Handler(BaseHTTPRequestHandler):
             cidr = validate_client_cidr(b.get("cidr", ""))
             if not cidr:
                 return self._send(400, {"ok": False,
-                                        "error": "invalid cidr (IPv4 /8../30, e.g. 172.22.0.0/16)"})
+                                        "error": "invalid cidr (IPv4 /16../30 by default; comma-separated; /8../15 require FORCE_WIDE_CIDR=1)"})
             ok, out = ctl("--set-client-cidr", cidr, timeout=180)
             return self._send(200 if ok else 500, {"ok": ok, "output": out,
                                                     "cidr": get_client_cidr()})
@@ -1542,6 +1837,8 @@ class Handler(BaseHTTPRequestHandler):
                 "enabled": os.path.isfile(os.path.join(CONF_DIR, "client-socks.enabled")),
                 "host": host, "port": port, "user": user, "password": password,
                 "allow_cidr": get_client_cidr(),
+                "note": ("password returned once; future GET responses mask it"
+                         if action in ("enable", "reset-creds") else "password is masked"),
             })
 
         if path == "/api/restore":
@@ -1617,6 +1914,7 @@ def main():
         sys.stderr.write("API_TOKEN unset or too short (need >=16 chars); refusing to start.\n")
         sys.exit(1)
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     try:
         ctx.load_cert_chain(certfile=CERT, keyfile=KEY)
     except Exception as e:  # noqa: BLE001

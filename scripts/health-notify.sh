@@ -7,16 +7,23 @@ CONF_DIR="${CONF_DIR:-${BASE_DIR}/etc}"
 STATE_DIR="${CONF_DIR}/health"
 STATE_FILE="${STATE_DIR}/last.json"
 BOT_ENV="${CONF_DIR}/tgbot.env"
+WEBHOOK_ENV="${CONF_DIR}/webhook.env"
 
 mkdir -p "$STATE_DIR"
 umask 077
 
-[[ -f "$BOT_ENV" ]] || exit 0
-# shellcheck disable=SC1090
-set -a; source "$BOT_ENV"; set +a
+if [[ -f "$BOT_ENV" ]]; then
+    # shellcheck disable=SC1090
+    set -a; source "$BOT_ENV"; set +a
+fi
+if [[ -f "$WEBHOOK_ENV" ]]; then
+    # shellcheck disable=SC1090
+    set -a; source "$WEBHOOK_ENV"; set +a
+fi
 TOKEN="${TG_BOT_TOKEN:-}"
 ADMINS="${TG_ADMIN_IDS:-}"
-[[ -n "$TOKEN" && -n "$ADMINS" ]] || exit 0
+WEBHOOK_URL="${WEBHOOK_URL:-}"
+[[ ( -n "$TOKEN" && -n "$ADMINS" ) || -n "$WEBHOOK_URL" ]] || exit 0
 
 json_out="$(mktemp)"
 bash "${BASE_DIR}/scripts/doctor.sh" --json >"$json_out" 2>/dev/null || true
@@ -60,14 +67,40 @@ cp "$json_out" "$STATE_FILE"
 rm -f "$json_out"
 [[ -n "$text" ]] || exit 0
 
-IFS=',' read -r -a ids <<< "$ADMINS"
-for id in "${ids[@]}"; do
-    id="$(echo "$id" | tr -d '[:space:]')"
-    [[ -z "$id" ]] && continue
-    curl -fsS -X POST "https://api.telegram.org/bot${TOKEN}/sendMessage" \
-        --data-urlencode "chat_id=${id}" \
-        --data-urlencode "text=${text}" \
-        --data "parse_mode=HTML" \
-        --data "disable_web_page_preview=true" >/dev/null 2>&1 || true
-done
+fail_n="$(python3 - "$STATE_FILE" <<'PY'
+import json, sys
+try:
+    print(int(json.load(open(sys.argv[1], encoding="utf-8")).get("fail", 0) or 0))
+except Exception:
+    print(99)
+PY
+)"
+ok_bool="false"
+[[ "${fail_n:-99}" == "0" ]] && ok_bool="true"
+
+if [[ -n "$WEBHOOK_URL" ]]; then
+    python3 - "$WEBHOOK_URL" "$text" "$fail_n" "$ok_bool" <<'PY' || true
+import json
+import sys
+import urllib.request
+
+url, text, fail, ok = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4] == "true"
+body = json.dumps({"text": text, "fail": fail, "ok": ok}, ensure_ascii=False).encode()
+req = urllib.request.Request(url, data=body, method="POST", headers={"Content-Type": "application/json"})
+urllib.request.urlopen(req, timeout=10).read()
+PY
+fi
+
+if [[ -n "$TOKEN" && -n "$ADMINS" ]]; then
+    IFS=',' read -r -a ids <<< "$ADMINS"
+    for id in "${ids[@]}"; do
+        id="$(echo "$id" | tr -d '[:space:]')"
+        [[ -z "$id" ]] && continue
+        curl -fsS -X POST "https://api.telegram.org/bot${TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${id}" \
+            --data-urlencode "text=${text}" \
+            --data "parse_mode=HTML" \
+            --data "disable_web_page_preview=true" >/dev/null 2>&1 || true
+    done
+fi
 exit 0

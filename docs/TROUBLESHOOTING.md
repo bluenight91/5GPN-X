@@ -18,12 +18,36 @@ sudo 5gpn rollback <snapshot-id>   # 指定 ID
 
 `update` 会在改动运行时前自动建 `pre-update` 快照；失败时脚本会尝试自动回滚。若自动回滚失败，用上面的命令手动恢复。
 
+### 运行时快照 vs 轻量配置包
+
+- **运行时快照（snapshot）**：服务器本机回滚点，包含 `/etc/5gpn`、mosdns 关键状态等，保存在 `/var/lib/5gpn/snapshots`。用于 `5gpn rollback` / WebUI「运行时快照」。
+- **轻量配置包（WebUI 备份）**：浏览器下载的可导入配置包，默认排除 token/secret 和规则缓存，适合迁移或临时备份；它不是完整运行时快照。
+
 ## smart 分流全灭
 
 1. `sudo 5gpn doctor --deep`：看 `5gpn-mihomo@smart`、`pgw-smart`、表 100、TUN 出网。
 2. `journalctl -u 5gpn-mihomo@smart -n 50 --no-pager`
 3. `ip route show table 100`、`ip rule show | grep fwmark`
 4. 确认 `rules.conf` / 策略映射后：`sudo 5gpn set-rules` 或 `set-exit smart`
+
+## 规则组 / policy-map / 出口
+
+智能分流链路是三段：
+
+1. `rules.conf` 里的最后一列可以是出口名，也可以是「规则组」名，例如 `ai`、`streaming`。
+2. `/etc/5gpn/policy-map.conf` 把规则组映射到最终目标：某个 mihomo 出口、`direct` 或 `block`。
+3. 生成 smart mihomo 配置时，规则先命中分类/规则组，再按 policy-map 落到对应 proxy group / exit。
+
+排查顺序：
+
+```bash
+sudo 5gpn show-rules
+sudo 5gpn show-policy
+sudo 5gpn list-exits
+sudo 5gpn set-policy ai tokyo     # 把 ai 规则组改走 tokyo 出口
+```
+
+如果某个分类没有 policy-map 项，脚本通常会按默认策略补齐；仍不符合预期时，显式 `set-policy` 后再 `set-exit smart` 重建。
 
 ## DNS / DoT 异常
 
@@ -34,15 +58,32 @@ sudo 5gpn rollback <snapshot-id>   # 指定 ID
 | DoT TLS 失败 | 证书路径、域名、`openssl s_client -connect 127.0.0.1:853 -servername <域>` |
 | 私网解析成网关但不应劫持 | `5gpn add-direct-domain …` 或核对客户端是否在配置的 CIDR 内 |
 
-客户端网段（默认 `172.22.0.0/16`）：
+客户端网段（默认 `172.22.0.0/16`）支持英文逗号分隔多段：
 
 ```bash
 sudo 5gpn detect-client-cidr          # 从本机网卡猜测
 sudo 5gpn set-client-cidr 10.10.0.0/16
+sudo 5gpn set-client-cidr 172.22.0.0/16,10.10.0.0/16
 cat /etc/mosdns/.client_cidr
 ```
 
-也可在 Bot「DoT 管理 → 客户端网段」或网页控制台「设置」中修改。改完后会刷新 mosdns；若是 `FIREWALL_MODE=managed`，也会尝试重写白名单。自管防火墙需自行放行新网段的 53/80/443。
+默认拒绝过宽网段（小于 `/16`）以避免误把大范围来源纳入劫持/放行。确认需要时设置 `FORCE_WIDE_CIDR=1` 后再运行命令。也可在 Bot「DoT 管理 → 客户端网段」或网页控制台「设置」中修改。改完后会刷新 mosdns；若是 `FIREWALL_MODE=managed`，也会尝试重写白名单。自管防火墙需自行放行新网段的 53/80/443。
+
+## API / WebUI 访问
+
+`5gpn setup-api` 默认把 API 绑定到 `127.0.0.1`，并由 API 服务同源提供 WebUI：
+
+```bash
+curl -k https://127.0.0.1:8444/api/health
+```
+
+如需公网访问，必须显式：
+
+```bash
+API_BIND=0.0.0.0 sudo 5gpn setup-api
+```
+
+同时用主机防火墙只向可信来源放行 API 端口。`API_ALLOW_ORIGIN` 默认留空（同源 WebUI 不需要 CORS）；只有明确要跨域托管控制台时才设置具体 Origin 或 `API_ALLOW_ORIGIN=*`。
 
 ## 私网 SOCKS5 连不上
 
@@ -77,7 +118,7 @@ sudo 5gpn add-direct-domain box2.example.com
 
 ## Telegram 健康告警
 
-`5gpn-health.timer` 每 10 分钟跑 `health-notify.sh`：仅在配置了 `tgbot.env` 时发信；失败次数变化或恢复时推送。手动验证：
+`5gpn-health.timer` 每 20 分钟跑 `health-notify.sh`：配置了 `tgbot.env` 时发 Telegram；配置 `/opt/5gpn/etc/webhook.env` 且包含 `WEBHOOK_URL=...` 时，也会在状态变化时 POST JSON `{text, fail, ok}`。失败次数变化或恢复时推送。手动验证：
 
 ```bash
 sudo systemctl list-timers 5gpn-health.timer

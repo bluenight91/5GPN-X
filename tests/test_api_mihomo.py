@@ -382,6 +382,17 @@ class ProxyHandlerTests(unittest.TestCase):
         conn.close()
         return status, hdrs
 
+    def _bootstrap_cookie(self):
+        status, hdrs = self._get("/mihomo/index.html?token=" + self.api.TOKEN)
+        self.assertEqual(status, 200)
+        sc = hdrs.get("Set-Cookie", "")
+        self.assertIn("pgw_mihomo=", sc)
+        value = urllib.parse.unquote(sc.split("pgw_mihomo=", 1)[1].split(";", 1)[0])
+        self.assertTrue(value)
+        self.assertNotEqual(value, self.api.TOKEN)
+        self.assertTrue(self.api.valid_mihomo_session(value))
+        return {"Cookie": "pgw_mihomo=" + urllib.parse.quote(value, safe="")}
+
     def test_proxy_payload_too_large_413(self):
         conn = self._conn()
         conn.putrequest("POST", "/api/mihomo/proxy/configs")
@@ -422,6 +433,9 @@ class ProxyHandlerTests(unittest.TestCase):
         self.assertEqual(hdrs.get("Referrer-Policy"), "same-origin")
         sc = hdrs.get("Set-Cookie", "")
         self.assertIn("pgw_mihomo=", sc)
+        value = urllib.parse.unquote(sc.split("pgw_mihomo=", 1)[1].split(";", 1)[0])
+        self.assertNotEqual(value, self.api.TOKEN)
+        self.assertTrue(self.api.valid_mihomo_session(value))
         self.assertIn("Path=/;", sc)          # Path=/ 覆盖 /mihomo 与 /api/mihomo/*
         self.assertNotIn("Path=/mihomo", sc)  # 不再局限于静态目录
         self.assertIn("HttpOnly", sc)
@@ -436,8 +450,7 @@ class ProxyHandlerTests(unittest.TestCase):
 
     def test_static_cookie_auth_for_assets(self):
         # iframe 内相对路径子资源带不了 ?token=；文档响应种下的 cookie 供其鉴权
-        status, _ = self._get("/mihomo/_nuxt/app.js",
-                              {"Cookie": "pgw_mihomo=" + self.api.TOKEN})
+        status, _ = self._get("/mihomo/_nuxt/app.js", self._bootstrap_cookie())
         self.assertEqual(status, 200)
         status, _ = self._get("/mihomo/_nuxt/app.js", {"Cookie": "pgw_mihomo=wrong"})
         self.assertEqual(status, 401)
@@ -446,7 +459,7 @@ class ProxyHandlerTests(unittest.TestCase):
 
     # --- pgw_mihomo cookie 放行 /api/mihomo/*（面板 secret 留空） --------------
     def test_mihomo_api_cookie_auth_get_put_delete(self):
-        ck = {"Cookie": "pgw_mihomo=" + self.api.TOKEN}
+        ck = self._bootstrap_cookie()
         # GET：cookie 通过鉴权 -> 反代到死端口 -> 502（而非 401）
         status, _ = self._get("/api/mihomo/proxy/configs", ck)
         self.assertEqual(status, 502)
@@ -473,8 +486,7 @@ class ProxyHandlerTests(unittest.TestCase):
 
     def test_mihomo_cookie_not_accepted_on_other_api(self):
         # 最小权限：cookie 不越权到主控制台路径
-        status, _ = self._get("/api/status",
-                              {"Cookie": "pgw_mihomo=" + self.api.TOKEN})
+        status, _ = self._get("/api/status", self._bootstrap_cookie())
         self.assertEqual(status, 401)
 
     def test_ws_upgrade_cookie_auth_end_to_end(self):
@@ -505,7 +517,7 @@ class ProxyHandlerTests(unittest.TestCase):
             conn.putheader("Connection", "Upgrade")
             conn.putheader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
             conn.putheader("Sec-WebSocket-Version", "13")
-            conn.putheader("Cookie", "pgw_mihomo=" + self.api.TOKEN)
+            conn.putheader("Cookie", self._bootstrap_cookie()["Cookie"])
             conn.endheaders()
             resp = conn.getresponse()
             self.assertEqual(resp.status, 101)

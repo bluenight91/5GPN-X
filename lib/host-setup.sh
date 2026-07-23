@@ -51,7 +51,7 @@ write_performance_sysctl() {
         sy_buf_max=16777216;  sy_swappiness=60
     else
         sy_file_max=10240000; sy_nr_open=2097152;  sy_netdev=65536
-        sy_somaxconn=10240000; sy_conntrack_max=10240000
+        sy_somaxconn=10240000; sy_conntrack_max=1048576
         sy_tcp_syn=65536;     sy_tcp_orphans=10240
         sy_buf_max=134217728; sy_swappiness=0
     fi
@@ -99,7 +99,7 @@ net.netfilter.nf_conntrack_max=${sy_conntrack_max}
 net.netfilter.nf_conntrack_tcp_max_retrans=2
 net.netfilter.nf_conntrack_tcp_timeout_close=2
 net.netfilter.nf_conntrack_tcp_timeout_close_wait=2
-net.netfilter.nf_conntrack_tcp_timeout_established=30
+net.netfilter.nf_conntrack_tcp_timeout_established=600
 net.netfilter.nf_conntrack_tcp_timeout_fin_wait=2
 net.netfilter.nf_conntrack_tcp_timeout_last_ack=2
 net.netfilter.nf_conntrack_tcp_timeout_max_retrans=2
@@ -184,6 +184,52 @@ EOF
     ok "System tuning applied"
 }
 PGW_EXIT_NFT="/etc/5gpn/pgw-exit.nft"
+normalize_client_cidr_value() {
+    local raw="${1:-}" fallback="${2:-172.22.0.0/16}"
+    raw="${raw:-$fallback}"
+    FORCE_WIDE_CIDR="${FORCE_WIDE_CIDR:-0}" python3 - "$raw" "$fallback" <<'PY' 2>/dev/null || printf '%s\n' "$fallback"
+import ipaddress
+import os
+import sys
+
+raw = sys.argv[1].replace(";", ",").replace(" ", ",")
+fallback = sys.argv[2]
+force = os.environ.get("FORCE_WIDE_CIDR", "0") == "1"
+out = []
+try:
+    for item in raw.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        net = ipaddress.ip_network(item, strict=False)
+        if net.version != 4 or not (8 <= net.prefixlen <= 30):
+            raise ValueError
+        if net.prefixlen < 16 and not force:
+            raise ValueError
+        out.append(str(net))
+    if not out:
+        raise ValueError
+except Exception:
+    out = [fallback]
+print(",".join(dict.fromkeys(out)))
+PY
+}
+client_cidr_csv() {
+    normalize_client_cidr_value "$(cat /etc/mosdns/.client_cidr 2>/dev/null || true)"
+}
+client_cidr_list() {
+    client_cidr_csv | tr ',' ' '
+}
+client_cidr_nft_expr() {
+    local list expr
+    list="$(client_cidr_list)"
+    if [[ "$list" == *" "* ]]; then
+        expr="{ ${list// /, } }"
+    else
+        expr="$list"
+    fi
+    printf '%s\n' "$expr"
+}
 detect_ssh_ports() {
     # Union of: the current session's server port, sshd's configured ports and
     # the ports sshd actually listens on. Never assume 22 is the only entrance.
@@ -271,7 +317,7 @@ firewall_preserve_hints() {
     info "FIREWALL_MODE=preserve: leaving the existing host firewall untouched."
     info "Make sure these inbound ports are open (SSH detected on: ${ssh_ports}):"
     info "  TCP ${ssh_ports} (SSH), 853 (DoT), 8111 (iOS profile)"
-    info "  From $(cat /etc/mosdns/.client_cidr 2>/dev/null || echo 172.22.0.0/16) only: TCP/UDP 53 (DNS), TCP 80/443 and UDP 443 (reverse proxy)"
+    info "  From $(client_cidr_csv) only: TCP/UDP 53 (DNS), TCP 80/443 and UDP 443 (reverse proxy)"
     info "  Recommended: per-IP rate limit 10000 qps on DNS/DoT ports"
     info "  TCP 80 must be reachable while Let's Encrypt issues/renews the cert."
 }
@@ -279,7 +325,7 @@ firewall_auto_allow() {
     local ssh_ports="$1" p net
     local tcp_list="${ssh_ports},853,8111"
     local client_nets
-    client_nets="$(cat /etc/mosdns/.client_cidr 2>/dev/null || echo '172.22.0.0/16')"
+    client_nets="$(client_cidr_list)"
     if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'; then
         info "FIREWALL_MODE=auto: adding allow rules to the active UFW profile..."
         for p in ${tcp_list//,/ }; do ufw allow "${p}/tcp" >/dev/null 2>&1 || true; done
@@ -343,20 +389,20 @@ write_auto_allow_persistence() {
         cat <<'AUTO_BODY'
 if command -v nft >/dev/null 2>&1 && nft list chain inet filter input >/dev/null 2>&1; then
     have="$(nft list chain inet filter input 2>/dev/null)"
+    client_expr="${client_nets}"
+    case "$client_expr" in *" "*) client_expr="{ ${client_expr// /, } }" ;; esac
     for p in ${tcp_list//,/ }; do
         printf '%s' "$have" | grep -qE "tcp dport ${p} .*accept" || \
             nft insert rule inet filter input tcp dport "$p" accept comment '"5gpn-auto"' 2>/dev/null || true
     done
-    for net in ${client_nets}; do
-        printf '%s' "$have" | grep -q "${net}.*dport 53" || \
-            nft insert rule inet filter input ip saddr "${net}" tcp dport 53 accept comment '"5gpn-auto"' 2>/dev/null || true
-        printf '%s' "$have" | grep -q "${net}.*udp.*53" || \
-            nft insert rule inet filter input ip saddr "${net}" udp dport 53 accept comment '"5gpn-auto"' 2>/dev/null || true
-        printf '%s' "$have" | grep -q "${net} tcp" || \
-            nft insert rule inet filter input ip saddr "${net}" tcp dport '{ 80, 443 }' accept comment '"5gpn-auto"' 2>/dev/null || true
-        printf '%s' "$have" | grep -q "${net} udp" || \
-            nft insert rule inet filter input ip saddr "${net}" udp dport 443 accept comment '"5gpn-auto"' 2>/dev/null || true
-    done
+    printf '%s' "$have" | grep -q "5gpn-auto.*dport 53" || \
+        nft insert rule inet filter input ip saddr $client_expr tcp dport 53 accept comment '"5gpn-auto"' 2>/dev/null || true
+    printf '%s' "$have" | grep -q "5gpn-auto.*udp.*53" || \
+        nft insert rule inet filter input ip saddr $client_expr udp dport 53 accept comment '"5gpn-auto"' 2>/dev/null || true
+    printf '%s' "$have" | grep -q "5gpn-auto.*tcp.*80" || \
+        nft insert rule inet filter input ip saddr $client_expr tcp dport '{ 80, 443 }' accept comment '"5gpn-auto"' 2>/dev/null || true
+    printf '%s' "$have" | grep -q "5gpn-auto.*udp.*443" || \
+        nft insert rule inet filter input ip saddr $client_expr udp dport 443 accept comment '"5gpn-auto"' 2>/dev/null || true
 elif command -v iptables >/dev/null 2>&1; then
     for p in ${tcp_list//,/ }; do
         iptables -C INPUT -p tcp --dport "$p" -m comment --comment 5gpn-auto -j ACCEPT 2>/dev/null || \
@@ -447,7 +493,7 @@ include "/etc/5gpn/pgw-exit.nft"
 EOF
         sed -i "s/__TCP_PORTS__/${tcp_ports}/" "$tmp_conf"
         local client_cidr socks_port socks_rule
-        client_cidr="$(cat /etc/mosdns/.client_cidr 2>/dev/null || echo '172.22.0.0/16')"
+        client_cidr="$(client_cidr_nft_expr)"
         # Escape for sed replacement (CIDR has dots/slashes).
         sed -i "s#__CLIENT_CIDR__#${client_cidr}#g" "$tmp_conf"
         socks_port="$(cat /opt/5gpn/etc/client-socks.port 2>/dev/null || echo '')"
@@ -484,15 +530,19 @@ EOF
         iptables -A INPUT -p tcp --dport 853 -j ACCEPT
         # DNS 53 — source-restricted + per-IP QPS 10000.
         local client_cidr
-        client_cidr="$(cat /etc/mosdns/.client_cidr 2>/dev/null || echo '172.22.0.0/16')"
-        iptables -A INPUT -s "${client_cidr}" -p tcp --dport 53 -m hashlimit --hashlimit-above 10000/sec --hashlimit-burst 10000 --hashlimit-mode srcip --hashlimit-name dns_tcp53 -j DROP
-        iptables -A INPUT -s "${client_cidr}" -p udp --dport 53 -m hashlimit --hashlimit-above 10000/sec --hashlimit-burst 10000 --hashlimit-mode srcip --hashlimit-name dns_udp53 -j DROP
-        iptables -A INPUT -s "${client_cidr}" -p tcp -m multiport --dports 53,80,443 -j ACCEPT
-        iptables -A INPUT -s "${client_cidr}" -p udp -m multiport --dports 53,443 -j ACCEPT
+        local client_cidr
+        for client_cidr in $(client_cidr_list); do
+            iptables -A INPUT -s "${client_cidr}" -p tcp --dport 53 -m hashlimit --hashlimit-above 10000/sec --hashlimit-burst 10000 --hashlimit-mode srcip --hashlimit-name dns_tcp53 -j DROP
+            iptables -A INPUT -s "${client_cidr}" -p udp --dport 53 -m hashlimit --hashlimit-above 10000/sec --hashlimit-burst 10000 --hashlimit-mode srcip --hashlimit-name dns_udp53 -j DROP
+            iptables -A INPUT -s "${client_cidr}" -p tcp -m multiport --dports 53,80,443 -j ACCEPT
+            iptables -A INPUT -s "${client_cidr}" -p udp -m multiport --dports 53,443 -j ACCEPT
+        done
         local socks_port
         socks_port="$(cat /opt/5gpn/etc/client-socks.port 2>/dev/null || echo '')"
         if [[ -f /opt/5gpn/etc/client-socks.enabled && "$socks_port" =~ ^[0-9]+$ ]]; then
-            iptables -A INPUT -s "${client_cidr}" -p tcp --dport "${socks_port}" -m comment --comment 5gpn-socks -j ACCEPT
+            for client_cidr in $(client_cidr_list); do
+                iptables -A INPUT -s "${client_cidr}" -p tcp --dport "${socks_port}" -m comment --comment 5gpn-socks -j ACCEPT
+            done
         fi
         iptables -A INPUT -p icmp -j ACCEPT
         iptables -P FORWARD ACCEPT
@@ -571,7 +621,7 @@ setup_firewall() {
         managed)  firewall_managed_apply "$tcp_ports" "$tcp_ports_ipt" || true ;;
     esac
     local wl
-    wl="$(cat /etc/mosdns/.client_cidr 2>/dev/null || echo '172.22.0.0/16')"
+    wl="$(client_cidr_csv)"
     ok "Firewall configured (reverse proxy whitelist: ${wl})"
     # Re-apply optional client SOCKS allow if previously enabled.
     if declare -F firewall_socks_sync >/dev/null 2>&1; then
@@ -605,7 +655,7 @@ firewall_socks_sync() {
     # Ensure firewall matches /opt/5gpn/etc/client-socks.enabled + .port.
     local port cidr mode
     port="$(cat /opt/5gpn/etc/client-socks.port 2>/dev/null || echo '38443')"
-    cidr="$(cat /etc/mosdns/.client_cidr 2>/dev/null || echo '172.22.0.0/16')"
+    cidr="$(client_cidr_csv)"
     [[ "$port" =~ ^[0-9]+$ ]] || port=38443
     firewall_socks_remove_rules
     if [[ ! -f /opt/5gpn/etc/client-socks.enabled ]]; then
@@ -626,13 +676,21 @@ firewall_socks_sync() {
             ssh_ports="$(detect_ssh_ports 2>/dev/null || echo 22)"
             tcp_ports_ipt="${ssh_ports},8111"
             tcp_ports="${tcp_ports_ipt//,/, }"
-            firewall_managed_apply "$tcp_ports" "$tcp_ports_ipt" >/dev/null 2>&1 || true
+            firewall_managed_apply "$tcp_ports" "$tcp_ports_ipt" >/dev/null 2>&1 || return 1
             ;;
         auto|preserve|*)
             if command -v nft >/dev/null 2>&1 && nft list chain inet filter input >/dev/null 2>&1; then
-                nft insert rule inet filter input ip saddr "$cidr" tcp dport "$port" accept comment '"5gpn-socks"' 2>/dev/null || true
+                local cidr_expr
+                cidr_expr="$(client_cidr_nft_expr)"
+                nft insert rule inet filter input ip saddr $cidr_expr tcp dport "$port" accept comment '"5gpn-socks"' 2>/dev/null || return 1
             elif command -v iptables >/dev/null 2>&1; then
-                iptables -I INPUT 1 -s "$cidr" -p tcp --dport "$port" -m comment --comment 5gpn-socks -j ACCEPT 2>/dev/null || true
+                local one
+                for one in $(client_cidr_list); do
+                    iptables -I INPUT 1 -s "$one" -p tcp --dport "$port" -m comment --comment 5gpn-socks -j ACCEPT 2>/dev/null || return 1
+                done
+            else
+                warn "No nftables/iptables INPUT firewall found for SOCKS allow rule."
+                return 1
             fi
             if [[ "$mode" == "preserve" ]]; then
                 info "FIREWALL_MODE=preserve: inserted ephemeral SOCKS allow ${cidr} → TCP ${port} (tag 5gpn-socks); persist it in your own firewall if needed."

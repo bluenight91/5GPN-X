@@ -52,6 +52,10 @@ api_body="$(cat "${api}")"
 [[ "${install_body}" == *'5gpn-api.service'* ]] || fail "install.sh must install a 5gpn-api.service unit"
 [[ "${install_body}" == *'systemctl restart 5gpn-api.service'* ]] || fail "setup_api must restart the api service so upgrades take effect"
 [[ "${install_body}" == *'s/^API_TOKEN=//p'* ]] || fail "setup_api must reuse an existing API token on re-run"
+[[ "${install_body}" == *'s/^API_BIND=//p'* ]] || fail "setup_api must reuse an existing API_BIND on re-run"
+[[ "${install_body}" == *'bind="${bind:-127.0.0.1}"'* ]] || fail "setup_api must default API_BIND to loopback"
+[[ "${install_body}" == *'API_ALLOW_ORIGIN=${allow_origin}'* ]] || fail "setup_api must not default CORS to wildcard"
+[[ "${install_body}" == *'API_BIND=0.0.0.0'* ]] || fail "setup_api warning/help must document explicit public bind"
 [[ "${api_body}" == *'"UP", "DOWN", "n/a", "udp"'* ]] || fail "api parse_check must accept the udp state"
 
 # --- security hardening (borrowed from moooyo/5gpn review) ---------------------

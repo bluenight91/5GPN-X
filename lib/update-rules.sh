@@ -196,7 +196,7 @@ PY
 }
 
 render_config() {
-    local server_ip remote_dns local_dns cache_size
+    local server_ip remote_dns local_dns cache_size local_concurrent client_match_cidrs
     local remote_primary remote_secondary local_primary local_secondary
     # The merged template loads wloc_domains / direct_domains from these files;
     # mosdns FATALs when a referenced file is missing.
@@ -205,20 +205,40 @@ render_config() {
     [[ -n "$server_ip" ]] || server_ip="127.0.0.1"
     remote_dns=$(cat "$BASE_DIR/.remote_dns" 2>/dev/null || printf '%s ' "${DEFAULT_REMOTE_DNS[@]}")
     local_dns=$(cat "$BASE_DIR/.local_dns" 2>/dev/null || printf '%s ' "${DEFAULT_LOCAL_DNS[@]}")
-    cache_size=$(cat "$BASE_DIR/.cache_size" 2>/dev/null || echo 500000)
-    [[ "$cache_size" =~ ^[0-9]+$ ]] || cache_size=500000
+    cache_size=$(cat "$BASE_DIR/.cache_size" 2>/dev/null || echo 100000)
+    [[ "$cache_size" =~ ^[0-9]+$ ]] || cache_size=100000
+    local_concurrent=4
+    [[ "$cache_size" -le 20000 ]] && local_concurrent=2
     client_cidr=$(cat "$BASE_DIR/.client_cidr" 2>/dev/null || echo "172.22.0.0/16")
-    # Basic IPv4 CIDR sanity; fall back to the historical NPN default.
-    if ! python3 - "$client_cidr" <<'PY'
-import ipaddress, sys
+    # Basic IPv4 CIDR sanity; comma-separated multi-CIDR is rendered as
+    # mosdns "client_ip a b c" (OR semantics within one matcher).
+    if ! client_match_cidrs="$(FORCE_WIDE_CIDR="${FORCE_WIDE_CIDR:-0}" python3 - "$client_cidr" <<'PY'
+import ipaddress
+import os
+import sys
+
 try:
-    net = ipaddress.ip_network(sys.argv[1].strip(), strict=False)
-    assert net.version == 4 and 8 <= net.prefixlen <= 30
+    raw = sys.argv[1].replace(";", ",").replace(" ", ",")
+    force = os.environ.get("FORCE_WIDE_CIDR", "0") == "1"
+    out = []
+    for item in raw.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        net = ipaddress.ip_network(item, strict=False)
+        if net.version != 4 or not (8 <= net.prefixlen <= 30):
+            raise ValueError
+        if net.prefixlen < 16 and not force:
+            raise ValueError
+        out.append(str(net))
+    if not out:
+        raise ValueError
+    print(" ".join(dict.fromkeys(out)))
 except Exception:
     raise SystemExit(1)
 PY
-    then
-        client_cidr="172.22.0.0/16"
+    )"; then
+        client_match_cidrs="172.22.0.0/16"
     fi
     # ECS for the China chain (default 139.226.48.0/24; overridable via .ecs,
     # set at install time with PGW_ECS or later with --set-ecs).
@@ -248,7 +268,7 @@ PY
 
     python3 - "$MOSDNS_TEMPLATE" "$MOSDNS_CONF.tmp" "$server_ip" "$cache_size" \
         "$remote_primary" "$remote_secondary" "$local_primary" "$local_secondary" "$ecs_host" \
-        "$client_cidr" <<'PY'
+        "$client_match_cidrs" "$local_concurrent" <<'PY'
 import sys
 
 template, output, server_ip, cache_size = sys.argv[1:5]
@@ -263,6 +283,7 @@ replacements = {
     "__LOCAL_SECONDARY_UPSTREAMS__": sys.argv[8],
     "__ECS_HOST__": sys.argv[9],
     "__CLIENT_CIDR__": sys.argv[10],
+    "__LOCAL_CONCURRENT__": sys.argv[11],
 }
 for marker, value in replacements.items():
     content = content.replace(marker, value)

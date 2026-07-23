@@ -45,6 +45,7 @@ ADMIN_IDS = {
 }
 MGMT = os.environ.get("MGMT", "/opt/5gpn/bin/5gpn-ctl")
 DOCTOR = os.environ.get("DOCTOR", "/opt/5gpn/scripts/doctor.sh")
+SNAPSHOT = os.environ.get("SNAPSHOT", "/opt/5gpn/scripts/snapshot.sh")
 INSTALL_SH = "/opt/5gpn/install.sh"
 API = "https://api.telegram.org/bot%s/" % TOKEN
 
@@ -70,6 +71,7 @@ EXIT_ADD_NAME_RE = re.compile(r"^[\w\-\u4e00-\u9fff]{1,16}$", re.UNICODE)  # 'lo
 DOMAIN_RE = re.compile(r"^(?=.{1,253}$)([A-Za-z0-9]([A-Za-z0-9_-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,}$")
 DNS_LIST_RE = re.compile(r"^[0-9A-Fa-f:.,\s]+$")
 DNS_UPSTREAM_SCHEMES = {"https", "tls", "udp", "tcp"}
+SNAP_ID_RE = re.compile(r"^[A-Za-z0-9-]{1,55}$")
 WWW_DIR = "/opt/5gpn/www"
 WLOC_DIR = "/opt/5gpn/etc/wloc"
 WLOC_LOCATION = os.path.join(WLOC_DIR, "location.json")
@@ -686,33 +688,24 @@ def _host_pgw_exit_ok():
 
 
 def _reconcile_doctor_data(data):
-    """Fix classic false negatives when host probes disagree with doctor.sh."""
+    """Fix only the tgbot liveness false negative: this process is answering."""
     if not isinstance(data, dict):
         return data, []
     checks = list(data.get("checks") or [])
     fixed = []
 
-    def bump(check_name, probe_ok, ok_detail="running (bot-verified)"):
+    def bump_tgbot():
         nonlocal checks
         for c in checks:
-            if c.get("check") == check_name and c.get("level") == "fail" and probe_ok:
+            check_name = str(c.get("check") or "")
+            if "5gpn-tgbot" in check_name and c.get("level") == "fail":
                 c["level"] = "ok"
-                c["detail"] = ok_detail
+                c["detail"] = "running (bot process alive)"
                 fixed.append(check_name)
                 return
 
-    # If this Bot code is answering, 5gpn-tgbot is necessarily up.
-    bump("服务 5gpn-tgbot", True, "running (bot process alive)")
-    bump("服务 5gpn-api",
-         _host_unit_active("5gpn-api") or _host_port_listen(8444),
-         "running (bot-verified)")
-    cur = str(data.get("current_exit") or "")
-    if cur == "smart":
-        bump("服务 smart",
-             _host_unit_active("5gpn-mihomo@smart") or _host_port_listen(9090),
-             "running (bot-verified)")
-    bump("fwmark 规则", _host_fwmark_ok(), "present (bot-verified)")
-    bump("pgw_exit 表", _host_pgw_exit_ok(), "present (bot-verified)")
+    # 复核层仅保留 tgbot「进程存活」兜底，去掉「仅端口开放就改 PASS」。
+    bump_tgbot()
 
     pass_n = sum(1 for c in checks if c.get("level") == "ok")
     fail_n = sum(1 for c in checks if c.get("level") == "fail")
@@ -725,21 +718,42 @@ def _reconcile_doctor_data(data):
     return data, fixed
 
 
-def op_doctor():
-    """Compact FAIL/WARN summary for Telegram (full detail → 诊断报告)."""
-    doctor = DOCTOR if os.path.isfile(DOCTOR) else "/opt/5gpn/scripts/doctor.sh"
-    env = {
+def _doctor_env():
+    return {
         "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         "LANG": "C.UTF-8",
         "LC_ALL": "C.UTF-8",
-        "HOME": os.environ.get("HOME") or "/root",
+        "HOME": "/root",
         "BASE_DIR": "/opt/5gpn",
         "CONF_DIR": "/opt/5gpn/etc",
         "PYTHONIOENCODING": "utf-8",
         "PYTHONUTF8": "1",
     }
-    ok, out = run2(["/bin/bash", doctor, "--json"], timeout=180,
-                   env=env, merge_stderr=False)
+
+
+def _run_doctor_json(doctor):
+    systemd_cmd = [
+        "systemd-run", "--quiet", "--wait", "--pipe", "--collect",
+        "-p", "User=root",
+        "-E", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "-E", "LANG=C.UTF-8",
+        "-E", "LC_ALL=C.UTF-8",
+        "-E", "PYTHONIOENCODING=utf-8",
+        "-E", "PYTHONUTF8=1",
+        "-E", "HOME=/root",
+        "/bin/bash", doctor, "--json",
+    ]
+    ok, out = run2(systemd_cmd, timeout=180, merge_stderr=False)
+    if ok:
+        return ok, out
+    return run2(["/bin/bash", doctor, "--json"], timeout=180,
+                env=_doctor_env(), merge_stderr=False)
+
+
+def op_doctor():
+    """Compact FAIL/WARN summary for Telegram (full detail → 诊断报告)."""
+    doctor = DOCTOR if os.path.isfile(DOCTOR) else "/opt/5gpn/scripts/doctor.sh"
+    ok, out = _run_doctor_json(doctor)
     raw = (out or "").strip()
     data = None
     if raw:
@@ -806,7 +820,7 @@ def op_doctor():
         lines.append("💡 建议执行 <code>sudo 5gpn update</code> 完成运行时刷新")
     if fixed:
         lines.append("")
-        lines.append("ℹ️ 已自动纠正 Bot 环境下的误报：<code>%s</code>"
+        lines.append("ℹ️ 已自动纠正 Bot 进程存活误报：<code>%s</code>"
                      % html.escape(", ".join(fixed)))
     lines.append("")
     lines.append("完整现场请用「诊断报告」下载文件。")
@@ -1303,7 +1317,7 @@ def rule_type_menu():
     return rows
 
 
-def _rule_target_buttons(prefix):
+def _rule_target_buttons(prefix, back_target="rules:add"):
     rows, row = [], []
     for target in _targets():
         row.append({"text": target, "callback_data": "%s:%s" % (prefix, target)})
@@ -1314,7 +1328,7 @@ def _rule_target_buttons(prefix):
         rows.append(row)
     rows.append([{"text": "🌍 直连", "callback_data": "%s:direct" % prefix},
                  {"text": "🚫 拒绝", "callback_data": "%s:block" % prefix}])
-    rows.append([{"text": "« 返回", "callback_data": "rules:add"}])
+    rows.append([{"text": "« 返回", "callback_data": back_target}])
     return rows
 
 
@@ -1536,6 +1550,7 @@ def op_set_dns(kind, text):
     return "❌ <b>DNS 上游更新失败</b>\n%s" % html.escape(_reason(out))
 
 
+GFWLIST_PATH = "/etc/mosdns/gfwlist.txt"
 DIRECT_DOMAINS_PATH = "/etc/mosdns/direct-domains.txt"
 
 
@@ -1605,6 +1620,134 @@ def op_set_direct_domains(text):
     if ok:
         return "✅ <b>DNS 直连名单已替换</b>（%d 个域名）" % len(uniq)
     return "❌ <b>保存失败</b>\n%s" % html.escape(_reason(out))
+
+
+def validate_ecs(value):
+    value = (value or "").strip()
+    if not value:
+        return ""
+    try:
+        if "/" in value:
+            net = ipaddress.ip_network(value, strict=False)
+            if net.version != 4 or net.prefixlen > 30:
+                return ""
+        else:
+            ip = ipaddress.ip_address(value)
+            if ip.version != 4:
+                return ""
+    except ValueError:
+        return ""
+    return value
+
+
+def op_set_ecs(value):
+    ecs = validate_ecs(value)
+    if not ecs:
+        return "ECS 格式无效。请发送 IPv4 地址或 IPv4/前缀，例如 <code>139.226.48.0/24</code>。"
+    ok, out = run2(["bash", MGMT, "--set-ecs", ecs], timeout=180)
+    if ok:
+        return "✅ <b>ECS 已更新</b>\n<code>%s</code>\n%s" % (
+            html.escape(ecs), html.escape(_strip_ansi(out)[-800:]))
+    return "❌ <b>ECS 设置失败</b>\n%s" % html.escape(_reason(out))
+
+
+def _domain_suffix_set(path):
+    values = set()
+    for line in _read_file(path).splitlines():
+        d = line.strip().lower().strip(".")
+        if d and not d.startswith("#"):
+            values.add(d)
+    return values
+
+
+def _domain_hijacked(domain, suffixes):
+    parts = domain.split(".")
+    for i in range(len(parts) - 1):
+        if ".".join(parts[i:]) in suffixes:
+            return True
+    return domain in suffixes
+
+
+def route_test(domain):
+    d = (domain or "").lower().strip().strip(".").lstrip("*.")
+    if not DOMAIN_RE.match(d):
+        return {"error": "请输入合法域名"}
+    gset = _domain_suffix_set(GFWLIST_PATH)
+    dset = _domain_suffix_set(DIRECT_DOMAINS_PATH)
+    in_direct = _domain_hijacked(d, dset)
+    in_gfw = _domain_hijacked(d, gset)
+    final = None
+    matched = None
+    for raw in _read_file(RULES_PATH).splitlines():
+        s = raw.strip()
+        if not s or s[0] in "#;":
+            continue
+        parts = [x.strip() for x in s.split(",")]
+        typ = parts[0].upper()
+        if typ == "FINAL" and len(parts) >= 2:
+            final = parts[-1]
+            continue
+        if matched:
+            continue
+        if typ == "DOMAIN-SUFFIX" and len(parts) >= 3:
+            value = parts[1].lower().lstrip(".")
+            if d == value or d.endswith("." + value):
+                matched = (s, parts[-1])
+        elif typ == "DOMAIN" and len(parts) >= 3 and d == parts[1].lower():
+            matched = (s, parts[-1])
+        elif typ == "DOMAIN-KEYWORD" and len(parts) >= 3 and parts[1].lower() in d:
+            matched = (s, parts[-1])
+    category = matched[1] if matched else (final or "Proxy")
+    policy = dict(_policy_map())
+    target = category if category in ("direct", "block") else policy.get(category, category)
+    return {
+        "domain": d,
+        "hijacked": not in_direct,
+        "direct_bypass": in_direct,
+        "in_gfwlist": in_gfw,
+        "matched": matched[0] if matched else ("FINAL," + (final or "?")),
+        "category": category,
+        "target": target,
+    }
+
+
+def op_route_test(domain):
+    result = route_test(domain)
+    if result.get("error"):
+        return result["error"]
+    return (
+        "🧪 <b>路由测试</b>：<code>%s</code>\n"
+        "DNS 劫持：<b>%s</b>（直连名单：%s / GFWList：%s）\n"
+        "命中规则：<code>%s</code>\n"
+        "分类：<code>%s</code> → mihomo 出口：<b>%s</b>\n\n"
+        "说明：规则里的分组名先查 <code>policy-map.conf</code>，再映射到 mihomo 出口；"
+        "RULE-SET / GEOSITE / GEOIP / ChinaList 不在此轻量测试中展开。"
+        % (
+            html.escape(result["domain"]),
+            "是" if result["hijacked"] else "否",
+            "是" if result["direct_bypass"] else "否",
+            "是" if result["in_gfwlist"] else "否",
+            html.escape(result["matched"]),
+            html.escape(result["category"]),
+            html.escape(result["target"]),
+        )
+    )
+
+
+def op_proxy_domain(domain, target):
+    domain = (domain or "").strip().lower().rstrip(".").lstrip("*.")
+    valid_targets = set(_targets()) | {"direct", "block"}
+    if not DOMAIN_RE.match(domain):
+        return "域名格式无效。请发送类似 <code>openai.com</code> 的完整域名。"
+    if target not in valid_targets:
+        return "目标已变化，请重新选择。"
+    ok, out = run2(["bash", MGMT, "--proxy-domain", domain, target], timeout=600)
+    if ok:
+        return ("✅ <b>代理域名规则已应用</b>\n"
+                "<code>%s</code> → <b>%s</b>\n<pre>%s</pre>"
+                % (html.escape(domain), html.escape(target),
+                   html.escape(_strip_ansi(out)[-1200:])))
+    return "❌ <b>代理域名失败</b>\n%s" % html.escape(_reason(out))
 
 
 def direct_domains_menu():
@@ -1747,10 +1890,74 @@ def op_snapshot():
     return "❌ <b>快照失败</b>\n%s" % html.escape(_reason(out))
 
 
-def op_rollback():
-    ok, out = run2(["bash", MGMT, "--rollback"], timeout=300)
+def _snapshot_script():
+    return SNAPSHOT if os.path.isfile(SNAPSHOT) else "/opt/5gpn/scripts/snapshot.sh"
+
+
+def _snapshot_list_raw():
+    return run2(["bash", _snapshot_script(), "list"], timeout=60)
+
+
+def _snapshot_ids_from_list(out):
+    ids = []
+    for line in _strip_ansi(out).splitlines():
+        parts = line.strip().split()
+        if not parts or parts[0] == "ID":
+            continue
+        snap_id = parts[0]
+        if SNAP_ID_RE.match(snap_id):
+            ids.append(snap_id)
+    return ids
+
+
+def op_snapshot_list():
+    ok, out = _snapshot_list_raw()
+    body = html.escape(_strip_ansi(out)[-2500:] or "（没有快照）")
     if ok:
-        return ("✅ <b>已回滚到最近快照</b>\n<pre>%s</pre>" % html.escape(_strip_ansi(out)[-1500:]))
+        return "📜 <b>快照列表</b>\n<pre>%s</pre>" % body
+    return "❌ <b>读取快照失败</b>\n<pre>%s</pre>" % body
+
+
+def snapshot_list_view():
+    ok, out = _snapshot_list_raw()
+    body = html.escape(_strip_ansi(out)[-2500:] or "（没有快照）")
+    head = "📜 <b>快照列表</b>" if ok else "❌ <b>读取快照失败</b>"
+    rows = []
+    if ok:
+        for snap_id in _snapshot_ids_from_list(out)[:5]:
+            rows.append([{"text": "⏪ 回滚 " + snap_id,
+                          "callback_data": "rollback:" + snap_id}])
+    rows.append([{"text": "⏪ 回滚最新", "callback_data": "act:rollback"}])
+    rows.append([{"text": "« 返回", "callback_data": "menu:ops"}])
+    return "%s\n<pre>%s</pre>" % (head, body), rows
+
+
+def edit_snapshot_list_async(cb):
+    key = _busy_key_from_cb(cb)
+
+    def go():
+        try:
+            text, keyboard = snapshot_list_view()
+            edit(cb, text, keyboard)
+        finally:
+            BUSY.discard(key)
+
+    BUSY.add(key)
+    background(go)
+
+
+def op_rollback(snap_id="latest"):
+    snap_id = (snap_id or "latest").strip()
+    if snap_id != "latest" and not SNAP_ID_RE.match(snap_id):
+        return "快照 ID 无效。"
+    argv = ["bash", MGMT, "--rollback"]
+    if snap_id != "latest":
+        argv.append(snap_id)
+    ok, out = run2(argv, timeout=300)
+    if ok:
+        label = "最近快照" if snap_id == "latest" else "快照 %s" % snap_id
+        return ("✅ <b>已回滚到%s</b>\n<pre>%s</pre>"
+                % (html.escape(label), html.escape(_strip_ansi(out)[-1500:])))
     return "❌ <b>回滚失败</b>\n%s" % html.escape(_reason(out))
 
 
@@ -2217,8 +2424,10 @@ def ops_menu():
     return [
         [{"text": "🩺 自检 doctor", "callback_data": "act:doctor"},
          {"text": "🧾 诊断报告", "callback_data": "act:report"}],
-        [{"text": "💾 快照", "callback_data": "act:snapshot"},
-         {"text": "⏪ 回滚", "callback_data": "act:rollback"}],
+        [{"text": "💾 创建快照", "callback_data": "act:snapshot"},
+         {"text": "📜 快照列表", "callback_data": "act:snaplist"}],
+        [{"text": "⏪ 回滚最新", "callback_data": "act:rollback"},
+         {"text": "🧭 向导", "callback_data": "wiz:start"}],
         [{"text": "🧦 私网 SOCKS5", "callback_data": "menu:socks"}],
         [{"text": "♻️ 重启服务", "callback_data": "act:restart"},
          {"text": "📜 日志", "callback_data": "menu:logs"}],
@@ -2276,6 +2485,8 @@ def rules_menu():
          {"text": "🗑 删除规则", "callback_data": "menu:rules_del"}],
         [{"text": "➕ 添加规则集", "callback_data": "rules:addset"},
          {"text": "🗑 删规则集", "callback_data": "menu:rulesets_del"}],
+        [{"text": "🌐 代理域名", "callback_data": "rules:proxy_domain"},
+         {"text": "🧪 路由测试", "callback_data": "rules:route_test"}],
         [{"text": "🎯 分类→出口映射", "callback_data": "menu:policy"}],
         [{"text": "🔄 更新规则", "callback_data": "act:update_rules"},
          {"text": "⚡ 启用分流", "callback_data": "rules:enable"}],
@@ -2326,7 +2537,8 @@ def policy_menu():
     rows = []
     pm = _policy_map()
     if not pm:
-        rows.append([{"text": "（还没有分类，先在服务器 --import-rules）", "callback_data": "menu:rules"}])
+        rows.append([{"text": "（还没有分类：用「分类→出口映射」添加，或 CLI: 5gpn set-policy / import-rules）",
+                      "callback_data": "menu:rules"}])
     for i, (cat, tgt) in enumerate(pm):
         rows.append([{"text": "%s → %s" % (cat, tgt), "callback_data": "pol:%d" % i}])
     rows.append([{"text": "« 返回", "callback_data": "menu:rules"}])
@@ -2389,10 +2601,20 @@ def dot_menu():
         [{"text": "🌐 更改域名", "callback_data": "dot:domain"}],
         [{"text": "🌍 更改国际 DNS", "callback_data": "dot:dns_remote"}],
         [{"text": "🇨🇳 更改国内 DNS", "callback_data": "dot:dns_local"}],
-        [{"text": "🛡 客户端网段", "callback_data": "menu:cidr"}],
+        [{"text": "🛡 客户端网段", "callback_data": "menu:cidr"},
+         {"text": "🌏 设置 ECS", "callback_data": "dot:ecs"}],
         [{"text": "🔓 DNS 直连域名", "callback_data": "menu:direct"}],
         [{"text": "🔄 续期证书", "callback_data": "act:renew"}],
         [{"text": "« 返回", "callback_data": "menu:main"}],
+    ]
+
+
+def wizard_menu():
+    return [
+        [{"text": "1️⃣ 探测客户端网段", "callback_data": "wiz:cidr"}],
+        [{"text": "2️⃣ 添加出口", "callback_data": "wiz:add_exit"}],
+        [{"text": "3️⃣ doctor 自检", "callback_data": "wiz:doctor"}],
+        [{"text": "« 返回", "callback_data": "menu:ops"}],
     ]
 
 
@@ -2553,6 +2775,39 @@ def handle_message(msg):
         PENDING[chat_id] = {"action": "rules_addset_target",
                             "ruleset_url": ruleset_url, "prompt_mid": mid}
         return
+    if state and state.get("action") == "proxy_domain":
+        prompt_mid = state.get("prompt_mid")
+        domain_text = text.strip().lower().rstrip(".").lstrip("*.")
+        background(delete_message, chat_id, msg.get("message_id"))
+        if not DOMAIN_RE.match(domain_text):
+            state["prompt_mid"] = upsert_console(
+                chat_id,
+                "域名格式无效。请发送类似 <code>openai.com</code> 的完整域名。",
+                cancel_kb("rules"), message_id=prompt_mid)
+            return
+        mid = upsert_console(
+            chat_id,
+            "请选择 <code>%s</code> 的目标出口 / 直连 / 拒绝：" % html.escape(domain_text),
+            _rule_target_buttons("pdomt", "menu:rules"), message_id=prompt_mid)
+        PENDING[chat_id] = {"action": "proxy_domain_target",
+                            "domain": domain_text, "prompt_mid": mid}
+        return
+    if state and state.get("action") == "route_test":
+        prompt_mid = state.get("prompt_mid")
+        domain_text = text
+        PENDING.pop(chat_id, None)
+        background(delete_message, chat_id, msg.get("message_id"))
+        mid = upsert_console(chat_id, "⏳ 正在测试域名路由…", message_id=prompt_mid)
+        console_async(chat_id, lambda: op_route_test(domain_text), rules_menu(), message_id=mid)
+        return
+    if state and state.get("action") == "ecs_set":
+        prompt_mid = state.get("prompt_mid")
+        ecs_text = text
+        PENDING.pop(chat_id, None)
+        background(delete_message, chat_id, msg.get("message_id"))
+        mid = upsert_console(chat_id, "⏳ 正在设置 ECS 并刷新 DNS 规则…", message_id=prompt_mid)
+        console_async(chat_id, lambda: op_set_ecs(ecs_text), dot_menu(), message_id=mid)
+        return
     if state and state.get("action") == "wloc_location":
         prompt_mid = state.get("prompt_mid")
         try:
@@ -2662,6 +2917,9 @@ def handle_callback(cb):
         PENDING.pop(chat_id, None)
         page, keyboard = _wloc_page()
         edit(cb, page, keyboard)
+    elif data == "cancel:ops":
+        PENDING.pop(chat_id, None)
+        edit(cb, "🛠 <b>运维</b>\n选择一个操作：", ops_menu())
     elif data == "menu:main":
         PENDING.pop(chat_id, None)
         edit(cb, "选择一个操作：", main_menu())
@@ -2672,7 +2930,10 @@ def handle_callback(cb):
     elif data == "menu:rulesets_del":
         edit(cb, "选择要删除的规则集：", rulesets_del_menu())
     elif data == "menu:policy":
-        edit(cb, "🎯 <b>分类 → 出口</b> 映射（点一个分类来修改目标）：", policy_menu())
+        edit(cb,
+             "🎯 <b>分类 → 出口</b> 映射（点一个分类来修改目标）：\n"
+             "规则里的分组名先进入 <code>policy-map.conf</code>，再映射到 mihomo 出口 / direct / block。",
+             policy_menu())
     elif data == "menu:exits":
         edit(cb, "⏳ 正在获取当前出口信息…")
         edit_async(cb, exits_overview_text, keyboard=exits_menu())
@@ -2697,6 +2958,14 @@ def handle_callback(cb):
         edit_async(cb, op_client_socks_status, client_socks_menu())
     elif data == "menu:logs":
         edit(cb, "选择要查看日志的服务：", services_menu("logs", "menu:ops"))
+    elif data == "wiz:start":
+        edit(cb,
+             "🧭 <b>首次配置向导</b>\n\n"
+             "建议按顺序完成：\n"
+             "1. 探测客户端网段（用于 DNS 劫持和防火墙放行）\n"
+             "2. 添加至少一个出口节点\n"
+             "3. 运行 doctor 确认服务、路由和规则状态",
+             wizard_menu())
 
     # ---- conversational starts (edit prompt into the same bubble) ----
     elif data == "rules:set":
@@ -2759,6 +3028,22 @@ def handle_callback(cb):
              "支持格式：mihomo <code>.mrs</code>、Clash YAML、纯文本规则集\n"
              "下一步选择目标出口。添加后点「🔄 更新规则」可立即拉取生效。",
              cancel_kb("rules"))
+    elif data == "rules:proxy_domain":
+        PENDING[chat_id] = {"action": "proxy_domain", "prompt_mid": cb_mid}
+        edit(cb,
+             "🌐 <b>代理域名</b>\n\n"
+             "发送一个域名；下一步选择目标出口 / direct / block。\n"
+             "这会同时写入 DNS 劫持名单和分流规则。\n\n"
+             "示例：<code>openai.com</code>",
+             cancel_kb("rules"))
+    elif data == "rules:route_test":
+        PENDING[chat_id] = {"action": "route_test", "prompt_mid": cb_mid}
+        edit(cb,
+             "🧪 <b>路由测试</b>\n\n"
+             "发送一个域名，我会根据 <code>rules.conf</code>、<code>policy-map.conf</code>、"
+             "GFWList 和 DNS 直连名单估算它会走哪个 mihomo 出口。\n\n"
+             "示例：<code>chat.openai.com</code>",
+             cancel_kb("rules"))
     elif data.startswith("rsadd:"):
         state = PENDING.get(chat_id) or {}
         parts = data.split(":", 1)
@@ -2775,6 +3060,21 @@ def handle_callback(cb):
                  % (html.escape(ruleset_url), html.escape(target)))
             edit_async(cb, lambda: op_add_ruleset("%s %s" % (ruleset_url, target)),
                        back_kb("menu:rules"))
+    elif data.startswith("pdomt:"):
+        state = PENDING.get(chat_id) or {}
+        parts = data.split(":", 1)
+        target = parts[1] if len(parts) == 2 else ""
+        domain = state.get("domain") or ""
+        valid_targets = set(_targets()) | {"direct", "block"}
+        if state.get("action") != "proxy_domain_target" or not domain:
+            edit(cb, "代理域名输入已过期，请重新开始。", back_kb("menu:rules"))
+        elif target not in valid_targets:
+            edit(cb, "目标已变化，请重新选择。", _rule_target_buttons("pdomt", "menu:rules"))
+        else:
+            PENDING.pop(chat_id, None)
+            edit(cb, "⏳ 正在设置 <code>%s</code> → <b>%s</b>…"
+                 % (html.escape(domain), html.escape(target)))
+            edit_async(cb, lambda: op_proxy_domain(domain, target), back_kb("menu:rules"))
     elif data == "exit_add":
         PENDING[chat_id] = {"action": "add_exit_link", "prompt_mid": cb_mid}
         edit(cb,
@@ -2785,6 +3085,16 @@ def handle_callback(cb):
              "🔐 为避免凭据留在聊天记录中，进入此步骤后，你发送的下一条消息会在读取后尝试自动删除；"
              "即使解析失败也会删除。删除失败时会提醒你手动处理。" % SUPPORTED_EXIT_LINKS,
              cancel_kb("exits"))
+    elif data == "wiz:add_exit":
+        PENDING[chat_id] = {"action": "add_exit_link", "prompt_mid": cb_mid}
+        edit(cb,
+             "2️⃣ <b>添加出口</b>\n\n"
+             "直接发送一条或多条节点链接，每行一条；我会优先使用链接里的节点名称作为出口名。\n\n"
+             "支持：<code>%s</code>\n\n"
+             "链接没有名称时，也可以发 <code>出口名 链接</code> 指定名称；同名会自动去重。\n\n"
+             "🔐 为避免凭据留在聊天记录中，进入此步骤后，你发送的下一条消息会在读取后尝试自动删除。"
+             % SUPPORTED_EXIT_LINKS,
+             cancel_kb("ops"))
     elif data.startswith("exitren:"):
         name = data[len("exitren:"):]
         if name in ("local", "smart") or not EXIT_ADD_NAME_RE.match(name):
@@ -2817,6 +3127,13 @@ def handle_callback(cb):
              "🇨🇳 <b>更改国内 DNS</b>\n\n"
              "发送新的 DNS 地址，多个地址用空格或逗号分隔。\n\n"
              "示例：<pre>223.5.5.5 119.29.29.29</pre>",
+             cancel_kb("dot"))
+    elif data == "dot:ecs":
+        PENDING[chat_id] = {"action": "ecs_set", "prompt_mid": cb_mid}
+        edit(cb,
+             "🌏 <b>设置 ECS</b>\n\n"
+             "发送 China-chain DNS 查询携带的 ECS 子网。\n"
+             "示例：<code>139.226.48.0/24</code> 或 <code>112.96.54.1</code>",
              cancel_kb("dot"))
     elif data == "dot:force_domain":
         domain = LAST_FAILED_DOT_DOMAIN.get(chat_id)
@@ -2967,12 +3284,28 @@ def handle_callback(cb):
     elif data == "act:snapshot":
         edit(cb, "⏳ 正在保存配置快照…")
         edit_async(cb, op_snapshot, back_kb("menu:ops"))
+    elif data == "act:snaplist":
+        edit(cb, "⏳ 正在读取快照列表…")
+        edit_snapshot_list_async(cb)
     elif data == "act:rollback":
         edit(cb, "⏳ 正在回滚到最近快照…")
         edit_async(cb, op_rollback, back_kb("menu:ops"))
+    elif data.startswith("rollback:"):
+        snap_id = data[len("rollback:"):]
+        if not SNAP_ID_RE.match(snap_id):
+            edit(cb, "快照 ID 无效，请重新打开列表。", back_kb("menu:ops"))
+        else:
+            edit(cb, "⏳ 正在回滚到快照 <code>%s</code>…" % html.escape(snap_id))
+            edit_async(cb, lambda: op_rollback(snap_id), back_kb("menu:ops"))
     elif data == "act:restart":
         edit(cb, "⏳ 正在重启服务…")
         edit_async(cb, op_restart_services, back_kb("menu:ops"))
+    elif data == "wiz:cidr":
+        edit(cb, "⏳ 正在探测客户端网段…")
+        edit_async(cb, op_detect_client_cidr, wizard_menu())
+    elif data == "wiz:doctor":
+        edit(cb, "⏳ 正在运行 doctor 自检…")
+        edit_async(cb, op_doctor, wizard_menu())
     elif data == "rules:enable":
         edit(cb, "⏳ 正在启用智能分流…")
         edit_async(cb, lambda: op_set_exit("smart"), back_kb("menu:rules"))
