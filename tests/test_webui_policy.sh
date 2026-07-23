@@ -30,6 +30,7 @@ for s in dashboard exits rules monitor ai settings; do
   [[ "${ui}" == *"data-section=\"${s}\""* || "${ui}" == *"id=\"sec-${s}\""* ]] || fail "missing section: ${s}"
 done
 [[ "${ui}" == *'/api/mihomo/overview'* ]] || fail "dashboard must load the mihomo overview card"
+[[ "${ui}" == *'chartRange'* && "${ui}" == *'CHART_RANGES'* ]] || fail "dashboard charts must expose a time-range selector"
 [[ "${ui}" == *'/mihomo/'* ]] || fail "monitor section must embed the metacubexd iframe"
 [[ "${ui}" == *'DNS 直连域名'* ]] || fail "settings must expose DNS direct-domains management"
 [[ "${ui}" == *'/api/direct-domains'* ]] || fail "settings must call /api/direct-domains"

@@ -246,6 +246,20 @@ section[id^="sec-"]{max-width:var(--page-width); padding-bottom:8px}
 .settings-tabs button:hover{background:var(--btn-hover)}
 a.btn:hover{background:var(--btn-hover)}
 
+/* Chart range segmented control */
+.seg{
+  display:inline-flex; gap:2px; flex-wrap:wrap; padding:3px;
+  background:var(--bg-recessed); border-radius:var(--radius); max-width:100%;
+}
+.seg button{
+  min-height:28px; padding:0 10px; font-size:12px; font-weight:400;
+  background:transparent; color:var(--sub); box-shadow:none;
+}
+.seg button.on{background:var(--bg-elevated); color:var(--text); box-shadow:var(--border-sim); font-weight:500}
+.seg button:hover{background:var(--btn-hover)}
+.chart-head{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:12px}
+.chart-head h2{margin:0}
+
 #ops_result{margin-top:10px}
 #ops_result.ops-plain{font-family:var(--mono); font-size:12px; white-space:pre-wrap; word-break:break-word}
 .doc-head{display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:10px}
@@ -389,7 +403,7 @@ iframe.mihomo{
     </header>
 
     <section id="sec-dashboard">
-      <p class="sec-intro">网关运行状态、实时吞吐与近 24 小时趋势。</p>
+      <p class="sec-intro">网关运行状态、实时吞吐与近端趋势（可选 24h / 12h / 6h / 1h / 5m）。</p>
       <div class="tiles" id="tiles"></div>
       <div class="panel-grid two">
         <div class="card">
@@ -407,12 +421,19 @@ iframe.mihomo{
         </div>
       </div>
       <div class="card">
-        <div class="row"><h2 class="grow">24h 流量</h2><span class="muted small" id="traffic_note"></span></div>
+        <div class="chart-head">
+          <h2 class="grow">流量</h2>
+          <div class="seg" id="chartRange" role="group" aria-label="图表时间范围"></div>
+          <span class="muted small" id="traffic_note"></span>
+        </div>
         <canvas id="chart"></canvas>
         <div class="pills" id="legend" style="margin-top:8px"></div>
       </div>
       <div class="card">
-        <div class="row"><h2 class="grow">24h 延迟</h2><span class="muted small" id="lat_note"></span></div>
+        <div class="chart-head">
+          <h2 class="grow">延迟</h2>
+          <span class="muted small" id="lat_note"></span>
+        </div>
         <canvas id="latChart"></canvas>
         <div class="pills" id="latLegend" style="margin-top:8px"></div>
       </div>
@@ -920,16 +941,84 @@ const COLORS = ["#0072F5","#171717","#8F8F8F","#398E4A","#E5484D","#FF990A","#06
 function fmtRate(mbps){ return mbps>=1 ? mbps.toFixed(1)+" Mbps" : (mbps*1000).toFixed(0)+" Kbps"; }
 function fmtBytes(b){ const u=["B","KB","MB","GB","TB"]; let i=0; while(b>=1024&&i<u.length-1){b/=1024;i++;}
   return b.toFixed(b<10&&i>0?1:0)+u[i]; }
-async function loadTraffic(){ try{ drawChart(await api("/api/traffic")); }catch(e){ log("流量获取失败："+e.message); } }
-async function loadLatency(){ try{ drawLatency(await api("/api/latency")); }catch(e){ log("延迟图获取失败："+e.message); } }
+
+/* Shared chart time window (client-side filter over ~24h samples) */
+const CHART_RANGES = [
+  {id:"24h", sec:86400, label:"24h"},
+  {id:"12h", sec:43200, label:"12h"},
+  {id:"6h",  sec:21600, label:"6h"},
+  {id:"1h",  sec:3600,  label:"1h"},
+  {id:"5m",  sec:300,   label:"5m"},
+];
+const CHART_RANGE_KEY="pgw_chart_range";
+function chartRangeSec(){
+  const id=localStorage.getItem(CHART_RANGE_KEY)||"24h";
+  const hit=CHART_RANGES.find(r=>r.id===id);
+  return (hit||CHART_RANGES[0]).sec;
+}
+function chartRangeId(){
+  const id=localStorage.getItem(CHART_RANGE_KEY)||"24h";
+  return CHART_RANGES.some(r=>r.id===id)?id:"24h";
+}
+function setChartRange(id){
+  if(!CHART_RANGES.some(r=>r.id===id)) id="24h";
+  localStorage.setItem(CHART_RANGE_KEY, id);
+  document.querySelectorAll("#chartRange button").forEach(b=>b.classList.toggle("on", b.dataset.range===id));
+  if(lastTraffic) drawChart(lastTraffic);
+  if(lastLatency) drawLatency(lastLatency);
+}
+function initChartRange(){
+  const box=$("chartRange"); if(!box || box.dataset.ready) return;
+  box.dataset.ready="1";
+  const cur=chartRangeId();
+  box.innerHTML = CHART_RANGES.map(r=>
+    `<button type="button" data-range="${r.id}" class="${r.id===cur?"on":""}">${r.label}</button>`
+  ).join("");
+  box.querySelectorAll("button").forEach(b=>b.addEventListener("click",()=>setChartRange(b.dataset.range)));
+}
+function windowData(d, winSec){
+  const now=d.now||Math.floor(Date.now()/1000);
+  const tStart=now-winSec;
+  const pts=(d.points||[]).filter(p=>(p.t||0)>=tStart);
+  const series=sortedSeries(d.series, pts);
+  return {now, tStart, winSec, series, points:pts, interval_sec:d.interval_sec};
+}
+function sortedSeries(preferred, pts){
+  if(preferred && preferred.length){
+    const present=new Set();
+    pts.forEach(p=>Object.keys(p.v||{}).forEach(k=>present.add(k)));
+    const keep=preferred.filter(s=>present.has(s));
+    if(keep.length) return keep;
+  }
+  return [...new Set(pts.flatMap(p=>Object.keys(p.v||{})))].sort();
+}
+function xTickLabels(winSec){
+  // return [{frac:0..1, label}]
+  if(winSec<=300){
+    return [0,60,120,180,240,300].map(s=>({frac:s/winSec, label:s===winSec?"现在":("-"+(winSec-s)/60+"m")}));
+  }
+  if(winSec<=3600){
+    return [0,900,1800,2700,3600].map(s=>({frac:s/winSec, label:s===winSec?"现在":("-"+(winSec-s)/60+"m")}));
+  }
+  const step = winSec<=21600 ? 3600*2 : (winSec<=43200 ? 3600*3 : 3600*6);
+  const out=[];
+  for(let s=0;s<=winSec;s+=step){
+    const left=winSec-s;
+    out.push({frac:s/winSec, label:s===winSec?"现在":(left%3600===0?("-"+left/3600+"h"):("-"+Math.round(left/60)+"m"))});
+  }
+  return out;
+}
+
+async function loadTraffic(){ try{ initChartRange(); drawChart(await api("/api/traffic")); }catch(e){ log("流量获取失败："+e.message); } }
+async function loadLatency(){ try{ initChartRange(); drawLatency(await api("/api/latency")); }catch(e){ log("延迟图获取失败："+e.message); } }
 window.addEventListener("resize", ()=>{ if(lastTraffic) drawChart(lastTraffic); if(lastLatency) drawLatency(lastLatency); });
 
-// generic multi-series 24h line chart; valOf maps a point's per-series value -> number|null
+// generic multi-series line chart over a selectable time window
 function lineChart(cv, d, valOf, yfmt){
   const dpr=window.devicePixelRatio||1, W=cv.clientWidth||600, H=cv.clientHeight||200;
   cv.width=W*dpr; cv.height=H*dpr; const g=cv.getContext("2d"); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,W,H);
-  const now=d.now||Math.floor(Date.now()/1000), tStart=now-86400;
-  const series=d.series||[], pts=d.points||[];
+  const win=windowData(d, chartRangeSec());
+  const {now,tStart,winSec,series,points:pts}=win;
   const lines={}, vals={}; let maxY=0;
   series.forEach(s=>{lines[s]=[];vals[s]=[];});
   pts.forEach(p=>{ const v=p.v||{}; series.forEach(s=>{ const x=valOf(v[s]); if(x!=null&&!isNaN(x)){ lines[s].push([p.t,x]); vals[s].push(x); if(x>maxY)maxY=x; }});});
@@ -937,13 +1026,16 @@ function lineChart(cv, d, valOf, yfmt){
   const pad={l:48,r:8,t:8,b:18}, x0=pad.l,x1=W-pad.r,y0=pad.t,y1=H-pad.b;
   g.strokeStyle=cssVar("--line"); g.fillStyle=cssVar("--mut"); g.font="10px sans-serif"; g.lineWidth=1;
   for(let i=0;i<=3;i++){ const y=y1-(y1-y0)*i/3; g.beginPath();g.moveTo(x0,y);g.lineTo(x1,y);g.stroke(); g.fillText(yfmt(maxY*i/3),2,y+3); }
-  for(let hh=0;hh<=24;hh+=6){ const x=x0+(x1-x0)*hh/24; g.fillText(hh===24?"现在":("-"+(24-hh)+"h"),x-10,H-4); }
-  const xOf=t=>x0+(x1-x0)*Math.max(0,Math.min(1,(t-tStart)/86400)), yOf=v=>y1-(y1-y0)*Math.min(v,maxY)/maxY;
+  xTickLabels(winSec).forEach(tk=>{
+    const x=x0+(x1-x0)*tk.frac;
+    g.fillText(tk.label, x-(tk.label==="现在"?10:12), H-4);
+  });
+  const xOf=t=>x0+(x1-x0)*Math.max(0,Math.min(1,(t-tStart)/winSec)), yOf=v=>y1-(y1-y0)*Math.min(v,maxY)/maxY;
   series.forEach((s,i)=>{ const pa=lines[s]; if(!pa.length)return; g.strokeStyle=COLORS[i%COLORS.length]; g.lineWidth=1.8; g.beginPath();
     pa.forEach((pt,j)=>{const x=xOf(pt[0]),y=yOf(pt[1]); j?g.lineTo(x,y):g.moveTo(x,y);}); g.stroke(); });
   cv._args={d,valOf,yfmt};
-  cv._geo={x0,x1,y0,y1,tStart,series,lines,xOf,yOf};
-  return {series, vals, pts};
+  cv._geo={x0,x1,y0,y1,tStart,winSec,series,lines,xOf,yOf};
+  return {series, vals, pts, winSec, interval_sec:win.interval_sec};
 }
 // hover crosshair + tooltip showing each series' value at the cursor's time
 function attachHover(cv){
@@ -959,7 +1051,8 @@ function attachHover(cv){
     const ctx=cv.getContext("2d");
     ctx.save(); ctx.strokeStyle=cssVar("--mut"); ctx.globalAlpha=.55; ctx.lineWidth=1;
     ctx.beginPath(); ctx.moveTo(px,g.y0); ctx.lineTo(px,g.y1); ctx.stroke(); ctx.restore();
-    const t=g.tStart+(px-g.x0)/(g.x1-g.x0)*86400, rows=[];
+    const span=g.winSec||86400;
+    const t=g.tStart+(px-g.x0)/(g.x1-g.x0)*span, rows=[];
     g.series.forEach((s,i)=>{ const pa=g.lines[s]; if(!pa||!pa.length) return;
       let best=null,bd=1e15; for(const p of pa){ const dd=Math.abs(p[0]-t); if(dd<bd){bd=dd;best=p;} }
       if(!best) return;
@@ -980,22 +1073,32 @@ function attachHover(cv){
   cv.addEventListener("mousemove", e=>{ ev=e; if(!raf) raf=requestAnimationFrame(render); });
   cv.addEventListener("mouseleave", ()=>{ tip.classList.add("hide"); base(); });
 }
+function chartSparseNote(iv, winSec, pts){
+  if(pts.length>=2){
+    if(winSec<=iv*2) return "采样约每 "+(iv/60)+" 分钟一次，短窗口点很少";
+    return "";
+  }
+  return "数据积累中（每 "+(iv/60)+" 分钟采样一次）…";
+}
 function drawChart(d){
   lastTraffic=d; const cv=$("chart"); if(!cv) return; const iv=d.interval_sec||300;
-  const {series,pts}=lineChart(cv, d, x=>Array.isArray(x)?(x[0]+x[1])*8/iv/1e6:null, fmtRate);
+  initChartRange();
+  const {series,pts,winSec}=lineChart(cv, d, x=>Array.isArray(x)?(x[0]+x[1])*8/iv/1e6:null, fmtRate);
   const totals={}; series.forEach(s=>totals[s]=0);
   pts.forEach(p=>{const v=p.v||{}; series.forEach(s=>{ if(Array.isArray(v[s])) totals[s]+=v[s][0]+v[s][1]; });});
   $("legend").innerHTML = series.map((s,i)=>`<span class="pill" style="border-color:${COLORS[i%COLORS.length]};color:${COLORS[i%COLORS.length]}">${s==="server"?"本机":esc(s)} ${fmtBytes(totals[s])}</span>`).join("")||`<span class="muted small">暂无数据</span>`;
-  $("traffic_note").textContent = pts.length<2 ? ("数据积累中（每 "+(iv/60)+" 分钟采样一次）…") : "";
+  $("traffic_note").textContent = chartSparseNote(iv, winSec, pts);
   attachHover(cv);
 }
 function drawLatency(d){
   lastLatency=d; const cv=$("latChart"); if(!cv) return;
-  const {series,vals,pts}=lineChart(cv, d, x=>(typeof x==="number"?x:null), n=>n.toFixed(0)+"ms");
+  initChartRange();
+  const {series,vals,pts,winSec}=lineChart(cv, d, x=>(typeof x==="number"?x:null), n=>n.toFixed(0)+"ms");
+  const iv=d.interval_sec||300;
   $("latLegend").innerHTML = series.map((s,i)=>{ const a=vals[s]; const last=a.length?(a[a.length-1].toFixed(0)+"ms"):"超时";
     return `<span class="pill" style="border-color:${COLORS[i%COLORS.length]};color:${COLORS[i%COLORS.length]}">${esc(s)} ${last}</span>`;
   }).join("")||`<span class="muted small">暂无数据</span>`;
-  $("lat_note").textContent = pts.length<2 ? "数据积累中（每 5 分钟采样一次）…" : "";
+  $("lat_note").textContent = chartSparseNote(iv, winSec, pts);
   attachHover(cv);
 }
 
