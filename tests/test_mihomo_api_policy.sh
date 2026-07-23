@@ -5,6 +5,7 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 gen="$(cat "${root}/lib/mihomo-router-config.py")"
 exitgen="$(cat "${root}/lib/mihomo-exit-config.py")"
 install_body="$(cat "${root}/install.sh")"
+api_body="$(cat "${root}/lib/api-server.py")"
 fail() { echo "$1" >&2; exit 1; }
 
 # --- router config enables the Clash API on loopback only --------------------
@@ -23,6 +24,8 @@ fail() { echo "$1" >&2; exit 1; }
 [[ "${install_body}" == *'install_metacubexd() {'* ]] || fail "install.sh must define install_metacubexd()"
 [[ "${install_body}" == *'MetaCubeX/metacubexd/releases/download/v${ver}/compressed-dist.tgz'* ]] || fail "metacubexd must come from the pinned GitHub release asset"
 [[ "${install_body}" == *'${BASE_DIR}/webui/mihomo'* ]] || fail "metacubexd must unpack to \${BASE_DIR}/webui/mihomo"
+[[ "${install_body}" == *'.metacubexd-version'* ]] || fail "install_metacubexd must record installed version"
+[[ "${api_body}" == *'Cache-Control'* && "${api_body}" == *'sw.js'* ]] || fail "api must send no-cache for metacubexd service worker / index"
 [[ "${install_body}" == *'( regen_smart )'* ]] || fail "setup_api must rebuild the smart config in a subshell"
 [[ "${install_body}" == *'install -m 0755 "${LIB_DIR}/mihomo-router-config.py" "${MIHOMO_ROUTER_GEN}"'* ]] || fail "setup_api must refresh the installed router generator before regen"
 

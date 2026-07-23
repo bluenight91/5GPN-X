@@ -2998,20 +2998,48 @@ ensure_mihomo_api_secret() {
 install_metacubexd() {
     local ver="${METACUBEXD_VERSION:-${METACUBEXD_VERSION_DEFAULT}}"
     local url="https://github.com/MetaCubeX/metacubexd/releases/download/v${ver}/compressed-dist.tgz"
-    local tmp; tmp="$(mktemp)"
+    local tmp explicit=0 app_ver=""
+    [[ -n "${METACUBEXD_VERSION:-}" ]] && explicit=1
+    tmp="$(mktemp)"
     info "Downloading metacubexd v${ver}..."
     if ! curl -fsSL --max-time 90 "$url" -o "$tmp"; then
+        rm -f "$tmp"
+        if [[ "$explicit" -eq 1 ]]; then
+            err "metacubexd v${ver} 下载失败: $url"
+            return 1
+        fi
         warn "metacubexd 下载失败（可稍后重跑 --setup-api）；mihomo 监控页暂不可用，其余功能不受影响。"
-        rm -f "$tmp"; return 0
+        return 0
     fi
     rm -rf "${BASE_DIR}/webui/mihomo"
     mkdir -p "${BASE_DIR}/webui/mihomo"
     if ! tar -xzf "$tmp" -C "${BASE_DIR}/webui/mihomo" 2>/dev/null && ! tar -xf "$tmp" -C "${BASE_DIR}/webui/mihomo"; then
+        rm -f "$tmp"
+        if [[ "$explicit" -eq 1 ]]; then
+            err "metacubexd v${ver} 解压失败"
+            return 1
+        fi
         warn "metacubexd 解压失败（可稍后重跑 --setup-api）；其余功能不受影响。"
-        rm -f "$tmp"; return 0
+        return 0
     fi
     rm -f "$tmp"
-    ok "metacubexd v${ver} installed to ${BASE_DIR}/webui/mihomo"
+    printf '%s\n' "$ver" > "${BASE_DIR}/webui/mihomo/.metacubexd-version"
+    app_ver="$(python3 - <<'PY' "${BASE_DIR}/webui/mihomo/index.html" 2>/dev/null || true
+import re, sys
+try:
+    text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+except OSError:
+    raise SystemExit(0)
+m = re.search(r'appVersion\s*:\s*"([^"]+)"', text)
+if m:
+    print(m.group(1))
+PY
+)"
+    if [[ -n "$app_ver" && "$app_ver" != "$ver" ]]; then
+        warn "解压后 index.html 的 appVersion=${app_ver}，与请求的 v${ver} 不一致"
+    fi
+    ok "metacubexd v${ver} installed to ${BASE_DIR}/webui/mihomo${app_ver:+ (appVersion=${app_ver})}"
+    info "若浏览器仍显示旧版：清掉该站 Service Worker / 站点数据，或用无痕窗口打开 /mihomo/"
 }
 setup_api() {
     local token="${API_TOKEN:-}"

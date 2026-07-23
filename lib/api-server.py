@@ -1474,6 +1474,18 @@ class Handler(BaseHTTPRequestHandler):
         except OSError:
             return self._send(404, {"ok": False, "error": "not found"})
         extra = [("Content-Security-Policy", XD_CSP)]
+        # metacubexd is a PWA: stale Service Worker / index.html will keep showing
+        # the old appVersion after we replace /opt/5gpn/webui/mihomo. Never cache
+        # the shell / SW; hashed _nuxt assets can be immutable.
+        base = os.path.basename(full).lower()
+        rel = os.path.relpath(full, os.path.realpath(MIHOMO_STATIC_DIR)).replace("\\", "/")
+        if base in ("index.html", "sw.js", "200.html", "404.html", "manifest.webmanifest") \
+                or base.startswith("workbox-") or rel in (".", "index.html"):
+            extra.append(("Cache-Control", "no-cache, no-store, must-revalidate"))
+        elif "/_nuxt/" in ("/" + rel) or rel.startswith("_nuxt/"):
+            extra.append(("Cache-Control", "public, max-age=31536000, immutable"))
+        else:
+            extra.append(("Cache-Control", "no-cache"))
         if getattr(self, "_via_query", False):
             # iframe 内相对路径资源与面板 API 调用带不了 ?token=；种同源会话
             # cookie（Path=/ 覆盖 /mihomo 与 /api/mihomo/*）供其鉴权。
