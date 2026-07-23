@@ -46,11 +46,27 @@ record() { # level label detail
     label="${label//'|'/-}"
     RESULTS+=("${level}|${label}|${detail}")
     case "$level" in
-        ok)   PASS=$((PASS+1)); [[ "$JSON" -eq 0 && "$QUIET" -eq 0 ]] && echo -e "${GREEN}[PASS]${NC} ${label}: ${detail}" ;;
-        fail) FAIL=$((FAIL+1)); [[ "$JSON" -eq 0 && "$QUIET" -eq 0 ]] && echo -e "${RED}[FAIL]${NC} ${label}: ${detail}" ;;
-        warn) WARN=$((WARN+1)); [[ "$JSON" -eq 0 && "$QUIET" -eq 0 ]] && echo -e "${YELLOW}[WARN]${NC} ${label}: ${detail}" ;;
-        info) [[ "$JSON" -eq 0 && "$QUIET" -eq 0 ]] && echo -e "       ${label}: ${detail}" ;;
+        ok)   PASS=$((PASS+1))
+              if [[ "$JSON" -eq 0 && "$QUIET" -eq 0 ]]; then
+                  echo -e "${GREEN}[PASS]${NC} ${label}: ${detail}"
+              fi
+              ;;
+        fail) FAIL=$((FAIL+1))
+              if [[ "$JSON" -eq 0 && "$QUIET" -eq 0 ]]; then
+                  echo -e "${RED}[FAIL]${NC} ${label}: ${detail}"
+              fi
+              ;;
+        warn) WARN=$((WARN+1))
+              if [[ "$JSON" -eq 0 && "$QUIET" -eq 0 ]]; then
+                  echo -e "${YELLOW}[WARN]${NC} ${label}: ${detail}"
+              fi
+              ;;
+        info) if [[ "$JSON" -eq 0 && "$QUIET" -eq 0 ]]; then
+                  echo -e "       ${label}: ${detail}"
+              fi
+              ;;
     esac
+    return 0
 }
 ok()   { record ok "$1" "$2"; }
 bad()  { record fail "$1" "$2"; }
@@ -104,10 +120,18 @@ for svc in mosdns sniproxy wa-shim quic-proxy; do
     fi
 done
 [[ -f "${CONF_DIR}/tgbot.env" ]] && {
-    svc_active 5gpn-tgbot && ok "服务 5gpn-tgbot" "running" || bad "服务 5gpn-tgbot" "not running"
+    if svc_active 5gpn-tgbot; then
+        ok "服务 5gpn-tgbot" "running"
+    else
+        bad "服务 5gpn-tgbot" "not running"
+    fi
 }
 [[ -f "${CONF_DIR}/api.env" ]] && {
-    svc_active 5gpn-api && ok "服务 5gpn-api" "running" || bad "服务 5gpn-api" "not running"
+    if svc_active 5gpn-api; then
+        ok "服务 5gpn-api" "running"
+    else
+        bad "服务 5gpn-api" "not running"
+    fi
 }
 if [[ -f "${CONF_DIR}/client-socks.enabled" ]]; then
     if svc_active 5gpn-client-socks; then
@@ -119,11 +143,17 @@ else
     note "私网 SOCKS5" "disabled"
 fi
 if [[ "$CURRENT" == "smart" ]]; then
-    svc_active 5gpn-mihomo@smart \
-        && ok "服务 smart" "running" || bad "服务 smart" "5gpn-mihomo@smart not running"
+    if svc_active 5gpn-mihomo@smart; then
+        ok "服务 smart" "running"
+    else
+        bad "服务 smart" "5gpn-mihomo@smart not running"
+    fi
 elif [[ "$CURRENT" != "local" ]]; then
-    svc_active "5gpn-mihomo@${CURRENT}" \
-        && ok "服务出口 ${CURRENT}" "running" || note "服务出口 ${CURRENT}" "mihomo unit not running"
+    if svc_active "5gpn-mihomo@${CURRENT}"; then
+        ok "服务出口 ${CURRENT}" "running"
+    else
+        note "服务出口 ${CURRENT}" "mihomo unit not running"
+    fi
 fi
 
 # ----- ports -----
@@ -212,14 +242,21 @@ if [[ "$CURRENT" == "smart" ]]; then
         fi
         if [[ "$DEEP" -eq 1 ]]; then
             code="$(curl -m 8 -s -o /dev/null -w '%{http_code}' --interface pgw-smart https://www.google.com 2>/dev/null || echo 000)"
-            [[ "$code" != "000" ]] && ok "smart 出网" "HTTP ${code}" || bad "smart 出网" "curl failed"
+            if [[ "$code" != "000" ]]; then
+                ok "smart 出网" "HTTP ${code}"
+            else
+                bad "smart 出网" "curl failed"
+            fi
         fi
     else
         bad "TUN pgw-smart" "missing"
     fi
 elif [[ "$CURRENT" != "local" ]]; then
-    "$IP" link show "pgw-${CURRENT}" >/dev/null 2>&1 \
-        && ok "TUN pgw-${CURRENT}" "exists" || bad "TUN pgw-${CURRENT}" "missing"
+    if "$IP" link show "pgw-${CURRENT}" >/dev/null 2>&1; then
+        ok "TUN pgw-${CURRENT}" "exists"
+    else
+        bad "TUN pgw-${CURRENT}" "missing"
+    fi
 else
     note "出口链路" "local 直出，跳过 TUN"
 fi
@@ -228,8 +265,16 @@ fi
 [[ "$JSON" -eq 0 && "$QUIET" -eq 0 ]] && echo "----- 策略路由 -----"
 fw_count="$("$IP" rule show 2>/dev/null | grep -c 'fwmark 0x1 lookup 100' || true)"
 [[ "$fw_count" =~ ^[0-9]+$ ]] || fw_count=0
-[[ "$fw_count" -ge 1 ]] && ok "fwmark 规则" "${fw_count} 条" || bad "fwmark 规则" "missing"
-"$NFT" list table inet pgw_exit >/dev/null 2>&1 && ok "pgw_exit 表" "present" || bad "pgw_exit 表" "missing"
+if [[ "$fw_count" -ge 1 ]]; then
+    ok "fwmark 规则" "${fw_count} 条"
+else
+    bad "fwmark 规则" "missing"
+fi
+if "$NFT" list table inet pgw_exit >/dev/null 2>&1; then
+    ok "pgw_exit 表" "present"
+else
+    bad "pgw_exit 表" "missing"
+fi
 
 # ----- API -----
 if [[ -f "${CONF_DIR}/api.env" ]]; then
@@ -253,8 +298,11 @@ if [[ -f /etc/systemd/system/5gpn-wloc.service ]]; then
     fi
     wstate="$(cat "${wloc_dir}/modifier.state" 2>/dev/null || echo paused)"
     if [[ "$wstate" == "active" ]]; then
-        svc_active 5gpn-wloc \
-            && ok "WLOC" "active+running" || bad "WLOC" "active but service down"
+        if svc_active 5gpn-wloc; then
+            ok "WLOC" "active+running"
+        else
+            bad "WLOC" "active but service down"
+        fi
         if ss -H -tln 2>/dev/null | grep -q "127.0.0.1:10451"; then
             ok "WLOC 端口" "127.0.0.1:10451"
         else

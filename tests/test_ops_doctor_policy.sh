@@ -73,6 +73,11 @@ doctor="$(cat "${root}/scripts/doctor.sh")"
 if grep -nE 'grep -cE.*\|\|[[:space:]]*echo[[:space:]]+0' "${root}/scripts/doctor.sh" >/dev/null; then
     fail "doctor must not use grep -c || echo 0 (double-counts zero matches)"
 fi
+# --json quiet printing must not poison `cmd && ok || bad` (duplicate fail rows).
+[[ "${doctor}" == *'return 0'* ]] || fail "doctor record() must always return 0"
+if grep -nE 'svc_active[^;]*&&[[:space:]]*ok[[:space:]]+.*\|\|[[:space:]]*bad' "${root}/scripts/doctor.sh" >/dev/null; then
+    fail "doctor must not use svc_active && ok || bad (ok returns 0 but was historically flaky under --json)"
+fi
 
 # Smoke: --json must succeed with Chinese labels even when stdout is ASCII.
 tmpd="$(mktemp -d)"
@@ -87,6 +92,22 @@ if ! printf '%s' "$out" | python3 -c 'import json,sys; d=json.load(sys.stdin); a
     echo "doctor --json under LANG=C must print parseable UTF-8 JSON (rc=${rc})" >&2
     echo "stdout: $out" >&2
     echo "stderr: $(cat "${tmpd}/err")" >&2
+    rm -rf "$tmpd"
+    exit 1
+fi
+# Regression: no check label may appear as both ok and fail in one run.
+if ! printf '%s' "$out" | python3 -c '
+import json,sys
+from collections import defaultdict
+d=json.load(sys.stdin)
+levels=defaultdict(set)
+for c in d.get("checks") or []:
+    levels[str(c.get("check") or "")].add(str(c.get("level") or ""))
+dup=[k for k,v in levels.items() if "ok" in v and "fail" in v]
+assert not dup, "duplicate ok+fail for: %s" % dup
+'; then
+    echo "doctor --json must not emit the same check as both ok and fail" >&2
+    echo "stdout: $out" >&2
     rm -rf "$tmpd"
     exit 1
 fi
