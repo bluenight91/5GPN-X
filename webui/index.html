@@ -6,235 +6,375 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="theme-color" media="(prefers-color-scheme: light)" content="#f8fafc">
-<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0d1117">
-<title>5GPN-X 控制台</title>
-<!-- =============================================================================
-  Task 6（壳）：双主题令牌（浅色简洁风 / 深色运维风，跟随系统 + 手动三档）、
-  桌面侧边栏 / 移动端底部标签栏、iOS Safari 适配、六个可切换的 section、登录页。
-  Task 7（本版）：六个页面全部填充（dashboard 资源卡/实时速率/24h 曲线/mihomo 概览卡、
-  出口、规则、监控、AI、设置）；出口与规则组的行内按钮用 addEventListener（名字可含
-  中文/特殊字符）；metacubexd iframe 懒加载鉴权在 api-server Part C 中接线。
-============================================================================= -->
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#FAFAFA">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0A0A0A">
+<title>5GPN-X</title>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <style>
-  /* ---- 主题令牌：浅色（简洁风） ---- */
-  :root{
-    --bg:#f8fafc; --card:#ffffff; --border:#e2e8f0; --text:#1e293b; --sub:#64748b;
-    --accent:#2563eb; --ok:#16a34a; --warn:#d97706; --danger:#dc2626; --teal:#0d9488;
-    --shadow:0 1px 3px rgba(15,23,42,.08); --mono:"SF Mono",ui-monospace,Menlo,monospace;
-    /* 旧变量别名 → 新令牌（旧组件样式沿用别名，随主题自动切换） */
-    --fg:var(--text); --mut:var(--sub); --acc:var(--accent); --line:var(--border); --bad:var(--danger);
-    --input-bg:#ffffff; --btn-bg:#f1f5f9; --btn-line:#e2e8f0;
-    --sidebar-bg:var(--card); --nav-active:rgba(37,99,235,.10);
+/* Geist via CDN; falls back to system UI if offline */
+@font-face{
+  font-family:"Geist Sans"; font-style:normal; font-weight:100 900; font-display:swap;
+  src:url("https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-sans/Geist-Variable.woff2") format("woff2");
+}
+@font-face{
+  font-family:"Geist Mono"; font-style:normal; font-weight:100 900; font-display:swap;
+  src:url("https://cdn.jsdelivr.net/npm/geist@1.3.1/dist/fonts/geist-mono/GeistMono-Variable.woff2") format("woff2");
+}
+
+:root{
+  --bg:#FAFAFA; --bg-elevated:#FFFFFF; --bg-recessed:#F2F2F2;
+  --card:var(--bg-elevated);
+  --text:#171717; --sub:#4D4D4D; --muted:#8F8F8F;
+  --accent:#0072F5; --focus:#005FCC;
+  --ok:#398E4A; --warn:#FF990A; --danger:#E5484D; --teal:#067A6E;
+  --border-sim:0 0 0 1px rgba(0,0,0,.08);
+  --shadow-card:0 0 0 1px rgba(0,0,0,.08), 0 2px 2px rgba(0,0,0,.04);
+  --shadow-menu:0 0 0 1px rgba(0,0,0,.08), 0 1px 1px rgba(0,0,0,.02), 0 4px 8px -4px rgba(0,0,0,.04), 0 16px 24px -8px rgba(0,0,0,.06);
+  --shadow-modal:0 0 0 1px rgba(0,0,0,.08), 0 1px 1px rgba(0,0,0,.02), 0 8px 16px -4px rgba(0,0,0,.04), 0 24px 32px -8px rgba(0,0,0,.06);
+  --focus-ring:0 0 0 2px #FFF, 0 0 0 4px #0072F5;
+  --radius:6px; --radius-card:12px;
+  --mono:"Geist Mono",ui-monospace,SFMono-Regular,"Roboto Mono",Menlo,monospace;
+  --sans:"Geist Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  --space:4px; --gap:24px; --gap-half:12px; --gap-q:8px;
+  --page-width:1200px; --header-h:64px; --sidebar-w:220px;
+  --input-bg:transparent; --btn-bg:transparent; --btn-line:transparent;
+  --nav-active:#EBEBEB; --btn-hover:#EBEBEB;
+  --fg:var(--text); --mut:var(--sub); --acc:var(--accent); --line:rgba(0,0,0,.08); --bad:var(--danger);
+}
+[data-theme="dark"]{
+  --bg:#0A0A0A; --bg-elevated:#111111; --bg-recessed:#171717;
+  --card:var(--bg-elevated);
+  --text:#EDEDED; --sub:#A1A1A1; --muted:#666666;
+  --accent:#52AEFF; --focus:#52AEFF;
+  --ok:#45A557; --warn:#FF990A; --danger:#E5484D; --teal:#45DEC5;
+  --border-sim:0 0 0 1px rgba(255,255,255,.09);
+  --shadow-card:0 0 0 1px rgba(255,255,255,.09);
+  --shadow-menu:0 0 0 1px rgba(255,255,255,.09), 0 8px 24px rgba(0,0,0,.45);
+  --shadow-modal:0 0 0 1px rgba(255,255,255,.09), 0 16px 40px rgba(0,0,0,.55);
+  --focus-ring:0 0 0 2px #0A0A0A, 0 0 0 4px #52AEFF;
+  --nav-active:#1A1A1A; --btn-hover:#1F1F1F;
+  --line:rgba(255,255,255,.09); --input-bg:transparent;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#0A0A0A; --bg-elevated:#111111; --bg-recessed:#171717;
+  --card:var(--bg-elevated);
+  --text:#EDEDED; --sub:#A1A1A1; --muted:#666666;
+  --accent:#52AEFF; --focus:#52AEFF;
+  --ok:#45A557; --warn:#FF990A; --danger:#E5484D; --teal:#45DEC5;
+  --border-sim:0 0 0 1px rgba(255,255,255,.09);
+  --shadow-card:0 0 0 1px rgba(255,255,255,.09);
+  --shadow-menu:0 0 0 1px rgba(255,255,255,.09), 0 8px 24px rgba(0,0,0,.45);
+  --shadow-modal:0 0 0 1px rgba(255,255,255,.09), 0 16px 40px rgba(0,0,0,.55);
+  --focus-ring:0 0 0 2px #0A0A0A, 0 0 0 4px #52AEFF;
+  --nav-active:#1A1A1A; --btn-hover:#1F1F1F;
+  --line:rgba(255,255,255,.09); --input-bg:transparent;
+}}
+
+*{box-sizing:border-box}
+html{-webkit-tap-highlight-color:transparent;-webkit-text-size-adjust:100%}
+body{
+  margin:0; background:var(--bg); color:var(--text);
+  height:100vh; height:100dvh; overflow-x:hidden;
+  font:400 14px/1.5 var(--sans);
+  font-feature-settings:"liga";
+  -webkit-font-smoothing:antialiased;
+}
+h1{font-size:32px;font-weight:600;letter-spacing:-1.28px;line-height:1.15;margin:0}
+h2{font-size:14px;font-weight:500;letter-spacing:-.28px;line-height:20px;margin:0 0 12px;color:var(--text)}
+.hide{display:none!important}
+.grow{flex:1} .muted{color:var(--sub)} .small{font-size:12px;line-height:16px}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+.mono{font-size:13px;font-family:var(--mono);font-weight:500;white-space:pre-wrap;word-break:break-word}
+
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.row+.row{margin-top:8px}
+
+input,select,textarea{font-size:16px} /* iOS zoom guard */
+input,textarea,select,button{
+  font-family:inherit; color:var(--text);
+  background:var(--input-bg); border:0; border-radius:var(--radius);
+  padding:10px 12px; line-height:1.25;
+  box-shadow:var(--border-sim);
+}
+input,select{min-width:0}
+input[type=text],input[type=password]{flex:1 1 200px;background:var(--bg-elevated)}
+select{min-height:40px;background:var(--bg-elevated)}
+textarea{
+  width:100%; min-height:130px; resize:vertical;
+  font-family:var(--mono); background:var(--bg-elevated);
+}
+input:focus,select:focus,textarea:focus{
+  outline:1px auto var(--focus); box-shadow:none;
+}
+button{
+  cursor:pointer; min-height:40px; padding:0 14px; font-size:14px; font-weight:400;
+  background:var(--bg-recessed); box-shadow:none; touch-action:manipulation;
+}
+button:hover{background:var(--btn-hover); color:var(--text)}
+button:focus-visible{outline:none; box-shadow:var(--focus-ring)}
+button.primary{background:var(--text); color:var(--bg); box-shadow:none}
+button.primary:hover{background:var(--text); opacity:.88}
+button.danger{background:transparent; color:var(--danger); box-shadow:var(--border-sim)}
+button.danger:hover{background:rgba(229,72,77,.08)}
+button:disabled{opacity:.45;cursor:not-allowed}
+a.btn{
+  display:inline-flex; align-items:center; justify-content:center;
+  text-decoration:none; cursor:pointer; min-height:40px; padding:0 16px;
+  border-radius:var(--radius); background:var(--bg-recessed); color:var(--text); font-size:14px;
+}
+a.btn:hover{text-decoration:none; background:#EBEBEB}
+a.btn.primary{background:var(--text); color:var(--bg)}
+a.btn:focus-visible{outline:none; box-shadow:var(--focus-ring)}
+
+/* Login */
+.login{
+  min-height:100vh; min-height:100dvh;
+  display:flex; align-items:center; justify-content:center; padding:24px;
+  background:var(--bg);
+}
+.logincard{
+  width:100%; max-width:380px; background:var(--card);
+  border-radius:var(--radius-card); padding:32px 28px;
+  box-shadow:var(--shadow-card);
+}
+.logincard .brand-mark{
+  font-size:28px; font-weight:600; letter-spacing:-1.2px; margin:0 0 4px;
+}
+.logincard .sub{color:var(--sub); font-size:14px; margin:0 0 24px}
+.logincard .hint{color:var(--muted); font-size:12px; margin-top:16px}
+
+/* Shell layout */
+.layout{display:flex; height:100vh; height:100dvh}
+.sidebar{
+  display:flex; flex-direction:column; width:var(--sidebar-w); flex:0 0 var(--sidebar-w);
+  padding:16px 12px; background:var(--bg); box-shadow:1px 0 0 0 rgba(0,0,0,.08);
+}
+[data-theme="dark"] .sidebar{box-shadow:1px 0 0 0 rgba(255,255,255,.09)}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]) .sidebar{box-shadow:1px 0 0 0 rgba(255,255,255,.09)}
+}
+.brand{
+  height:40px; padding:0 10px; margin-bottom:16px;
+  display:flex; align-items:center; gap:10px;
+  font-weight:600; font-size:16px; letter-spacing:-.4px;
+}
+.brand .dot{width:8px; height:8px; border-radius:50%; background:var(--danger); flex:0 0 auto}
+.brand .dot.on{background:var(--ok)}
+nav.menu{flex:1; overflow:auto; display:flex; flex-direction:column; gap:2px}
+.navitem{
+  display:flex; align-items:center; gap:10px;
+  padding:10px 12px; border-radius:var(--radius);
+  color:var(--sub); cursor:pointer; font-size:14px; font-weight:400; user-select:none;
+}
+.navitem:hover{background:var(--nav-active); color:var(--text)}
+.navitem.on{background:var(--nav-active); color:var(--text); font-weight:500}
+.navitem:focus-visible{outline:none; box-shadow:var(--focus-ring)}
+.sidefoot{padding-top:16px; margin-top:8px; box-shadow:0 -1px 0 0 rgba(0,0,0,.06); display:flex; flex-direction:column; gap:8px}
+[data-theme="dark"] .sidefoot{box-shadow:0 -1px 0 0 rgba(255,255,255,.08)}
+.sidefoot .url{font-size:11px; color:var(--muted); word-break:break-all; padding:0 4px}
+
+main{flex:1; min-width:0; overflow:auto; padding:0 24px 32px}
+.topbar{
+  position:sticky; top:0; z-index:20;
+  display:flex; align-items:center; gap:12px;
+  height:var(--header-h); padding:0;
+  background:color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter:saturate(1.2) blur(12px);
+  -webkit-backdrop-filter:saturate(1.2) blur(12px);
+}
+.topbar .title{font-size:20px; font-weight:600; letter-spacing:-.6px; flex:1}
+section[id^="sec-"]{max-width:var(--page-width); padding-bottom:8px}
+
+.tabbar{display:none}
+.moresheet{
+  position:fixed; left:8px; right:8px; z-index:60;
+  bottom:calc(64px + env(safe-area-inset-bottom));
+  background:var(--card); border-radius:var(--radius-card);
+  box-shadow:var(--shadow-menu); padding:8px;
+}
+.moresheet a{
+  display:flex; align-items:center; gap:10px; padding:12px; border-radius:var(--radius);
+  color:var(--text); cursor:pointer; min-height:44px; user-select:none;
+}
+.moresheet a:hover{background:var(--nav-active)}
+
+/* Surfaces */
+.card{
+  background:var(--card); border-radius:var(--radius-card);
+  padding:20px 20px; margin-bottom:16px; box-shadow:var(--shadow-card);
+}
+.card .lede{color:var(--sub); font-size:13px; margin:0 0 14px; max-width:62ch}
+.panel-grid{display:grid; gap:16px}
+@media (min-width:900px){
+  .panel-grid.two{grid-template-columns:1.2fr .8fr}
+}
+
+.tiles{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:16px}
+.tile{
+  background:var(--card); border-radius:var(--radius-card);
+  padding:16px 18px; box-shadow:var(--shadow-card);
+}
+.tile .tlabel{color:var(--sub); font-size:12px; font-weight:400}
+.tile .tval{font-size:28px; font-weight:600; letter-spacing:-1px; margin:6px 0 8px; word-break:break-all; line-height:1.1}
+.tile .tsub{color:var(--muted); font-size:11px; margin-top:8px}
+
+/* Status: small dots + quiet labels (Vercel rule) */
+.pill{
+  font-size:12px; padding:2px 8px 2px 6px; border-radius:9999px;
+  color:var(--sub); white-space:nowrap; display:inline-flex; align-items:center; gap:6px;
+  background:var(--bg-recessed);
+}
+.pill::before{
+  content:""; width:8px; height:8px; border-radius:50%; background:var(--muted); flex:0 0 auto;
+}
+.pill.on{color:var(--text)} .pill.on::before{background:var(--ok)}
+.pill.off{color:var(--text)} .pill.off::before{background:var(--danger)}
+.pill.wait{color:var(--text)} .pill.wait::before{background:var(--warn)}
+.pills{display:flex; flex-wrap:wrap; gap:6px}
+
+/* Settings subnav */
+.settings-tabs{
+  display:flex; gap:4px; flex-wrap:wrap; margin-bottom:16px;
+  padding:4px; background:var(--bg-recessed); border-radius:var(--radius);
+  width:fit-content; max-width:100%;
+}
+.settings-tabs button{
+  min-height:32px; padding:0 12px; background:transparent; color:var(--sub); box-shadow:none;
+}
+.settings-tabs button.on{background:var(--bg-elevated); color:var(--text); box-shadow:var(--border-sim)}
+.settings-tabs button:hover{background:var(--btn-hover)}
+a.btn:hover{background:var(--btn-hover)}
+
+#ops_result{margin-top:10px}
+#ops_result.ops-plain{font-family:var(--mono); font-size:12px; white-space:pre-wrap; word-break:break-word}
+.doc-head{display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:10px}
+.doc-meta{color:var(--sub); font-size:12px}
+.doc-list{display:flex; flex-direction:column; gap:6px}
+.doc-row{
+  display:grid; grid-template-columns:64px 1fr; gap:8px 10px; padding:10px 12px;
+  border-radius:var(--radius); background:var(--bg); box-shadow:var(--border-sim);
+}
+.doc-row.fail{box-shadow:0 0 0 1px color-mix(in srgb, var(--danger) 45%, transparent)}
+.doc-row.warn{box-shadow:0 0 0 1px color-mix(in srgb, var(--warn) 45%, transparent)}
+.doc-check{font-weight:500; grid-column:2}
+.doc-detail{grid-column:2; color:var(--sub); font-size:12px; word-break:break-word}
+.doc-row .pill{grid-row:1 / span 2; align-self:center; justify-self:start}
+.doc-pass details{margin-top:8px}
+.doc-pass summary{cursor:pointer; color:var(--sub); font-size:12px; user-select:none}
+
+#toasts{
+  position:fixed; left:50%; transform:translateX(-50%); z-index:70;
+  bottom:max(16px,env(safe-area-inset-bottom)); display:flex; flex-direction:column; gap:8px;
+  width:min(92vw,440px); pointer-events:none;
+}
+.toast{
+  background:var(--card); box-shadow:var(--shadow-menu);
+  border-radius:var(--radius); padding:10px 12px; font-size:13px;
+  white-space:pre-wrap; word-break:break-word; pointer-events:auto;
+  border-left:3px solid var(--accent);
+}
+.toast.ok{border-left-color:var(--ok)} .toast.bad{border-left-color:var(--danger)} .toast.wait{border-left-color:var(--warn)}
+
+.exit{
+  display:flex; align-items:center; gap:8px; padding:12px 0;
+  box-shadow:0 -1px 0 0 rgba(0,0,0,.06); flex-wrap:wrap;
+}
+.exit:first-child{box-shadow:none}
+[data-theme="dark"] .exit{box-shadow:0 -1px 0 0 rgba(255,255,255,.08)}
+.exit .name{font-weight:500} .exit .meta{color:var(--sub); font-size:12px; word-break:break-all}
+
+.bar{height:6px; background:var(--bg-recessed); border-radius:9999px; overflow:hidden}
+.bar>i{display:block; height:100%; background:var(--text); opacity:.75}
+#out{max-height:360px; overflow:auto}
+#chart{width:100%; height:220px; display:block}
+#latChart{width:100%; height:200px; display:block}
+.chart-tip{
+  position:fixed; z-index:80; pointer-events:none; background:var(--card);
+  border-radius:var(--radius); padding:7px 9px; font-size:12px; box-shadow:var(--shadow-menu); min-width:130px;
+}
+.chart-tip .t{color:var(--sub); margin-bottom:4px}
+.chart-tip .d{display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:6px; vertical-align:middle}
+.chart-tip b{float:right; margin-left:16px}
+#rulelist{max-height:340px; overflow:auto; margin-top:8px; border-radius:var(--radius); box-shadow:var(--border-sim)}
+.rrow{display:flex; gap:8px; align-items:center; padding:8px 10px; box-shadow:0 -1px 0 0 rgba(0,0,0,.06)}
+.rrow:first-child{box-shadow:none}
+.rrow .mono{flex:1; word-break:break-all}
+.rrow .idx{color:var(--sub); min-width:30px}
+.rrow button{min-height:32px; padding:0 10px}
+details>summary{cursor:pointer; color:var(--sub); user-select:none}
+iframe.mihomo{
+  width:100%; min-height:70vh; min-height:70dvh; background:var(--card);
+  border:0; border-radius:var(--radius-card); box-shadow:var(--border-sim);
+}
+
+.sec-intro{margin:0 0 20px; color:var(--sub); font-size:14px; max-width:60ch}
+
+@media (max-width:768px){
+  .sidebar{display:none}
+  .tabbar{
+    display:flex; position:fixed; left:0; right:0; bottom:0; z-index:50;
+    background:color-mix(in srgb, var(--card) 92%, transparent);
+    backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
+    box-shadow:0 -1px 0 0 rgba(0,0,0,.08);
+    padding:6px 2px calc(6px + env(safe-area-inset-bottom));
+    overflow-x:auto; scrollbar-width:none; transition:transform .25s ease;
   }
-  /* ---- 主题令牌：深色（运维风 / GitHub Dark） ---- */
-  [data-theme="dark"]{
-    --bg:#0d1117; --card:#161b22; --border:#30363d; --text:#e6edf3; --sub:#8b949e;
-    --accent:#58a6ff; --ok:#3fb950; --warn:#d29922; --danger:#f85149; --teal:#58d6c9;
-    --shadow:0 1px 3px rgba(1,4,9,.6);
-    --input-bg:#0d1117; --btn-bg:#21262d; --btn-line:#30363d; --nav-active:rgba(88,166,255,.15);
+  .tabbar::-webkit-scrollbar{display:none}
+  .tabbar.hide{transform:translateY(100%)}
+  .tabbar a{
+    flex:1 0 auto; min-width:64px; text-align:center; color:var(--sub);
+    font-size:10px; padding:6px 0; min-height:44px; cursor:pointer; user-select:none;
   }
-  @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
-    --bg:#0d1117; --card:#161b22; --border:#30363d; --text:#e6edf3; --sub:#8b949e;
-    --accent:#58a6ff; --ok:#3fb950; --warn:#d29922; --danger:#f85149; --teal:#58d6c9;
-    --shadow:0 1px 3px rgba(1,4,9,.6);
-    --input-bg:#0d1117; --btn-bg:#21262d; --btn-line:#30363d; --nav-active:rgba(88,166,255,.15);
-  } }
-  [data-theme="dark"] .tval, [data-theme="dark"] .mono { font-variant-numeric:tabular-nums; }
-
-  * { box-sizing:border-box; }
-  html { -webkit-tap-highlight-color:transparent; -webkit-text-size-adjust:100%; }
-  body { margin:0; background:var(--bg); color:var(--text); height:100vh; height:100dvh; overflow-x:hidden;
-         transition:background-color .2s, color .2s;
-         font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif; }
-  h2 { font-size:13px; margin:0 0 10px; color:var(--sub); text-transform:uppercase; letter-spacing:.04em; }
-  .hide { display:none !important; }
-  .grow { flex:1; } .muted { color:var(--sub); } .small { font-size:12px; }
-  a { color:var(--accent); }
-
-  /* form controls（font-size:16px 防 iOS 聚焦缩放） */
-  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
-  .row + .row { margin-top:8px; }
-  input, select, textarea { font-size:16px; }
-  input, textarea, select, button { font-family:inherit;
-    color:var(--text); background:var(--input-bg); border:1px solid var(--border); border-radius:10px; padding:10px 12px; line-height:1.25; }
-  input, select { min-width:0; }
-  input[type=text], input[type=password] { flex:1 1 200px; }
-  select { min-height:44px; }
-  textarea { width:100%; min-height:130px; resize:vertical; font-family:var(--mono); }
-  button { cursor:pointer; background:var(--btn-bg); border-color:var(--btn-line); min-height:44px; padding:9px 14px;
-    font-size:14px; touch-action:manipulation; transition:transform .05s, background-color .2s, border-color .2s; }
-  button:active { transform:scale(.97); }
-  @media (hover:hover) { button:hover { border-color:var(--accent); } }
-  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
-  button.danger { border-color:var(--danger); color:var(--danger); }
-  button:disabled { opacity:.5; cursor:not-allowed; }
-  a.btn { display:inline-block; text-decoration:none; cursor:pointer; background:var(--btn-bg);
-    border:1px solid var(--btn-line); border-radius:10px; min-height:44px; padding:12px 16px;
-    color:var(--text); font-size:14px; touch-action:manipulation; }
-  a.btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
-
-  /* ---- 登录页 ---- */
-  .login { min-height:100vh; min-height:100dvh; display:flex; align-items:center; justify-content:center; padding:16px; }
-  .logincard { width:100%; max-width:380px; background:var(--card); border:1px solid var(--border);
-    border-radius:16px; padding:22px; box-shadow:var(--shadow); }
-  .logincard h1 { font-size:20px; margin:0 0 4px; }
-  .logincard .sub { color:var(--sub); font-size:13px; margin-bottom:16px; }
-
-  /* ---- 布局：桌面侧边栏 ---- */
-  .layout { display:flex; height:100vh; height:100dvh; }
-  .sidebar { display:flex; flex-direction:column; gap:2px; width:200px; flex:0 0 200px;
-    padding:14px 10px; background:var(--card); border-right:1px solid var(--border); }
-  .brand { padding:4px 10px 12px; font-weight:700; font-size:16px; display:flex; align-items:center; gap:8px; }
-  .brand .dot { width:8px; height:8px; border-radius:50%; background:var(--danger); }
-  .brand .dot.on { background:var(--ok); }
-  nav.menu { flex:1; padding:4px 0; overflow:auto; display:flex; flex-direction:column; gap:2px; }
-  .navitem { display:flex; align-items:center; gap:11px; padding:11px 14px; border-radius:10px;
-    color:var(--sub); cursor:pointer; font-size:14px; user-select:none; }
-  .navitem .ic { font-size:17px; width:20px; text-align:center; }
-  @media (hover:hover){ .navitem:hover { background:var(--nav-active); color:var(--text); } }
-  .navitem.on { background:var(--nav-active); color:var(--accent); font-weight:600; }
-  .sidefoot { padding-top:12px; border-top:1px solid var(--border); display:flex; flex-direction:column; gap:8px; }
-  .sidefoot .url { font-size:11px; color:var(--sub); word-break:break-all; }
-
-  main { flex:1; min-width:0; overflow:auto; padding:18px; }
-  .topbar { display:flex; align-items:center; gap:10px; padding:0 0 12px; min-height:40px; }
-  .topbar .title { font-size:18px; font-weight:600; flex:1; }
-  section[id^="sec-"] { max-width:1080px; }
-
-  /* ---- 移动端底部标签栏（默认隐藏） ---- */
-  .tabbar { display:none; }
-  .moresheet { position:fixed; left:8px; right:8px; z-index:60;
-    bottom:calc(64px + env(safe-area-inset-bottom));
-    background:var(--card); border:1px solid var(--border); border-radius:14px;
-    box-shadow:0 8px 28px rgba(0,0,0,.28); padding:8px; }
-  .moresheet a { display:flex; align-items:center; gap:10px; padding:12px; border-radius:10px;
-    color:var(--text); cursor:pointer; min-height:44px; user-select:none; }
-  @media (hover:hover){ .moresheet a:hover { background:var(--nav-active); } }
-
-  /* ---- 卡片与通用组件（Task 7 页面复用） ---- */
-  .card { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:16px; margin-bottom:14px; box-shadow:var(--shadow); }
-  .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:14px; }
-  .tile { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:14px 16px; box-shadow:var(--shadow); }
-  .tile .tlabel { color:var(--sub); font-size:12px; }
-  .tile .tval { font-size:23px; font-weight:700; margin:5px 0 8px; word-break:break-all; }
-  .tile .tsub { color:var(--sub); font-size:11px; margin-top:7px; }
-
-  .pill { font-size:12px; padding:3px 9px; border-radius:999px; border:1px solid var(--border); color:var(--sub); white-space:nowrap; display:inline-block; }
-  .pill.on { color:var(--ok); border-color:var(--ok); }
-  .pill.off { color:var(--danger); border-color:var(--danger); }
-  .pill.wait { color:var(--warn); border-color:var(--warn); }
-  .pills { display:flex; flex-wrap:wrap; gap:6px; }
-
-  /* doctor result panel */
-  #ops_result { margin-top:10px; }
-  #ops_result.ops-plain { font-family:var(--mono); font-size:12px; white-space:pre-wrap; word-break:break-word; }
-  .doc-head { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:10px; }
-  .doc-meta { color:var(--sub); font-size:12px; }
-  .doc-list { display:flex; flex-direction:column; gap:6px; }
-  .doc-row { display:grid; grid-template-columns:64px 1fr; gap:8px 10px; padding:8px 10px;
-    border:1px solid var(--border); border-radius:10px; background:var(--input-bg); }
-  .doc-row.fail { border-color:color-mix(in srgb, var(--danger) 45%, var(--border)); }
-  .doc-row.warn { border-color:color-mix(in srgb, var(--warn) 45%, var(--border)); }
-  .doc-check { font-weight:600; grid-column:2; }
-  .doc-detail { grid-column:2; color:var(--sub); font-size:12px; word-break:break-word; }
-  .doc-row .pill { grid-row:1 / span 2; align-self:center; text-align:center; }
-  .doc-pass details { margin-top:8px; }
-  .doc-pass summary { cursor:pointer; color:var(--sub); font-size:12px; user-select:none; }
-  @media (max-width:520px){
-    .doc-row { grid-template-columns:56px 1fr; }
-  }
-
-  /* toast notifications (visible feedback on any section) */
-  #toasts { position:fixed; left:50%; transform:translateX(-50%); z-index:70;
-    bottom:max(16px,env(safe-area-inset-bottom)); display:flex; flex-direction:column; gap:8px;
-    width:min(92vw,440px); pointer-events:none; }
-  .toast { background:var(--card); border:1px solid var(--border); border-left:3px solid var(--accent);
-    border-radius:10px; padding:10px 12px; box-shadow:0 8px 28px rgba(0,0,0,.28); font-size:13px;
-    white-space:pre-wrap; word-break:break-word; pointer-events:auto; animation:tin .18s ease; }
-  .toast.ok { border-left-color:var(--ok); } .toast.bad { border-left-color:var(--danger); } .toast.wait { border-left-color:var(--warn); }
-  @keyframes tin { from{opacity:0; transform:translateY(10px);} to{opacity:1; transform:none;} }
-
-  .exit { display:flex; align-items:center; gap:8px; padding:11px 0; border-top:1px solid var(--border); flex-wrap:wrap; }
-  .exit:first-child { border-top:none; }
-  .exit .name { font-weight:600; } .exit .meta { color:var(--sub); font-size:12px; word-break:break-all; }
-
-  .bar { height:9px; background:var(--input-bg); border-radius:6px; overflow:hidden; border:1px solid var(--border); }
-  .bar>i { display:block; height:100%; background:linear-gradient(90deg,var(--ok),var(--warn),var(--danger)); }
-  .mono { font-family:var(--mono); font-size:12px; white-space:pre-wrap; word-break:break-word; }
-  #out { max-height:360px; overflow:auto; }
-  #chart { width:100%; height:220px; display:block; }
-  #latChart { width:100%; height:200px; display:block; }
-  .chart-tip { position:fixed; z-index:80; pointer-events:none; background:var(--card); border:1px solid var(--border);
-    border-radius:8px; padding:7px 9px; font-size:12px; box-shadow:0 6px 22px rgba(0,0,0,.3); min-width:130px; }
-  .chart-tip .t { color:var(--sub); margin-bottom:4px; }
-  .chart-tip .d { display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:6px; vertical-align:middle; }
-  .chart-tip b { float:right; margin-left:16px; }
-  #rulelist { max-height:340px; overflow:auto; margin-top:8px; border:1px solid var(--border); border-radius:8px; }
-  .rrow { display:flex; gap:8px; align-items:center; padding:7px 10px; border-top:1px solid var(--border); }
-  .rrow:first-child { border-top:none; } .rrow .mono { flex:1; word-break:break-all; }
-  .rrow .idx { color:var(--sub); min-width:30px; } .rrow button { min-height:34px; padding:5px 10px; }
-  details > summary { cursor:pointer; }
-  iframe.mihomo { width:100%; border:1px solid var(--border); border-radius:10px; min-height:70vh; min-height:70dvh; background:var(--card); }
-
-  /* ---- 移动端：<768px 侧边栏隐藏，底部标签栏 ---- */
-  @media (max-width:767.98px){
-    .sidebar { display:none; }
-    .tabbar { display:flex; position:fixed; left:0; right:0; bottom:0; z-index:50;
-      background:var(--card); border-top:1px solid var(--border);
-      padding:6px 2px calc(6px + env(safe-area-inset-bottom));
-      overflow-x:auto; scrollbar-width:none; transition:transform .25s ease; }
-    .tabbar::-webkit-scrollbar { display:none; }
-    .tabbar.hide { transform:translateY(100%); }
-    .tabbar a { flex:1 0 auto; min-width:64px; text-align:center; color:var(--sub); font-size:10px; padding:4px 0;
-      min-height:44px; cursor:pointer; user-select:none; }
-    .tabbar a .ic { display:block; font-size:18px; line-height:1.7; }
-    .tabbar a.on { color:var(--accent); }
-    main { padding:14px 14px calc(84px + env(safe-area-inset-bottom)); }
-    #toasts { bottom:calc(76px + env(safe-area-inset-bottom)); }
-    input[type=text], input[type=password] { flex:1 1 100%; }
-    .card .row > button { flex:1 1 auto; }
-    .card > .row:first-child > button, .topbar button { flex:0 0 auto; }
-    .exit .name { order:1; flex:1 1 100%; } .exit .meta { order:2; flex:1 1 100%; }
-    .exit button { order:3; flex:1 1 calc(50% - 4px); } .exit .pill { order:3; margin-left:auto; }
-    .exit select { order:3; flex:1 1 100%; }
-  }
+  .tabbar a .ic{display:block; font-size:11px; font-weight:500; letter-spacing:.02em; line-height:1.6; text-transform:uppercase}
+  .tabbar a.on{color:var(--text); font-weight:500}
+  main{padding:0 14px calc(84px + env(safe-area-inset-bottom))}
+  .topbar{height:52px}
+  .topbar .title{font-size:18px}
+  #toasts{bottom:calc(76px + env(safe-area-inset-bottom))}
+  input[type=text],input[type=password]{flex:1 1 100%}
+  .card .row>button{flex:1 1 auto}
+  .card>.row:first-child>button, .topbar button{flex:0 0 auto}
+  .settings-tabs{width:100%}
+  .exit .name{order:1; flex:1 1 100%} .exit .meta{order:2; flex:1 1 100%}
+  .exit button{order:3; flex:1 1 calc(50% - 4px)} .exit .pill{order:3; margin-left:auto}
+  .exit select{order:3; flex:1 1 100%}
+}
 </style>
 </head>
 <body>
 
-<!-- ============ 登录 ============ -->
 <div id="login" class="login">
   <div class="logincard">
-    <h1>🛰️ 5GPN-X 控制台</h1>
-    <div class="sub">连接到你的网关 API</div>
+    <div class="brand-mark">5GPN-X</div>
+    <p class="sub">网关控制台</p>
     <div class="row"><input id="url" type="text" placeholder="https://你的域名:8444" autocomplete="off"></div>
-    <div class="row" style="margin-top:8px"><input id="token" type="password" placeholder="API 令牌 (API_TOKEN)" autocomplete="off"></div>
-    <div class="row" style="margin-top:10px">
+    <div class="row" style="margin-top:8px"><input id="token" type="password" placeholder="API 令牌" autocomplete="off"></div>
+    <div class="row" style="margin-top:16px">
       <button class="primary grow" onclick="connect()">连接</button>
       <button onclick="clearCreds()">清除</button>
     </div>
-    <div class="row small muted" id="conn" style="margin-top:10px">未连接</div>
+    <div class="row small muted" id="conn" style="margin-top:12px">未连接</div>
+    <p class="hint">令牌仅保存在本机会话中，关闭标签页后需重新输入。</p>
   </div>
 </div>
 
-<!-- ============ 壳（登录后显示） ============ -->
 <div id="app" class="layout hide">
   <aside class="sidebar">
-    <div class="brand"><span class="dot" id="brandDot"></span> 5GPN-X</div>
+    <div class="brand"><span class="dot" id="brandDot"></span>5GPN-X</div>
     <nav class="menu">
-      <a class="navitem on" data-section="dashboard"><span class="ic">📊</span> 首页</a>
-      <a class="navitem" data-section="exits"><span class="ic">🌐</span> 出口</a>
-      <a class="navitem" data-section="rules"><span class="ic">🧭</span> 规则</a>
-      <a class="navitem" data-section="monitor"><span class="ic">📈</span> 监控</a>
-      <a class="navitem" data-section="ai"><span class="ic">🤖</span> AI 助手</a>
-      <a class="navitem" data-section="settings"><span class="ic">⚙️</span> 设置</a>
+      <a class="navitem on" data-section="dashboard">首页</a>
+      <a class="navitem" data-section="exits">出口</a>
+      <a class="navitem" data-section="rules">规则</a>
+      <a class="navitem" data-section="monitor">监控</a>
+      <a class="navitem" data-section="ai">AI 助手</a>
+      <a class="navitem" data-section="settings">设置</a>
     </nav>
     <div class="sidefoot">
       <select id="themeSel" onchange="setTheme(this.value)" title="主题">
-        <option value="system">🌓 跟随系统</option>
-        <option value="dark">🌙 深色</option>
-        <option value="light">☀️ 浅色</option>
+        <option value="system">跟随系统</option>
+        <option value="dark">深色</option>
+        <option value="light">浅色</option>
       </select>
       <button onclick="clearCreds()">登出</button>
       <div class="url" id="sideUrl"></div>
@@ -244,21 +384,27 @@
   <main id="main">
     <header class="topbar">
       <div class="title" id="secTitle">首页</div>
-      <span class="pill wait hide" id="busy">⏳ 处理中</span>
-      <span class="pill on" id="connPill">●</span>
+      <span class="pill wait hide" id="busy">处理中</span>
+      <span class="pill on" id="connPill">在线</span>
     </header>
 
-    <!-- 六个 section：Task 7 填充完整页面 -->
     <section id="sec-dashboard">
+      <p class="sec-intro">网关运行状态、实时吞吐与近 24 小时趋势。</p>
       <div class="tiles" id="tiles"></div>
-      <div class="card">
-        <div class="row">
-          <h2 class="grow">实时速率</h2>
-          <label class="muted small" style="display:flex;align-items:center;gap:5px;cursor:pointer">
-            <input type="checkbox" id="autoref" onchange="toggleAuto()" style="min-height:0;padding:0"> 自动刷新
-          </label>
+      <div class="panel-grid two">
+        <div class="card">
+          <div class="row">
+            <h2 class="grow">实时速率</h2>
+            <label class="muted small" style="display:flex;align-items:center;gap:6px;cursor:pointer">
+              <input type="checkbox" id="autoref" onchange="toggleAuto()" style="min-height:0;padding:0;box-shadow:none"> 自动刷新
+            </label>
+          </div>
+          <div id="live" class="row" style="gap:14px;flex-wrap:wrap"><span class="muted small">尚未加载</span></div>
         </div>
-        <div id="live" class="row" style="gap:14px;flex-wrap:wrap"><span class="muted small">尚未加载</span></div>
+        <div class="card">
+          <h2>服务状态</h2>
+          <div class="pills" id="services"></div>
+        </div>
       </div>
       <div class="card">
         <div class="row"><h2 class="grow">24h 流量</h2><span class="muted small" id="traffic_note"></span></div>
@@ -271,22 +417,19 @@
         <div class="pills" id="latLegend" style="margin-top:8px"></div>
       </div>
       <div class="card">
-        <div class="row"><h2 class="grow">mihomo 概览</h2><button onclick="loadMihomoOverview()">🔄</button></div>
+        <div class="row"><h2 class="grow">mihomo 概览</h2><button onclick="loadMihomoOverview()">刷新</button></div>
         <div id="mihomoCard" class="small muted">尚未加载</div>
-      </div>
-      <div class="card">
-        <h2>服务状态</h2>
-        <div class="pills" id="services"></div>
       </div>
     </section>
 
     <section id="sec-exits" hidden>
+      <p class="sec-intro">管理出口节点、切换当前出口，并检查连通性与延迟。</p>
       <div class="card">
         <div class="row">
-          <h2 class="grow">出口</h2>
-          <button onclick="checkExits()">🩺 连通性</button>
-          <button onclick="loadExitLatency()">📶 测延迟</button>
-          <button onclick="loadStatus()">🔄</button>
+          <h2 class="grow">出口列表</h2>
+          <button onclick="checkExits()">连通性</button>
+          <button onclick="loadExitLatency()">测延迟</button>
+          <button onclick="loadStatus()">刷新</button>
         </div>
         <div id="exits"></div>
         <div id="checkResult" style="margin-top:8px"></div>
@@ -300,17 +443,31 @@
 密码含 @ : / # 等特殊字符直接一行原样粘贴即可"></textarea>
         </div>
         <div class="row">
-          <button class="primary" id="ex_btn" onclick="addExit()">➕ 添加</button>
+          <button class="primary" id="ex_btn" onclick="addExit()">添加</button>
           <button id="ex_cancel" class="hide" onclick="cancelEditExit()">取消</button>
         </div>
       </div>
     </section>
 
     <section id="sec-rules" hidden>
-      <div class="card">
-        <div class="row"><h2 class="grow">分流规则（整份编辑）</h2><span class="muted small" id="rules_meta"></span></div>
-        <div class="row"><textarea id="rules" spellcheck="false" style="min-height:220px"></textarea></div>
-        <div class="row"><button class="primary" onclick="saveRules()">💾 保存并应用</button></div>
+      <p class="sec-intro">先测路由、再改单条或规则组；整份规则编辑放在底部折叠区。</p>
+      <div class="panel-grid two">
+        <div class="card">
+          <h2>域名路由测试</h2>
+          <div class="row">
+            <input id="rt_domain" type="text" placeholder="www.example.com" autocomplete="off">
+            <button onclick="routeTest()">测试</button>
+          </div>
+          <div id="rt_result" class="small" style="margin-top:8px"></div>
+        </div>
+        <div class="card">
+          <h2>一键定向（域名 → 出口）</h2>
+          <div class="row">
+            <input id="pd_domain" type="text" placeholder="openai.com" autocomplete="off">
+            <select id="pd_target"></select>
+            <button class="primary" onclick="proxyDomain()">定向</button>
+          </div>
+        </div>
       </div>
       <div class="card">
         <h2>单条规则</h2>
@@ -323,7 +480,7 @@
           <input id="r_val" type="text" placeholder="值，如 example.com（FINAL 留空）" autocomplete="off">
           <input id="r_tgt" type="text" list="tgtlist" placeholder="目标：direct / block / 出口 / 规则组" autocomplete="off">
           <datalist id="tgtlist"></datalist>
-          <button class="primary" id="addRuleBtn" onclick="addRule()">➕ 添加一条</button>
+          <button class="primary" id="addRuleBtn" onclick="addRule()">添加一条</button>
           <button id="cancelEditBtn" class="hide" onclick="cancelEdit()">取消</button>
         </div>
         <div class="row">
@@ -338,45 +495,41 @@
         <div class="row" style="margin-top:10px">
           <input id="g_name" type="text" placeholder="新规则组名" autocomplete="off">
           <select id="g_tgt"></select>
-          <button onclick="createGroup()">➕ 新建组</button>
+          <button onclick="createGroup()">新建组</button>
         </div>
       </div>
       <div class="card">
-        <h2>域名路由测试</h2>
-        <div class="row">
-          <input id="rt_domain" type="text" placeholder="www.example.com" autocomplete="off">
-          <button onclick="routeTest()">🧪 测试</button>
-        </div>
-        <div id="rt_result" class="small" style="margin-top:8px"></div>
-      </div>
-      <div class="card">
-        <h2>一键定向（域名 → 出口）</h2>
-        <div class="row">
-          <input id="pd_domain" type="text" placeholder="openai.com" autocomplete="off">
-          <select id="pd_target"></select>
-          <button class="primary" onclick="proxyDomain()">🎯 定向</button>
-        </div>
+        <details>
+          <summary style="margin-bottom:0">
+            <span style="font-size:14px;font-weight:500;color:var(--text)">分流规则（整份编辑）</span>
+            <span class="muted small" id="rules_meta" style="margin-left:8px"></span>
+          </summary>
+          <div class="row" style="margin-top:12px"><textarea id="rules" spellcheck="false" style="min-height:220px"></textarea></div>
+          <div class="row"><button class="primary" onclick="saveRules()">保存并应用</button></div>
+        </details>
       </div>
     </section>
 
     <section id="sec-monitor" hidden>
+      <p class="sec-intro">smart 出口启用后，这里显示 Clash API 统计与完整 metacubexd 面板。</p>
       <div class="card">
-        <div class="row"><h2 class="grow">mihomo 概览</h2><button onclick="loadMihomoOverview()">🔄</button></div>
+        <div class="row"><h2 class="grow">mihomo 概览</h2><button onclick="loadMihomoOverview()">刷新</button></div>
         <div id="mihomoOverview" class="small muted">尚未加载</div>
-        <div class="muted small" style="margin-top:8px">
+        <p class="lede" style="margin-top:12px;margin-bottom:0">
           数据来自 smart 实例的回环 Clash API（127.0.0.1:9090，仅本机）；api-server 在服务端注入 secret 反代，
           令牌不出服务器。切到 smart 出口后此处显示连接数、内存与规则命中 Top5。
-        </div>
+        </p>
       </div>
       <div class="card">
         <h2>完整面板（metacubexd）</h2>
-        <div class="muted small" style="margin-bottom:8px" id="xdhint">完整面板后端地址填 <span class="mono">https://&lt;你的域名&gt;:8444/api/mihomo/proxy</span>，<b>secret 留空</b>（面板与 API 同源，首次打开后浏览器自动携带会话 cookie）。控制台跨站托管时面板在新标签页打开。</div>
+        <div class="muted small" style="margin-bottom:12px" id="xdhint">完整面板后端地址填 <span class="mono">https://&lt;你的域名&gt;:8444/api/mihomo/proxy</span>，<b>secret 留空</b>（面板与 API 同源，首次打开后浏览器自动携带会话 cookie）。控制台跨站托管时面板在新标签页打开。</div>
         <iframe class="mihomo" id="xdframe" data-src="/mihomo/index.html" title="mihomo 面板"></iframe>
-        <a class="btn primary" id="xdtab" hidden target="_blank" rel="noopener" href="#">↗ 新标签页打开完整面板</a>
+        <a class="btn primary" id="xdtab" hidden target="_blank" rel="noopener" href="#">新标签页打开完整面板</a>
       </div>
     </section>
 
     <section id="sec-ai" hidden>
+      <p class="sec-intro">用自然语言生成分流方案；配置保存在服务器，密钥不会回显。</p>
       <div class="card">
         <h2>AI 接口配置</h2>
         <details id="aiCfgBox">
@@ -386,127 +539,149 @@
             <input id="ai_key" type="password" placeholder="API Key（只保存在服务器）" autocomplete="off">
             <input id="ai_model" type="text" placeholder="模型，如 gpt-4o-mini" autocomplete="off">
           </div>
-          <div class="row"><button class="primary" onclick="aiSaveConfig()">💾 保存配置</button></div>
+          <div class="row"><button class="primary" onclick="aiSaveConfig()">保存配置</button></div>
         </details>
       </div>
       <div class="card">
         <h2>生成分流方案</h2>
         <div class="row"><input id="ai_repo" type="text" placeholder="参考仓库（可选，如 owner/repo）" autocomplete="off"></div>
         <div class="row"><textarea id="ai_intent" placeholder="用自然语言描述分流意图，例如：让 OpenAI 和 Claude 走日本出口，其余 AI 站点走美国出口"></textarea></div>
-        <div class="row"><button class="primary" onclick="aiPlan()">🤖 生成方案</button></div>
+        <div class="row"><button class="primary" onclick="aiPlan()">生成方案</button></div>
         <div id="ai_plan"></div>
       </div>
     </section>
 
     <section id="sec-settings" hidden>
-      <div class="card">
-        <h2>客户端网段</h2>
-        <p class="muted small" style="margin:0 0 8px">私网客户端来自这些 IPv4 CIDR 时走劫持/透明代理策略（默认 <span class="mono">172.22.0.0/16</span>；多段用英文逗号分隔）。改后会刷新 mosdns；managed 防火墙会尝试同步白名单。</p>
-        <div class="row">
-          <input id="cidr_val" type="text" placeholder="例如 172.22.0.0/16,10.10.0.0/16" autocomplete="off" style="flex:1" class="mono">
-          <button class="primary" onclick="saveClientCidr()">💾 保存</button>
-          <button onclick="detectClientCidr()">🔎 探测</button>
-          <button onclick="loadClientCidr()">🔄</button>
+      <p class="sec-intro">网络策略、运维诊断与连接凭据。按分组浏览，避免一长串卡片。</p>
+      <div class="settings-tabs" role="tablist">
+        <button type="button" data-settings-tab="network" class="on">网络</button>
+        <button type="button" data-settings-tab="ops">运维</button>
+        <button type="button" data-settings-tab="backup">备份</button>
+        <button type="button" data-settings-tab="account">连接</button>
+      </div>
+
+      <div data-settings-panel="network">
+        <div class="card">
+          <h2>客户端网段</h2>
+          <p class="lede">私网客户端来自这些 IPv4 CIDR 时走劫持/透明代理策略（默认 <span class="mono">172.22.0.0/16</span>；多段用英文逗号分隔）。改后会刷新 mosdns；managed 防火墙会尝试同步白名单。</p>
+          <div class="row">
+            <input id="cidr_val" type="text" placeholder="例如 172.22.0.0/16,10.10.0.0/16" autocomplete="off" style="flex:1" class="mono">
+            <button class="primary" onclick="saveClientCidr()">保存</button>
+            <button onclick="detectClientCidr()">探测</button>
+            <button onclick="loadClientCidr()">刷新</button>
+          </div>
+          <div id="cidr_hint" class="muted small" style="margin-top:6px"></div>
         </div>
-        <div id="cidr_hint" class="muted small" style="margin-top:6px"></div>
-      </div>
-      <div class="card">
-        <h2>首次运行提示</h2>
-        <div class="muted small">建议依次确认：客户端网段 → 添加出口 → 运行 doctor 自检。API 默认只绑定 <span class="mono">127.0.0.1</span>；如需公网访问，请在服务器上显式配置 <span class="mono">API_BIND=0.0.0.0</span> 并限制防火墙来源。</div>
-      </div>
-      <div class="card">
-        <h2>私网 SOCKS5</h2>
-        <p class="muted small" style="margin:0 0 8px">可选：仅客户端网段可访问的用户名/密码 SOCKS5（默认端口 <span class="mono">38443</span>，出站跟随当前出口）。手机 Telegram 可填网关公网 IP + 端口。</p>
-        <div id="socks_state" class="mono small" style="margin-bottom:8px">（加载中…）</div>
-        <div class="row">
-          <button class="primary" onclick="socksAction('enable')">▶️ 开启</button>
-          <button class="danger" onclick="socksAction('disable')">⏹ 关闭</button>
-          <button onclick="socksAction('reset-creds')">🔑 重置密码</button>
-          <button onclick="loadClientSocks()">🔄</button>
+        <div class="card">
+          <h2>首次运行提示</h2>
+          <div class="muted small">建议依次确认：客户端网段 → 添加出口 → 运行 doctor 自检。API 默认只绑定 <span class="mono">127.0.0.1</span>；如需公网访问，请在服务器上显式配置 <span class="mono">API_BIND=0.0.0.0</span> 并限制防火墙来源。</div>
         </div>
-        <div id="socks_creds" class="mono small" style="margin-top:8px;white-space:pre-wrap"></div>
-      </div>
-      <div class="card">
-        <h2>DNS 直连域名</h2>
-        <p class="muted small" style="margin:0 0 8px">私网客户端默认把非 ChinaList 域名解析成网关 IP。把 SSH 等主机名加入此名单后返回真实 A 记录。公网 DoT 本身不劫持。</p>
-        <div class="row"><input id="dd_add" type="text" placeholder="例如 box2.example.com 或 servers.example.com" autocomplete="off" style="flex:1"></div>
-        <div class="row">
-          <button class="primary" onclick="addDirectDomain()">➕ 添加</button>
-          <button onclick="loadDirectDomains()">🔄 刷新</button>
+        <div class="card">
+          <h2>私网 SOCKS5</h2>
+          <p class="lede">可选：仅客户端网段可访问的用户名/密码 SOCKS5（默认端口 <span class="mono">38443</span>，出站跟随当前出口）。手机 Telegram 可填网关公网 IP + 端口。</p>
+          <div id="socks_state" class="mono small" style="margin-bottom:8px">（加载中…）</div>
+          <div class="row">
+            <button class="primary" onclick="socksAction('enable')">开启</button>
+            <button class="danger" onclick="socksAction('disable')">关闭</button>
+            <button onclick="socksAction('reset-creds')">重置密码</button>
+            <button onclick="loadClientSocks()">刷新</button>
+          </div>
+          <div id="socks_creds" class="mono small" style="margin-top:8px;white-space:pre-wrap"></div>
         </div>
-        <div id="dd_list" class="muted small" style="margin-top:8px">（加载中…）</div>
-        <details style="margin-top:12px">
-          <summary class="small muted">整份编辑</summary>
-          <div class="row" style="margin-top:8px"><textarea id="dd_text" spellcheck="false" placeholder="每行一个域名" style="min-height:120px"></textarea></div>
-          <div class="row"><button onclick="saveDirectDomains()">💾 保存整份名单</button></div>
-        </details>
-      </div>
-      <div class="card">
-        <h2>运维自检 / 诊断报告 / 运行时快照</h2>
-        <div class="row">
-          <button onclick="runDoctor()">🩺 doctor 自检</button>
-          <button onclick="downloadReport()">🧾 下载诊断报告结果</button>
-          <button onclick="loadSnapshots()">📜 快照列表</button>
-          <button onclick="createSnapshot()">💾 创建快照</button>
-          <button class="danger" onclick="restoreSnapshot()">⏪ 恢复快照</button>
-          <button class="danger" onclick="deleteSnapshot()">🗑 删除快照</button>
-        </div>
-        <div id="ops_result" class="ops-plain small" style="margin-top:8px"></div>
-      </div>
-      <div class="card">
-        <h2>轻量配置包（非运行时快照）</h2>
-        <p class="muted small" style="margin:0 0 8px">配置包只包含可导入的轻量配置；运行时快照用于服务器本机回滚，见上方「运行时快照」。</p>
-        <div class="row">
-          <button onclick="backupConfig()">⬇️ 下载轻量配置包</button>
-          <input type="file" id="restoreFile" accept=".tar.gz,.tgz,application/gzip" class="hide" onchange="restoreConfig(this)">
-          <button onclick="$('restoreFile').click()">⬆️ 恢复轻量配置包</button>
+        <div class="card">
+          <h2>DNS 直连域名</h2>
+          <p class="lede">私网客户端默认把非 ChinaList 域名解析成网关 IP。把 SSH 等主机名加入此名单后返回真实 A 记录。公网 DoT 本身不劫持。</p>
+          <div class="row"><input id="dd_add" type="text" placeholder="例如 box2.example.com 或 servers.example.com" autocomplete="off" style="flex:1"></div>
+          <div class="row">
+            <button class="primary" onclick="addDirectDomain()">添加</button>
+            <button onclick="loadDirectDomains()">刷新</button>
+          </div>
+          <details id="dd_fold" style="margin-top:12px">
+            <summary id="dd_summary" class="small muted">名单（加载中…）</summary>
+            <div id="dd_list" class="muted small" style="margin-top:8px">（加载中…）</div>
+          </details>
+          <details style="margin-top:12px">
+            <summary class="small muted">整份编辑</summary>
+            <div class="row" style="margin-top:8px"><textarea id="dd_text" spellcheck="false" placeholder="每行一个域名" style="min-height:120px"></textarea></div>
+            <div class="row"><button onclick="saveDirectDomains()">保存整份名单</button></div>
+          </details>
         </div>
       </div>
-      <div class="card">
-        <h2>规则集</h2>
-        <div class="row"><button onclick="updateRules()">🔄 更新 GFWList/ChinaList</button></div>
+
+      <div data-settings-panel="ops" hidden>
+        <div class="card">
+          <h2>运维自检 / 诊断报告 / 运行时快照</h2>
+          <div class="row">
+            <button onclick="runDoctor()">doctor 自检</button>
+            <button onclick="downloadReport()">下载诊断报告结果</button>
+            <button onclick="loadSnapshots()">快照列表</button>
+            <button onclick="createSnapshot()">创建快照</button>
+            <button class="danger" onclick="restoreSnapshot()">恢复快照</button>
+            <button class="danger" onclick="deleteSnapshot()">删除快照</button>
+          </div>
+          <div id="ops_result" class="ops-plain small" style="margin-top:8px"></div>
+        </div>
+        <div class="card">
+          <h2>规则集</h2>
+          <div class="row"><button onclick="updateRules()">更新 GFWList/ChinaList</button></div>
+        </div>
       </div>
-      <div class="card">
-        <h2>连接</h2>
-        <div class="row small">
-          <span class="muted">API 地址</span><span class="mono grow" id="set_url">-</span>
-          <button onclick="copyText(BASE)">复制</button>
-          <a class="btn" id="consoleLink" hidden href="/console">同源 /console</a>
+
+      <div data-settings-panel="backup" hidden>
+        <div class="card">
+          <h2>轻量配置包（非运行时快照）</h2>
+          <p class="lede">配置包只包含可导入的轻量配置；运行时快照用于服务器本机回滚，见「运维」中的运行时快照。</p>
+          <div class="row">
+            <button onclick="backupConfig()">下载轻量配置包</button>
+            <input type="file" id="restoreFile" accept=".tar.gz,.tgz,application/gzip" class="hide" onchange="restoreConfig(this)">
+            <button onclick="$('restoreFile').click()">恢复轻量配置包</button>
+          </div>
         </div>
-        <div class="row small">
-          <span class="muted">API 令牌</span><span class="mono grow" id="set_tok">-</span>
-          <button id="tokBtn" onclick="revealTok()">显示</button>
-        </div>
-        <div class="row">
-          <span class="muted small grow">主题</span>
-          <select id="themeSelS" onchange="setTheme(this.value)">
-            <option value="system">🌓 跟随系统</option>
-            <option value="dark">🌙 深色</option>
-            <option value="light">☀️ 浅色</option>
-          </select>
-        </div>
-        <div class="row"><button class="danger" onclick="clearCreds()">登出并清除凭据</button></div>
       </div>
-      <div class="card">
-        <div class="row"><h2 class="grow">操作输出</h2><button onclick="$('out').textContent=''">清空</button></div>
-        <div id="out" class="mono"></div>
+
+      <div data-settings-panel="account" hidden>
+        <div class="card">
+          <h2>连接</h2>
+          <div class="row small">
+            <span class="muted">API 地址</span><span class="mono grow" id="set_url">-</span>
+            <button onclick="copyText(BASE)">复制</button>
+            <a class="btn" id="consoleLink" hidden href="/console">同源 /console</a>
+          </div>
+          <div class="row small">
+            <span class="muted">API 令牌</span><span class="mono grow" id="set_tok">-</span>
+            <button id="tokBtn" onclick="revealTok()">显示</button>
+          </div>
+          <div class="row">
+            <span class="muted small grow">主题</span>
+            <select id="themeSelS" onchange="setTheme(this.value)">
+              <option value="system">跟随系统</option>
+              <option value="dark">深色</option>
+              <option value="light">浅色</option>
+            </select>
+          </div>
+          <div class="row"><button class="danger" onclick="clearCreds()">登出并清除凭据</button></div>
+        </div>
+        <div class="card">
+          <div class="row"><h2 class="grow">操作输出</h2><button onclick="$('out').textContent=''">清空</button></div>
+          <div id="out" class="mono"></div>
+        </div>
       </div>
     </section>
   </main>
 
-  <!-- 移动端底部标签栏（可左右滑动） -->
   <nav class="tabbar">
-    <a data-section="dashboard" class="on"><span class="ic">📊</span>首页</a>
-    <a data-section="exits"><span class="ic">🌐</span>出口</a>
-    <a data-section="rules"><span class="ic">🧭</span>规则</a>
-    <a data-section="monitor"><span class="ic">📈</span>监控</a>
-    <a data-section="ai"><span class="ic">🤖</span>AI 助手</a>
-    <a data-section="settings"><span class="ic">⚙️</span>设置</a>
+    <a data-section="dashboard" class="on"><span class="ic">Home</span>首页</a>
+    <a data-section="exits"><span class="ic">Exit</span>出口</a>
+    <a data-section="rules"><span class="ic">Rules</span>规则</a>
+    <a data-section="monitor"><span class="ic">Mon</span>监控</a>
+    <a data-section="ai"><span class="ic">AI</span>AI 助手</a>
+    <a data-section="settings"><span class="ic">Set</span>设置</a>
   </nav>
 </div>
 <div id="toasts"></div>
 
 <script>
+
 const $ = id => document.getElementById(id);
 let BASE = "", TOKEN = "";
 let RULES = [], lastTraffic = null, lastLatency = null, EDIT_IDX = null, LAT = {}, AIPLAN = null, EDIT_EXIT = null;
@@ -539,6 +714,23 @@ function cssVar(n){ return getComputedStyle(document.body).getPropertyValue(n).t
 
 /* ===================== Task 6：壳导航（六 section + 移动端可滑动底栏） ===================== */
 const SEC_TITLE = { dashboard:"首页", exits:"出口", rules:"规则", monitor:"监控", ai:"AI 助手", settings:"设置" };
+
+/* Settings IA: sub-panels within settings section */
+function showSettingsPanel(panel){
+  const allowed=["network","ops","backup","account"];
+  if(!allowed.includes(panel)) panel="network";
+  document.querySelectorAll("[data-settings-panel]").forEach(el=>{
+    el.hidden = el.getAttribute("data-settings-panel")!==panel;
+  });
+  document.querySelectorAll("[data-settings-tab]").forEach(el=>{
+    el.classList.toggle("on", el.getAttribute("data-settings-tab")===panel);
+  });
+  localStorage.setItem("pgw_set_panel", panel);
+}
+document.querySelectorAll("[data-settings-tab]").forEach(el=>{
+  el.addEventListener("click",()=>showSettingsPanel(el.getAttribute("data-settings-tab")));
+});
+
 function showSection(sec){
   if(!SEC_TITLE[sec]) sec="dashboard";
   document.querySelectorAll('main section[id^="sec-"]').forEach(s=>{ s.hidden = (s.id !== "sec-"+sec); });
@@ -557,7 +749,7 @@ function onEnter(sec){
   else if(sec==="rules"){ loadStatus(); loadRules(); }
   else if(sec==="monitor"){ loadMihomoOverview(); loadXdFrame(); }
   else if(sec==="ai"){ aiLoadConfig(); }
-  else if(sec==="settings"){ fillSettings(); loadClientCidr(); loadClientSocks(); loadDirectDomains(); }
+  else if(sec==="settings"){ fillSettings(); showSettingsPanel(localStorage.getItem("pgw_set_panel")||"network"); loadClientCidr(); loadClientSocks(); loadDirectDomains(); }
 }
 document.querySelectorAll('[data-section]').forEach(el=>el.addEventListener('click',()=>{
   showSection(el.dataset.section);
@@ -724,7 +916,7 @@ async function loadStatus() {
   } catch(e){ $("connPill").className="pill off"; $("connPill").textContent="● 离线"; log("状态获取失败："+e.message); }
 }
 
-const COLORS = ["#4f8cff","#2ecc71","#f5a623","#ff5c5c","#a06cff","#19c3c3","#ff8c42"];
+const COLORS = ["#0072F5","#171717","#8F8F8F","#398E4A","#E5484D","#FF990A","#067A6E"];
 function fmtRate(mbps){ return mbps>=1 ? mbps.toFixed(1)+" Mbps" : (mbps*1000).toFixed(0)+" Kbps"; }
 function fmtBytes(b){ const u=["B","KB","MB","GB","TB"]; let i=0; while(b>=1024&&i<u.length-1){b/=1024;i++;}
   return b.toFixed(b<10&&i>0?1:0)+u[i]; }
@@ -850,7 +1042,7 @@ async function loadExitLatency(){
     const r = await api("/api/exits/latency");
     LAT = r.latency || {};
     const parts = Object.entries(LAT).map(([n,l])=> n+" "+(l.ms==null?"超时":(Math.round(l.ms)+"ms")));
-    toast("📶 延迟：" + (parts.join(" · ") || "无可测出口"), "ok");
+    toast("延迟：" + (parts.join(" · ") || "无可测出口"), "ok");
     loadStatus();   // re-render exits with latency badges
   }catch(e){ log("❌ 测延迟："+e.message); }
   finally{ busy(false); }
@@ -914,7 +1106,7 @@ function editExit(name){
   $("ex_cfg").value="";
   $("ex_cfg").placeholder="粘贴出口「"+name+"」的新配置（完整 socks5:// / ss:// / WireGuard），将覆盖原配置";
   $("ex_title").textContent="修改出口 "+name;
-  $("ex_btn").textContent="💾 保存修改";
+  $("ex_btn").textContent="保存修改";
   $("ex_cancel").classList.remove("hide");
   $("ex_card").scrollIntoView({behavior:"smooth",block:"start"});
   $("ex_cfg").focus();
@@ -924,7 +1116,7 @@ function cancelEditExit(){
   $("ex_name").readOnly=false; $("ex_name").value=""; $("ex_cfg").value="";
   $("ex_cfg").placeholder="socks5://用户:密码@host:端口\n或 socks5h://…  /  ss://…  /  整段 WireGuard [Interface]/[Peer]\n密码含 @ : / # 等特殊字符直接一行原样粘贴即可";
   $("ex_title").textContent="添加出口";
-  $("ex_btn").textContent="➕ 添加";
+  $("ex_btn").textContent="添加";
   $("ex_cancel").classList.add("hide");
 }
 async function checkExits(){
@@ -940,8 +1132,8 @@ async function checkExits(){
         `<span class="meta">${esc(x.server||"")}</span>`+
         `<span class="pill ${cls}">${esc(x.state)}</span></div>`;
     }).join("") : `<div class="muted small">没有可检查的出口</div>`;
-    toast(bad ? ("🩺 "+bad+" 个出口不可达") : "🩺 全部出口在线", bad?"bad":"ok");
-    log("🩺 出口连通性：\n"+items.map(x=>`  ${x.name}  ${x.server}  ${x.state}`).join("\n"));
+    toast(bad ? (bad+" 个出口不可达") : "全部出口在线", bad?"bad":"ok");
+    log("出口连通性：\n"+items.map(x=>`  ${x.name}  ${x.server}  ${x.state}`).join("\n"));
   }catch(e){
     $("checkResult").innerHTML = `<div class="muted small">检查失败</div>`;
     log("❌ 检查连通性："+e.message);
@@ -972,14 +1164,14 @@ function editRule(i){
   $("r_type").value = RULE_TYPES.includes(e.type) ? e.type : "DOMAIN-SUFFIX";
   $("r_val").value = e.value||"";
   $("r_tgt").value = e.target||"";
-  $("addRuleBtn").textContent = "💾 保存修改 #"+i;
+  $("addRuleBtn").textContent = "保存修改 #"+i;
   $("cancelEditBtn").classList.remove("hide");
   $("r_val").focus();
 }
 function cancelEdit(){
   EDIT_IDX = null;
   $("r_val").value=""; $("r_tgt").value="";
-  $("addRuleBtn").textContent = "➕ 添加一条";
+  $("addRuleBtn").textContent = "添加一条";
   $("cancelEditBtn").classList.add("hide");
 }
 async function addRule(){
@@ -1266,6 +1458,12 @@ async function socksAction(action){
 }
 
 /* ---- DNS direct-domains (private-client hijack bypass) ---- */
+function setDirectDomainSummary(n, emptyHint){
+  const sum=$("dd_summary");
+  if(!sum) return;
+  if(emptyHint){ sum.textContent=emptyHint; return; }
+  sum.textContent = "已有 "+n+" 条 · 点击展开名单";
+}
 async function loadDirectDomains(){
   const box=$("dd_list"), ta=$("dd_text");
   if(!box) return;
@@ -1274,9 +1472,11 @@ async function loadDirectDomains(){
     const domains=r.domains||[];
     if(ta) ta.value=r.text||domains.join("\n")+(domains.length?"\n":"");
     if(!domains.length){
+      setDirectDomainSummary(0, "名单为空 · 点击展开说明");
       box.innerHTML=`<div class="muted small">（名单为空）私网客户端的 SSH 主机名会被解析到网关。</div>`;
       return;
     }
+    setDirectDomainSummary(domains.length);
     box.innerHTML = domains.map(d=>
       `<div class="row small" style="gap:8px;align-items:center">`+
       `<span class="mono grow">${esc(d)}</span>`+
@@ -1285,7 +1485,10 @@ async function loadDirectDomains(){
     box.querySelectorAll(".dd-del").forEach(btn=>{
       btn.addEventListener("click",()=>delDirectDomain(btn.getAttribute("data-dd")));
     });
-  }catch(e){ box.innerHTML=`<span class="muted">加载失败：${esc(e.message)}</span>`; }
+  }catch(e){
+    setDirectDomainSummary(0, "加载失败 · 点击查看");
+    box.innerHTML=`<span class="muted">加载失败：${esc(e.message)}</span>`;
+  }
 }
 async function addDirectDomain(){
   const dm=($("dd_add")&&$("dd_add").value||"").trim();
@@ -1322,7 +1525,7 @@ async function aiSaveConfig(){
 async function aiPlan(){
   const repo=$("ai_repo").value.trim(), intent=$("ai_intent").value.trim();
   if(!intent){ log("请填写意图"); return; }
-  $("ai_plan").innerHTML=`<div class="muted small" style="margin-top:8px">🤖 AI 生成中（读取仓库 + 推理，可能要十几秒）…</div>`;
+  $("ai_plan").innerHTML=`<div class="muted small" style="margin-top:8px">AI 生成中（读取仓库 + 推理，可能要十几秒）…</div>`;
   busy(true);
   try{
     const r=await api("/api/ai/plan","POST",{repo,intent});
@@ -1360,6 +1563,7 @@ async function aiApply(){
   if(old) localStorage.removeItem("pgw_token");
   const t=sessionStorage.getItem("pgw_token");
   if(u) $("url").value=u; if(t) $("token").value=t; if(u&&t) connect(); })();
+
 </script>
 </body>
 </html>

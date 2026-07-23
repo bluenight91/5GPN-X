@@ -33,6 +33,8 @@ done
 [[ "${ui}" == *'/mihomo/'* ]] || fail "monitor section must embed the metacubexd iframe"
 [[ "${ui}" == *'DNS 直连域名'* ]] || fail "settings must expose DNS direct-domains management"
 [[ "${ui}" == *'/api/direct-domains'* ]] || fail "settings must call /api/direct-domains"
+[[ "${ui}" == *'id="dd_fold"'* || "${ui}" == *"id='dd_fold'"* ]] || fail "direct-domains list must be foldable"
+[[ "${ui}" == *'已有 '* || "${ui}" == *'setDirectDomainSummary'* ]] || fail "fold summary must show domain count"
 [[ "${ui}" == *'客户端网段'* ]] || fail "settings must expose client CIDR management"
 [[ "${ui}" == *'/api/client-cidr'* ]] || fail "settings must call /api/client-cidr"
 [[ "${ui}" == *'saveClientCidr'* ]] || fail "settings must support saving client CIDR"
