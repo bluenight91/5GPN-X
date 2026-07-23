@@ -40,6 +40,8 @@ done
 [[ "${ui}" == *'/api/client-socks'* ]] || fail "settings must call /api/client-socks"
 [[ "${ui}" == *'socksAction'* ]] || fail "settings must support SOCKS enable/disable"
 [[ "${ui}" == *'/api/doctor'* ]] || fail "settings must expose doctor"
+[[ "${ui}" == *'renderDoctor('* ]] || fail "doctor results must use structured renderDoctor()"
+[[ "${ui}" == *'d.pass'* || "${ui}" == *'Number(d.pass'* ]] || fail "doctor summary must use pass count, not boolean ok"
 [[ "${ui}" == *'/api/report'* ]] || fail "settings must expose report generation"
 [[ "${ui}" == *'/api/snapshots'* ]] || fail "settings must expose runtime snapshots"
 [[ "${ui}" == *'轻量配置包'* && "${ui}" == *'运行时快照'* ]] || fail "backup UI must distinguish config packages and snapshots"

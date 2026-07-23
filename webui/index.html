@@ -126,6 +126,25 @@
   .pill.wait { color:var(--warn); border-color:var(--warn); }
   .pills { display:flex; flex-wrap:wrap; gap:6px; }
 
+  /* doctor result panel */
+  #ops_result { margin-top:10px; }
+  #ops_result.ops-plain { font-family:var(--mono); font-size:12px; white-space:pre-wrap; word-break:break-word; }
+  .doc-head { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:10px; }
+  .doc-meta { color:var(--sub); font-size:12px; }
+  .doc-list { display:flex; flex-direction:column; gap:6px; }
+  .doc-row { display:grid; grid-template-columns:64px 1fr; gap:8px 10px; padding:8px 10px;
+    border:1px solid var(--border); border-radius:10px; background:var(--input-bg); }
+  .doc-row.fail { border-color:color-mix(in srgb, var(--danger) 45%, var(--border)); }
+  .doc-row.warn { border-color:color-mix(in srgb, var(--warn) 45%, var(--border)); }
+  .doc-check { font-weight:600; grid-column:2; }
+  .doc-detail { grid-column:2; color:var(--sub); font-size:12px; word-break:break-word; }
+  .doc-row .pill { grid-row:1 / span 2; align-self:center; text-align:center; }
+  .doc-pass details { margin-top:8px; }
+  .doc-pass summary { cursor:pointer; color:var(--sub); font-size:12px; user-select:none; }
+  @media (max-width:520px){
+    .doc-row { grid-template-columns:56px 1fr; }
+  }
+
   /* toast notifications (visible feedback on any section) */
   #toasts { position:fixed; left:50%; transform:translateX(-50%); z-index:70;
     bottom:max(16px,env(safe-area-inset-bottom)); display:flex; flex-direction:column; gap:8px;
@@ -431,7 +450,7 @@
           <button onclick="createSnapshot()">💾 创建快照</button>
           <button class="danger" onclick="restoreSnapshot()">⏪ 恢复快照</button>
         </div>
-        <div id="ops_result" class="mono small" style="margin-top:8px"></div>
+        <div id="ops_result" class="ops-plain small" style="margin-top:8px"></div>
       </div>
       <div class="card">
         <h2>轻量配置包（非运行时快照）</h2>
@@ -1027,14 +1046,76 @@ async function proxyDomain(){
 }
 
 /* ---- operations: doctor / report / runtime snapshots ---- */
-function opsOut(text){ const box=$("ops_result"); if(box) box.textContent=text||""; }
+function opsOut(text){
+  const box=$("ops_result"); if(!box) return;
+  box.className="ops-plain small";
+  box.textContent=text||"";
+}
+function opsHtml(html){
+  const box=$("ops_result"); if(!box) return;
+  box.className="small";
+  box.innerHTML=html||"";
+}
+function doctorLevelPill(level){
+  if(level==="fail") return '<span class="pill off">失败</span>';
+  if(level==="warn") return '<span class="pill wait">警告</span>';
+  return '<span class="pill on">通过</span>';
+}
+function renderDoctorRows(items){
+  return (items||[]).map(c=>{
+    const lv=String(c.level||"ok");
+    return `<div class="doc-row ${esc(lv)}">${doctorLevelPill(lv)}`
+      +`<div class="doc-check">${esc(c.check||"?")}</div>`
+      +`<div class="doc-detail">${esc(c.detail||"")}</div></div>`;
+  }).join("");
+}
+function renderDoctor(d, rawFallback){
+  if(!d || typeof d!=="object"){
+    opsOut(rawFallback||"doctor 无可用结果");
+    return;
+  }
+  const failN=Number(d.fail||0), warnN=Number(d.warn||0), passN=Number(d.pass||0);
+  const checks=Array.isArray(d.checks)?d.checks:[];
+  const fails=checks.filter(c=>c && c.level==="fail");
+  const warns=checks.filter(c=>c && c.level==="warn");
+  const passes=checks.filter(c=>c && c.level==="ok");
+  const verdict = failN===0
+    ? '<span class="pill on">doctor 通过</span>'
+    : '<span class="pill off">doctor 发现问题</span>';
+  let body=`<div class="doc-head">${verdict}`
+    +`<span class="pill off">失败 ${failN}</span>`
+    +`<span class="pill wait">警告 ${warnN}</span>`
+    +`<span class="pill on">通过 ${passN}</span>`
+    +`</div>`
+    +`<div class="doc-meta">客户端网段 <span class="mono">${esc(d.client_cidr||"?")}</span>`
+    +` · 出口 <span class="mono">${esc(d.current_exit||"?")}</span>`
+    +(d.deployed?` · 版本 <span class="mono">${esc(d.deployed)}</span>`:"")
+    +`</div>`;
+  if(fails.length){
+    body+=`<div style="margin-top:10px"><div class="small muted" style="margin-bottom:6px">失败项</div>`
+      +`<div class="doc-list">${renderDoctorRows(fails)}</div></div>`;
+  }
+  if(warns.length){
+    body+=`<div style="margin-top:10px"><div class="small muted" style="margin-bottom:6px">警告项</div>`
+      +`<div class="doc-list">${renderDoctorRows(warns)}</div></div>`;
+  }
+  if(passes.length){
+    body+=`<div class="doc-pass"><details><summary>通过项（${passes.length}）</summary>`
+      +`<div class="doc-list" style="margin-top:8px">${renderDoctorRows(passes)}</div></details></div>`;
+  }
+  if(!checks.length){
+    body+=`<pre class="mono small" style="margin-top:10px;white-space:pre-wrap">${esc(rawFallback||JSON.stringify(d,null,2))}</pre>`;
+  }
+  opsHtml(body);
+}
 async function runDoctor(){
   log("⏳ 运行 doctor 自检…"); busy(true);
   try{
     const r=await api("/api/doctor");
     const d=r.data||{};
-    opsOut("doctor: fail="+(d.fail||0)+" warn="+(d.warn||0)+" ok="+(d.ok||0)+"\n\n"+(r.output||JSON.stringify(d,null,2)));
-    log((r.ok?"✅ ":"❌ ")+"doctor 自检完成");
+    renderDoctor(d, r.output||"");
+    const failN=Number(d.fail||0);
+    log((failN===0?"✅ ":"❌ ")+"doctor 自检完成：失败 "+failN+" / 警告 "+Number(d.warn||0)+" / 通过 "+Number(d.pass||0));
   }catch(e){ log("❌ doctor："+e.message); }
   finally{ busy(false); }
 }

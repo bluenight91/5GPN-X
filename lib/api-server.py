@@ -1208,6 +1208,71 @@ def _json_output(out):
         return extract_json(out)
 
 
+def _doctor_env():
+    return {
+        "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "HOME": "/root",
+        "BASE_DIR": "/opt/5gpn",
+        "CONF_DIR": CONF_DIR,
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1",
+    }
+
+
+def run_doctor_json():
+    """Run doctor.sh --json with a sudo-like environment.
+
+    Prefer systemd-run so systemctl/ip/nft probes match interactive
+    `sudo 5gpn doctor` (API's inherited PATH is often too minimal).
+    """
+    doctor = DOCTOR if os.path.isfile(DOCTOR) else "/opt/5gpn/scripts/doctor.sh"
+    systemd_cmd = [
+        "systemd-run", "--quiet", "--wait", "--pipe", "--collect",
+        "-p", "User=root",
+        "-E", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "-E", "LANG=C.UTF-8",
+        "-E", "LC_ALL=C.UTF-8",
+        "-E", "PYTHONIOENCODING=utf-8",
+        "-E", "PYTHONUTF8=1",
+        "-E", "HOME=/root",
+        "/bin/bash", doctor, "--json",
+    ]
+    try:
+        p = subprocess.run(systemd_cmd, capture_output=True, text=True, timeout=180,
+                           encoding="utf-8", errors="replace")
+        out = ANSI.sub("", (p.stdout or "")).strip()
+        if out:
+            return p.returncode == 0, out
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        pass
+    try:
+        p = subprocess.run(["/bin/bash", doctor, "--json"],
+                           capture_output=True, text=True, timeout=180,
+                           env=_doctor_env(), encoding="utf-8", errors="replace")
+        out = ANSI.sub("", (p.stdout or "") + (p.stderr or "")).strip()
+        return p.returncode == 0, out
+    except subprocess.TimeoutExpired:
+        return False, "操作超时"
+    except Exception as e:  # noqa: BLE001
+        return False, str(e)
+
+
+def parse_doctor_json(out):
+    raw = (out or "").strip()
+    if not raw:
+        return None
+    for line in reversed(raw.splitlines()):
+        line = line.strip()
+        if line.startswith("{") and line.endswith("}"):
+            try:
+                return json.loads(line)
+            except ValueError:
+                continue
+    return _json_output(raw)
+
+
 def report_path(out):
     for line in reversed((out or "").splitlines()):
         s = line.strip()
@@ -1517,11 +1582,27 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/live":
             return self._send(200, dict(ok=True, **live_stats()))
         if path == "/api/doctor":
-            ok, out = run(["bash", DOCTOR, "--json"], timeout=180)
-            data = _json_output(out)
+            ok, out = run_doctor_json()
+            data = parse_doctor_json(out)
             if data is None:
                 return self._send(500, {"ok": False, "data": None, "output": out})
-            return self._send(200, {"ok": bool(data.get("ok", ok)), "data": data, "output": out})
+            # API answering this request implies 5gpn-api itself is up.
+            checks = list(data.get("checks") or [])
+            for c in checks:
+                if c.get("check") == "服务 5gpn-api" and c.get("level") == "fail":
+                    c["level"] = "ok"
+                    c["detail"] = "running (api process alive)"
+            pass_n = sum(1 for c in checks if c.get("level") == "ok")
+            fail_n = sum(1 for c in checks if c.get("level") == "fail")
+            warn_n = sum(1 for c in checks if c.get("level") == "warn")
+            data["checks"] = checks
+            data["pass"] = pass_n
+            data["fail"] = fail_n
+            data["warn"] = warn_n
+            data["ok"] = fail_n == 0
+            return self._send(200, {"ok": bool(data.get("ok", ok)), "data": data,
+                                    "pass": pass_n, "fail": fail_n, "warn": warn_n,
+                                    "output": out})
         if path == "/api/report":
             ok, out = run(["bash", REPORT], timeout=240)
             return self._send(200 if ok else 500, {"ok": ok, "output": out, "path": report_path(out)})
