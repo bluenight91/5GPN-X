@@ -71,7 +71,7 @@ EXIT_ADD_NAME_RE = re.compile(r"^[\w\-\u4e00-\u9fff]{1,16}$", re.UNICODE)  # 'lo
 DOMAIN_RE = re.compile(r"^(?=.{1,253}$)([A-Za-z0-9]([A-Za-z0-9_-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,}$")
 DNS_LIST_RE = re.compile(r"^[0-9A-Fa-f:.,\s]+$")
 DNS_UPSTREAM_SCHEMES = {"https", "tls", "udp", "tcp"}
-SNAP_ID_RE = re.compile(r"^[A-Za-z0-9-]{1,55}$")
+SNAP_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,96}$")
 WWW_DIR = "/opt/5gpn/www"
 WLOC_DIR = "/opt/5gpn/etc/wloc"
 WLOC_LOCATION = os.path.join(WLOC_DIR, "location.json")
@@ -1918,6 +1918,16 @@ def op_snapshot_list():
     return "❌ <b>读取快照失败</b>\n<pre>%s</pre>" % body
 
 
+def op_delete_snapshot(snap_id):
+    if not SNAP_ID_RE.match(snap_id) and snap_id != "latest":
+        return "快照 ID 无效。"
+    ok, out = run2(["bash", _snapshot_script(), "delete", snap_id], timeout=120)
+    if ok:
+        return ("✅ <b>已删除快照</b> <code>%s</code>\n<pre>%s</pre>"
+                % (html.escape(snap_id), html.escape(_strip_ansi(out)[-1200:])))
+    return "❌ <b>删除失败</b>\n%s" % html.escape(_reason(out))
+
+
 def snapshot_list_view():
     ok, out = _snapshot_list_raw()
     body = html.escape(_strip_ansi(out)[-2500:] or "（没有快照）")
@@ -1925,11 +1935,13 @@ def snapshot_list_view():
     rows = []
     if ok:
         for snap_id in _snapshot_ids_from_list(out)[:5]:
-            rows.append([{"text": "⏪ 回滚 " + snap_id,
-                          "callback_data": "rollback:" + snap_id}])
+            rows.append([
+                {"text": "⏪ " + snap_id[:18], "callback_data": "rollback:" + snap_id},
+                {"text": "🗑", "callback_data": "snapdel:" + snap_id},
+            ])
     rows.append([{"text": "⏪ 回滚最新", "callback_data": "act:rollback"}])
     rows.append([{"text": "« 返回", "callback_data": "menu:ops"}])
-    return "%s\n<pre>%s</pre>" % (head, body), rows
+    return "%s\n<pre>%s</pre>\n点 ⏪ 回滚，点 🗑 删除。" % (head, body), rows
 
 
 def edit_snapshot_list_async(cb):
@@ -3297,6 +3309,13 @@ def handle_callback(cb):
         else:
             edit(cb, "⏳ 正在回滚到快照 <code>%s</code>…" % html.escape(snap_id))
             edit_async(cb, lambda: op_rollback(snap_id), back_kb("menu:ops"))
+    elif data.startswith("snapdel:"):
+        snap_id = data[len("snapdel:"):]
+        if not SNAP_ID_RE.match(snap_id):
+            edit(cb, "快照 ID 无效，请重新打开列表。", back_kb("menu:ops"))
+        else:
+            edit(cb, "⏳ 正在删除快照 <code>%s</code>…" % html.escape(snap_id))
+            edit_async(cb, lambda: op_delete_snapshot(snap_id), back_kb("menu:ops"))
     elif data == "act:restart":
         edit(cb, "⏳ 正在重启服务…")
         edit_async(cb, op_restart_services, back_kb("menu:ops"))

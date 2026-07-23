@@ -4,6 +4,7 @@
 #   sudo bash scripts/snapshot.sh create [label]
 #   sudo bash scripts/snapshot.sh list
 #   sudo bash scripts/snapshot.sh restore [id|latest]
+#   sudo bash scripts/snapshot.sh delete <id>
 #   sudo bash scripts/snapshot.sh path   # print SNAP_DIR
 set -euo pipefail
 
@@ -18,6 +19,27 @@ err()  { echo "[ERR]  $*" >&2; }
 
 need_root() {
     [[ ${EUID:-0} -eq 0 ]] || { err "run as root"; exit 1; }
+}
+
+valid_snap_id() {
+    local id="${1:-}"
+    [[ "$id" =~ ^[0-9TZ._A-Za-z-]{1,96}$ ]] || return 1
+    [[ "$id" != "." && "$id" != ".." && "$id" != "latest" ]] || return 1
+    return 0
+}
+
+repoint_latest() {
+    local latest_target newest=""
+    latest_target="$(readlink "${SNAP_ROOT}/latest" 2>/dev/null || true)"
+    if [[ -n "$latest_target" && -d "${SNAP_ROOT}/${latest_target}" ]]; then
+        return 0
+    fi
+    rm -f "${SNAP_ROOT}/latest"
+    newest="$(find "$SNAP_ROOT" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort -r | head -n1 || true)"
+    if [[ -n "$newest" ]]; then
+        ln -sfn "$newest" "${SNAP_ROOT}/latest"
+        info "latest -> ${newest}"
+    fi
 }
 
 snap_paths() {
@@ -165,14 +187,37 @@ restore_snapshot() {
     ok "restored snapshot ${id}"
 }
 
+delete_snapshot() {
+    need_root
+    local want="${1:-}" id dir latest_target
+    [[ -n "$want" ]] || { err "Usage: $0 delete <id>"; exit 1; }
+    if [[ "$want" == "latest" ]]; then
+        id="$(readlink "${SNAP_ROOT}/latest" 2>/dev/null || true)"
+        [[ -n "$id" ]] || { err "no latest snapshot to delete"; exit 1; }
+    else
+        id="$want"
+    fi
+    valid_snap_id "$id" || { err "invalid snapshot id: ${want}"; exit 1; }
+    dir="${SNAP_ROOT}/${id}"
+    [[ -d "$dir" ]] || { err "snapshot not found: ${id}"; exit 1; }
+    latest_target="$(readlink "${SNAP_ROOT}/latest" 2>/dev/null || true)"
+    rm -rf "$dir"
+    if [[ "$latest_target" == "$id" ]]; then
+        rm -f "${SNAP_ROOT}/latest"
+        repoint_latest
+    fi
+    ok "deleted snapshot ${id}"
+}
+
 cmd="${1:-}"
 case "$cmd" in
     create) shift; create_snapshot "${1:-manual}" ;;
     list) list_snapshots ;;
     restore) shift; restore_snapshot "${1:-latest}" ;;
+    delete|rm|remove) shift; delete_snapshot "${1:-}" ;;
     path) echo "$SNAP_ROOT" ;;
     *)
-        echo "Usage: $0 {create [label]|list|restore [id|latest]|path}" >&2
+        echo "Usage: $0 {create [label]|list|restore [id|latest]|delete <id>|path}" >&2
         exit 2
         ;;
 esac

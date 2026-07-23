@@ -1841,7 +1841,15 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(400, {"ok": False, "error": "invalid snapshot id"})
                 ok, out = run(["bash", SNAPSHOT, "restore", snap_id], timeout=300)
                 return self._send(200 if ok else 500, {"ok": ok, "id": snap_id, "output": out})
-            return self._send(400, {"ok": False, "error": "action must be create|restore"})
+            if action == "delete":
+                snap_id = str(b.get("id", "")).strip()
+                if snap_id != "latest" and not re.match(r"^[0-9TZ._A-Za-z-]{1,96}$", snap_id):
+                    return self._send(400, {"ok": False, "error": "invalid snapshot id"})
+                if not snap_id:
+                    return self._send(400, {"ok": False, "error": "missing snapshot id"})
+                ok, out = run(["bash", SNAPSHOT, "delete", snap_id], timeout=120)
+                return self._send(200 if ok else 500, {"ok": ok, "id": snap_id, "output": out})
+            return self._send(400, {"ok": False, "error": "action must be create|restore|delete"})
 
         if path == "/api/proxy-domain":
             domain = str(b.get("domain", "")).strip().lower()

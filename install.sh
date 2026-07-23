@@ -357,8 +357,8 @@ Options:
   --smoke        Run the read-only post-deploy smoke check (alias of doctor --deep)
   --doctor       Structured health check (--json / --deep supported via scripts/doctor.sh)
   --report       Write a redacted diagnostic report under /tmp
-  --snapshot [list|restore [id]|label]
-                 List snapshots, restore one, or save a config snapshot
+  --snapshot [list|restore [id]|delete [id]|label]
+                 List / restore / delete snapshots, or save a config snapshot
                  (also done automatically before --update)
   --rollback [id]
                  Restore the latest (or named) config snapshot
@@ -4207,6 +4207,7 @@ case "${1:-}" in
         case "${2:-}" in
             list) bash "${SCRIPT_DIR}/scripts/snapshot.sh" list ;;
             restore) bash "${SCRIPT_DIR}/scripts/snapshot.sh" restore "${3:-latest}" ;;
+            delete|rm|remove) bash "${SCRIPT_DIR}/scripts/snapshot.sh" delete "${3:-}" ;;
             *) bash "${SCRIPT_DIR}/scripts/snapshot.sh" create "${2:-manual}" ;;
         esac
         ;;

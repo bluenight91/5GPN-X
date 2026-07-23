@@ -46,6 +46,8 @@ snap="$(cat "${root}/scripts/snapshot.sh")"
 [[ "${snap}" == *'/var/lib/5gpn/snapshots'* ]] || fail "snapshots live under /var/lib/5gpn/snapshots"
 [[ "${snap}" == *'create_snapshot'* || "${snap}" == *'create)'* ]] || fail "snapshot must support create"
 [[ "${snap}" == *'restore'* ]] || fail "snapshot must support restore"
+[[ "${snap}" == *'delete_snapshot'* || "${snap}" == *'delete)'* ]] || fail "snapshot must support delete"
+[[ "${install}" == *'delete|rm|remove)'* ]] || fail "install.sh --snapshot must dispatch delete"
 
 report="$(cat "${root}/scripts/report.sh")"
 [[ "${report}" == *'REDACTED'* ]] || fail "report must redact secrets"

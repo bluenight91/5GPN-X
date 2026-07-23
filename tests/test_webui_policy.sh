@@ -44,6 +44,7 @@ done
 [[ "${ui}" == *'d.pass'* || "${ui}" == *'Number(d.pass'* ]] || fail "doctor summary must use pass count, not boolean ok"
 [[ "${ui}" == *'/api/report'* ]] || fail "settings must expose report generation"
 [[ "${ui}" == *'/api/snapshots'* ]] || fail "settings must expose runtime snapshots"
+[[ "${ui}" == *'deleteSnapshot('* ]] || fail "settings must expose snapshot delete"
 [[ "${ui}" == *'轻量配置包'* && "${ui}" == *'运行时快照'* ]] || fail "backup UI must distinguish config packages and snapshots"
 
 # --- auth model unchanged ------------------------------------------------------
