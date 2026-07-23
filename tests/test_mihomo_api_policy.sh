@@ -20,11 +20,12 @@ fail() { echo "$1" >&2; exit 1; }
 [[ "${install_body}" == *'MIHOMO_API_SECRET_FILE='/etc/5gpn/mihomo-api-secret''* ]] || fail "install.sh must define MIHOMO_API_SECRET_FILE"
 
 # --- installer vendors metacubexd (pinned version, download at install) ------
-[[ "${install_body}" == *'METACUBEXD_VERSION_DEFAULT="1.269.0"'* ]] || fail "install.sh must pin METACUBEXD_VERSION_DEFAULT"
+[[ "${install_body}" == *'METACUBEXD_VERSION_DEFAULT="1.270.0"'* ]] || fail "install.sh must pin METACUBEXD_VERSION_DEFAULT"
 [[ "${install_body}" == *'install_metacubexd() {'* ]] || fail "install.sh must define install_metacubexd()"
 [[ "${install_body}" == *'MetaCubeX/metacubexd/releases/download/v${ver}/compressed-dist.tgz'* ]] || fail "metacubexd must come from the pinned GitHub release asset"
 [[ "${install_body}" == *'${BASE_DIR}/webui/mihomo'* ]] || fail "metacubexd must unpack to \${BASE_DIR}/webui/mihomo"
 [[ "${install_body}" == *'.metacubexd-version'* ]] || fail "install_metacubexd must record installed version"
+[[ "${install_body}" == *'metacubexd.pin'* ]] || fail "install_metacubexd must persist an explicit version pin"
 [[ "${api_body}" == *'Cache-Control'* && "${api_body}" == *'sw.js'* ]] || fail "api must send no-cache for metacubexd service worker / index"
 [[ "${install_body}" == *'( regen_smart )'* ]] || fail "setup_api must rebuild the smart config in a subshell"
 [[ "${install_body}" == *'install -m 0755 "${LIB_DIR}/mihomo-router-config.py" "${MIHOMO_ROUTER_GEN}"'* ]] || fail "setup_api must refresh the installed router generator before regen"

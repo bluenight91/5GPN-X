@@ -29,7 +29,7 @@ MIHOMO_CFG_GEN="/opt/5gpn/bin/mihomo-exit-config.py"
 MIHOMO_ROUTER_GEN="/opt/5gpn/bin/mihomo-router-config.py"
 RULES_IMPORT="/opt/5gpn/bin/rules-import.py"
 MIHOMO_VERSION_DEFAULT="1.19.28"
-METACUBEXD_VERSION_DEFAULT="1.269.0"
+METACUBEXD_VERSION_DEFAULT="1.270.0"
 MOSDNS_VERSION_DEFAULT="5.3.4"
 DEFAULT_REMOTE_DNS=("1.1.1.1" "8.8.8.8" "9.9.9.9")
 DEFAULT_LOCAL_DNS=("101.226.4.6" "218.30.118.6" "180.76.76.76" "119.29.29.29")
@@ -2996,10 +2996,28 @@ ensure_mihomo_api_secret() {
     chmod 600 "${MIHOMO_API_SECRET_FILE}"
 }
 install_metacubexd() {
-    local ver="${METACUBEXD_VERSION:-${METACUBEXD_VERSION_DEFAULT}}"
+    # Version resolution: explicit env > persisted pin > repo default.
+    # setup-api / update always call this; without a pin, a newer manual
+    # install would be overwritten by the default on the next update.
+    local pin_file="${CONF_DIR}/metacubexd.pin"
+    local ver="" explicit=0
+    if [[ -n "${METACUBEXD_VERSION:-}" ]]; then
+        ver="${METACUBEXD_VERSION}"
+        explicit=1
+    elif [[ -f "$pin_file" ]]; then
+        ver="$(tr -d '[:space:]' < "$pin_file" | head -n1)"
+    fi
+    [[ -n "$ver" ]] || ver="${METACUBEXD_VERSION_DEFAULT}"
     local url="https://github.com/MetaCubeX/metacubexd/releases/download/v${ver}/compressed-dist.tgz"
-    local tmp explicit=0 app_ver=""
-    [[ -n "${METACUBEXD_VERSION:-}" ]] && explicit=1
+    local tmp app_ver="" installed=""
+    if [[ -f "${BASE_DIR}/webui/mihomo/.metacubexd-version" ]]; then
+        installed="$(tr -d '[:space:]' < "${BASE_DIR}/webui/mihomo/.metacubexd-version" | head -n1)"
+    fi
+    if [[ -n "$installed" && "$installed" == "$ver" && -f "${BASE_DIR}/webui/mihomo/index.html" ]]; then
+        ok "metacubexd v${ver} already installed (skip download)"
+        [[ "$explicit" -eq 1 ]] && printf '%s\n' "$ver" > "$pin_file"
+        return 0
+    fi
     tmp="$(mktemp)"
     info "Downloading metacubexd v${ver}..."
     if ! curl -fsSL --max-time 90 "$url" -o "$tmp"; then
@@ -3024,6 +3042,11 @@ install_metacubexd() {
     fi
     rm -f "$tmp"
     printf '%s\n' "$ver" > "${BASE_DIR}/webui/mihomo/.metacubexd-version"
+    # Persist explicit pins so later `5gpn update` does not silently downgrade.
+    if [[ "$explicit" -eq 1 ]]; then
+        mkdir -p "${CONF_DIR}"
+        printf '%s\n' "$ver" > "$pin_file"
+    fi
     app_ver="$(python3 - <<'PY' "${BASE_DIR}/webui/mihomo/index.html" 2>/dev/null || true
 import re, sys
 try:
