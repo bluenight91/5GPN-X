@@ -142,6 +142,15 @@ if [[ -f "${CONF_DIR}/client-socks.enabled" ]]; then
 else
     note "私网 SOCKS5" "disabled"
 fi
+if [[ -f "${CONF_DIR}/client-mtproto.enabled" ]]; then
+    if svc_active 5gpn-mtg && svc_active 5gpn-client-mtproto; then
+        ok "服务 client-mtproto" "running"
+    else
+        bad "服务 client-mtproto" "enabled but mtg/front not running"
+    fi
+else
+    note "私网 MTProto" "disabled"
+fi
 if [[ "$CURRENT" == "smart" ]]; then
     if svc_active 5gpn-mihomo@smart; then
         ok "服务 smart" "running"
@@ -174,6 +183,10 @@ check_listen tcp 443 "HTTPS/SNI"
 if [[ -f "${CONF_DIR}/client-socks.enabled" ]]; then
     socks_port="$(cat "${CONF_DIR}/client-socks.port" 2>/dev/null || echo 38443)"
     check_listen tcp "$socks_port" "私网 SOCKS5"
+fi
+if [[ -f "${CONF_DIR}/client-mtproto.enabled" ]]; then
+    mtproto_port="$(cat "${CONF_DIR}/client-mtproto.port" 2>/dev/null || echo 5753)"
+    check_listen tcp "$mtproto_port" "私网 MTProto"
 fi
 if [[ "$CURRENT" == "smart" ]]; then
     if ss -H -tln 2>/dev/null | grep -q "127.0.0.1:9090"; then

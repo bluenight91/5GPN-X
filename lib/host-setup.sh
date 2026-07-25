@@ -475,6 +475,7 @@ table inet filter {
         ip saddr __CLIENT_CIDR__ tcp dport 53 accept
         ip saddr __CLIENT_CIDR__ udp dport 53 accept
         __SOCKS_RULE__
+        __MTPROTO_RULE__
         # ICMP for basic network health
         ip protocol icmp accept
         ip6 nexthdr icmpv6 accept
@@ -492,7 +493,7 @@ table inet filter {
 include "/etc/5gpn/pgw-exit.nft"
 EOF
         sed -i "s/__TCP_PORTS__/${tcp_ports}/" "$tmp_conf"
-        local client_cidr socks_port socks_rule
+        local client_cidr socks_port socks_rule mtproto_port mtproto_rule
         client_cidr="$(client_cidr_nft_expr)"
         # Escape for sed replacement (CIDR has dots/slashes).
         sed -i "s#__CLIENT_CIDR__#${client_cidr}#g" "$tmp_conf"
@@ -504,6 +505,13 @@ EOF
         fi
         # Use | delimiter; socks_rule has no pipes.
         sed -i "s#__SOCKS_RULE__#${socks_rule}#" "$tmp_conf"
+        mtproto_port="$(cat /opt/5gpn/etc/client-mtproto.port 2>/dev/null || echo '')"
+        if [[ -f /opt/5gpn/etc/client-mtproto.enabled && "$mtproto_port" =~ ^[0-9]+$ ]]; then
+            mtproto_rule="ip saddr ${client_cidr} tcp dport ${mtproto_port} accept"
+        else
+            mtproto_rule="# client mtproto disabled"
+        fi
+        sed -i "s#__MTPROTO_RULE__#${mtproto_rule}#" "$tmp_conf"
         if ! nft -c -f "$tmp_conf" >/dev/null 2>&1; then
             rm -f "$tmp_conf"
             warn "Generated nftables config failed validation; existing firewall left unchanged."
@@ -537,11 +545,17 @@ EOF
             iptables -A INPUT -s "${client_cidr}" -p tcp -m multiport --dports 53,80,443 -j ACCEPT
             iptables -A INPUT -s "${client_cidr}" -p udp -m multiport --dports 53,443 -j ACCEPT
         done
-        local socks_port
+        local socks_port mtproto_port
         socks_port="$(cat /opt/5gpn/etc/client-socks.port 2>/dev/null || echo '')"
         if [[ -f /opt/5gpn/etc/client-socks.enabled && "$socks_port" =~ ^[0-9]+$ ]]; then
             for client_cidr in $(client_cidr_list); do
                 iptables -A INPUT -s "${client_cidr}" -p tcp --dport "${socks_port}" -m comment --comment 5gpn-socks -j ACCEPT
+            done
+        fi
+        mtproto_port="$(cat /opt/5gpn/etc/client-mtproto.port 2>/dev/null || echo '')"
+        if [[ -f /opt/5gpn/etc/client-mtproto.enabled && "$mtproto_port" =~ ^[0-9]+$ ]]; then
+            for client_cidr in $(client_cidr_list); do
+                iptables -A INPUT -s "${client_cidr}" -p tcp --dport "${mtproto_port}" -m comment --comment 5gpn-mtproto -j ACCEPT
             done
         fi
         iptables -A INPUT -p icmp -j ACCEPT
@@ -623,9 +637,12 @@ setup_firewall() {
     local wl
     wl="$(client_cidr_csv)"
     ok "Firewall configured (reverse proxy whitelist: ${wl})"
-    # Re-apply optional client SOCKS allow if previously enabled.
+    # Re-apply optional client SOCKS / MTProto allow if previously enabled.
     if declare -F firewall_socks_sync >/dev/null 2>&1; then
         firewall_socks_sync >/dev/null 2>&1 || true
+    fi
+    if declare -F firewall_mtproto_sync >/dev/null 2>&1; then
+        firewall_mtproto_sync >/dev/null 2>&1 || true
     fi
 }
 
@@ -694,6 +711,72 @@ firewall_socks_sync() {
             fi
             if [[ "$mode" == "preserve" ]]; then
                 info "FIREWALL_MODE=preserve: inserted ephemeral SOCKS allow ${cidr} → TCP ${port} (tag 5gpn-socks); persist it in your own firewall if needed."
+            fi
+            ;;
+    esac
+}
+
+# Optional client-only MTProto (5gpn-client-mtproto → mtg). Tagged like SOCKS.
+firewall_mtproto_remove_rules() {
+    if command -v nft >/dev/null 2>&1 && nft list chain inet filter input >/dev/null 2>&1; then
+        local handles
+        handles="$(nft -a list chain inet filter input 2>/dev/null | awk '/5gpn-mtproto/{print $NF}')"
+        for h in $handles; do
+            [[ "$h" =~ ^[0-9]+$ ]] && nft delete rule inet filter input handle "$h" 2>/dev/null || true
+        done
+    fi
+    if command -v iptables >/dev/null 2>&1; then
+        while iptables -D INPUT -m comment --comment 5gpn-mtproto -j ACCEPT 2>/dev/null; do :; done
+        local line
+        while read -r line; do
+            [[ "$line" == *5gpn-mtproto* ]] || continue
+            # shellcheck disable=SC2086
+            iptables -D INPUT $line 2>/dev/null || true
+        done < <(iptables -S INPUT 2>/dev/null | sed -n 's/^-A INPUT //p' | grep 5gpn-mtproto || true)
+    fi
+}
+
+firewall_mtproto_sync() {
+    local port cidr mode
+    port="$(cat /opt/5gpn/etc/client-mtproto.port 2>/dev/null || echo '5753')"
+    cidr="$(client_cidr_csv)"
+    [[ "$port" =~ ^[0-9]+$ ]] || port=5753
+    firewall_mtproto_remove_rules
+    if [[ ! -f /opt/5gpn/etc/client-mtproto.enabled ]]; then
+        if [[ -f /etc/5gpn/.firewall-managed ]] && declare -F firewall_managed_apply >/dev/null 2>&1; then
+            local ssh_ports tcp_ports tcp_ports_ipt
+            ssh_ports="$(detect_ssh_ports 2>/dev/null || echo 22)"
+            tcp_ports_ipt="${ssh_ports},8111"
+            tcp_ports="${tcp_ports_ipt//,/, }"
+            firewall_managed_apply "$tcp_ports" "$tcp_ports_ipt" >/dev/null 2>&1 || true
+        fi
+        return 0
+    fi
+    mode="$(resolve_firewall_mode 2>/dev/null || echo preserve)"
+    case "$mode" in
+        managed)
+            local ssh_ports tcp_ports tcp_ports_ipt
+            ssh_ports="$(detect_ssh_ports 2>/dev/null || echo 22)"
+            tcp_ports_ipt="${ssh_ports},8111"
+            tcp_ports="${tcp_ports_ipt//,/, }"
+            firewall_managed_apply "$tcp_ports" "$tcp_ports_ipt" >/dev/null 2>&1 || return 1
+            ;;
+        auto|preserve|*)
+            if command -v nft >/dev/null 2>&1 && nft list chain inet filter input >/dev/null 2>&1; then
+                local cidr_expr
+                cidr_expr="$(client_cidr_nft_expr)"
+                nft insert rule inet filter input ip saddr $cidr_expr tcp dport "$port" accept comment '"5gpn-mtproto"' 2>/dev/null || return 1
+            elif command -v iptables >/dev/null 2>&1; then
+                local one
+                for one in $(client_cidr_list); do
+                    iptables -I INPUT 1 -s "$one" -p tcp --dport "$port" -m comment --comment 5gpn-mtproto -j ACCEPT 2>/dev/null || return 1
+                done
+            else
+                warn "No nftables/iptables INPUT firewall found for MTProto allow rule."
+                return 1
+            fi
+            if [[ "$mode" == "preserve" ]]; then
+                info "FIREWALL_MODE=preserve: inserted ephemeral MTProto allow ${cidr} → TCP ${port} (tag 5gpn-mtproto); persist it in your own firewall if needed."
             fi
             ;;
     esac

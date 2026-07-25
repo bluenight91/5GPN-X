@@ -12,6 +12,9 @@ IOS_PROFILE_PORT=8111
 API_PORT_DEFAULT=8444
 CLIENT_SOCKS_PORT_DEFAULT=38443
 CLIENT_SOCKS_USER_DEFAULT=5gpn
+CLIENT_MTPROTO_PORT_DEFAULT=5753
+CLIENT_MTPROTO_BACKEND_DEFAULT=127.0.0.1:15753
+MTG_VERSION_DEFAULT="2.2.8"
 EXIT_USER="pxout"
 EXIT_MARK="0x1"
 EXIT_TABLE="100"
@@ -37,6 +40,7 @@ bootstrap_from_repo_if_needed() {
     local required=(
         install.sh
         lib/renew-hook.sh lib/sniproxy.conf lib/quic-proxy.go lib/client-socks.go
+        lib/client-mtproto.go
         lib/mosdns.yaml.template lib/update-rules.sh lib/ios-http.py lib/tgbot.py
         lib/wa-shim.py lib/rules-import.py lib/mihomo-exit-config.py
         lib/mihomo-router-config.py lib/rules-default.conf lib/host-setup.sh
@@ -439,6 +443,16 @@ Options:
                  Show SOCKS5 status (password omitted)
   --reset-client-socks-creds
                  Rotate SOCKS5 username/password (prints once)
+  --enable-client-mtproto
+                 Enable private MTProto proxy (mtg; only client CIDR; default TCP 5753)
+  --disable-client-mtproto
+                 Disable the private MTProto proxy
+  --client-mtproto-status
+                 Show MTProto status (secret omitted)
+  --set-client-mtproto-secret <secret>
+                 Set a custom MTProto secret (ee… FakeTLS hex or mtg secret)
+  --generate-client-mtproto-secret
+                 Generate a FakeTLS secret via mtg and save it
   --setup-whatsapp
                  Install/repair the iOS WhatsApp no-SNI TCP/443 shim.
   --uninstall    Remove all installed components
@@ -1437,6 +1451,270 @@ EOF
     echo "  地址: ${host}:${port}"
     echo "  用户: ${user}"
     echo "  密码: ${pass}"
+}
+
+# ----- private client MTProto (mtg + CIDR ACL front; opt-in; TCP 5753) -----
+CLIENT_MTPROTO_BIN="${BASE_DIR}/bin/client-mtproto"
+CLIENT_MTPROTO_ENV="${CONF_DIR}/client-mtproto.env"
+CLIENT_MTPROTO_ENABLED="${CONF_DIR}/client-mtproto.enabled"
+CLIENT_MTPROTO_PORT_FILE="${CONF_DIR}/client-mtproto.port"
+CLIENT_MTPROTO_TOML="${CONF_DIR}/mtg.toml"
+MTG_BIN="${BASE_DIR}/bin/mtg"
+
+validate_mtproto_secret() {
+    local s="${1:-}"
+    [[ -n "$s" ]] || return 1
+    [[ "$s" != *$'\n'* && "$s" != *' '* && "$s" != *$'\t'* ]] || return 1
+    # FakeTLS hex (ee/dd…) or plain hex, or mtg base64url secret.
+    [[ "$s" =~ ^(ee|dd)[0-9a-fA-F]{32,}$ ]] && return 0
+    [[ "$s" =~ ^[0-9a-fA-F]{32,}$ ]] && return 0
+    [[ "$s" =~ ^[A-Za-z0-9_-]{22,}$ ]] && return 0
+    return 1
+}
+
+ensure_mtg_binary() {
+    local ver="${MTG_VERSION:-${MTG_VERSION_DEFAULT}}"
+    local arch asset url tmp dir
+    mkdir -p "${BASE_DIR}/bin"
+    if [[ -x "${MTG_BIN}" ]]; then
+        if "${MTG_BIN}" version 2>/dev/null | grep -qE "${ver}|v${ver}" \
+            || "${MTG_BIN}" --version 2>/dev/null | grep -qE "${ver}|v${ver}"; then
+            return 0
+        fi
+    fi
+    case "$(uname -m)" in
+        x86_64|amd64) arch="amd64" ;;
+        aarch64|arm64) arch="arm64" ;;
+        *) err "Unsupported architecture for mtg: $(uname -m)"; return 1 ;;
+    esac
+    asset="mtg-${ver}-linux-${arch}.tar.gz"
+    url="https://github.com/9seconds/mtg/releases/download/v${ver}/${asset}"
+    info "Downloading mtg v${ver} (${arch})..."
+    tmp="$(mktemp)"
+    dir="$(mktemp -d)"
+    if ! curl -fsSL --max-time 90 "$url" -o "$tmp"; then
+        rm -f "$tmp"; rm -rf "$dir"
+        err "mtg v${ver} 下载失败: $url"
+        return 1
+    fi
+    if ! tar -xzf "$tmp" -C "$dir" 2>/dev/null; then
+        rm -f "$tmp"; rm -rf "$dir"
+        err "mtg 解压失败"
+        return 1
+    fi
+    local found
+    found="$(find "$dir" -type f -name mtg | head -n1)"
+    [[ -n "$found" && -f "$found" ]] || { rm -f "$tmp"; rm -rf "$dir"; err "mtg binary missing in archive"; return 1; }
+    install -m 0755 "$found" "${MTG_BIN}"
+    rm -f "$tmp"; rm -rf "$dir"
+    ok "mtg v${ver} installed to ${MTG_BIN}"
+}
+
+install_client_mtproto_binary() {
+    ensure_proxy_user
+    mkdir -p "${BASE_DIR}/bin" "${SRC_DIR}" "${CONF_DIR}"
+    ensure_mtg_binary || return 1
+    [[ -f "${LIB_DIR}/client-mtproto.go" ]] || { err "client-mtproto.go missing"; return 1; }
+    if ! cmp -s "${LIB_DIR}/client-mtproto.go" "${SRC_DIR}/client-mtproto.go" 2>/dev/null \
+        || [[ ! -x "${CLIENT_MTPROTO_BIN}" ]]; then
+        info "Compiling client-mtproto (CIDR ACL front)..."
+        cp "${LIB_DIR}/client-mtproto.go" "${SRC_DIR}/client-mtproto.go"
+        (
+            cd "${SRC_DIR}"
+            export PATH=$PATH:/usr/local/go/bin
+            go build -ldflags="-s -w" -o "${CLIENT_MTPROTO_BIN}" client-mtproto.go
+        )
+    fi
+    cat > /etc/systemd/system/5gpn-mtg.service <<EOF
+[Unit]
+Description=5GPN-X mtg MTProto core (loopback only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=${MTG_BIN} run ${CLIENT_MTPROTO_TOML}
+Restart=on-failure
+RestartSec=3
+User=${EXIT_USER}
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=${CONF_DIR}
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    cat > /etc/systemd/system/5gpn-client-mtproto.service <<EOF
+[Unit]
+Description=5GPN-X private MTProto ACL front (client CIDR → mtg)
+After=network-online.target 5gpn-mtg.service
+Wants=network-online.target
+Requires=5gpn-mtg.service
+
+[Service]
+Type=simple
+EnvironmentFile=-${CLIENT_MTPROTO_ENV}
+ExecStart=${CLIENT_MTPROTO_BIN} -l 0.0.0.0:\${MTPROTO_PORT} -b \${MTPROTO_BACKEND} -a \${MTPROTO_ALLOW_CIDR} -q
+Restart=on-failure
+RestartSec=3
+User=${EXIT_USER}
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+}
+
+client_mtproto_write_toml() {
+    local secret="${1:-}"
+    [[ -n "$secret" ]] || return 1
+    umask 077
+    cat > "${CLIENT_MTPROTO_TOML}" <<EOF
+secret = "${secret}"
+bind-to = "${CLIENT_MTPROTO_BACKEND_DEFAULT}"
+EOF
+    chmod 600 "${CLIENT_MTPROTO_TOML}"
+    chown "${EXIT_USER}:${EXIT_USER}" "${CLIENT_MTPROTO_TOML}" 2>/dev/null || true
+}
+
+client_mtproto_ensure_creds() {
+    mkdir -p "${CONF_DIR}"
+    local port cidr secret backend
+    port="$(cat "${CLIENT_MTPROTO_PORT_FILE}" 2>/dev/null || echo "${CLIENT_MTPROTO_PORT_DEFAULT}")"
+    [[ "$port" =~ ^[0-9]+$ ]] || port="${CLIENT_MTPROTO_PORT_DEFAULT}"
+    echo "$port" > "${CLIENT_MTPROTO_PORT_FILE}"
+    cidr="$(cat /etc/mosdns/.client_cidr 2>/dev/null || echo '172.22.0.0/16')"
+    backend="${CLIENT_MTPROTO_BACKEND_DEFAULT}"
+    secret=""
+    if [[ -f "${CLIENT_MTPROTO_ENV}" ]]; then
+        # shellcheck disable=SC1090
+        set -a; source "${CLIENT_MTPROTO_ENV}"; set +a
+        secret="${MTPROTO_SECRET:-}"
+        backend="${MTPROTO_BACKEND:-$backend}"
+    fi
+    if [[ -z "$secret" ]]; then
+        ensure_mtg_binary || return 1
+        secret="$("${MTG_BIN}" generate-secret --hex cloudflare.com 2>/dev/null | tr -d '[:space:]')"
+        validate_mtproto_secret "$secret" || {
+            err "无法生成 MTProto secret"
+            return 1
+        }
+    fi
+    umask 077
+    cat > "${CLIENT_MTPROTO_ENV}" <<EOF
+MTPROTO_PORT=${port}
+MTPROTO_BACKEND=${backend}
+MTPROTO_SECRET=${secret}
+MTPROTO_ALLOW_CIDR=${cidr}
+EOF
+    chmod 600 "${CLIENT_MTPROTO_ENV}"
+    client_mtproto_write_toml "$secret"
+}
+
+client_mtproto_host_ip() {
+    client_socks_host_ip
+}
+
+enable_client_mtproto() {
+    check_root
+    install_client_mtproto_binary || return 1
+    client_mtproto_ensure_creds || return 1
+    # shellcheck disable=SC1090
+    set -a; source "${CLIENT_MTPROTO_ENV}"; set +a
+    : > "${CLIENT_MTPROTO_ENABLED}"
+    chmod 644 "${CLIENT_MTPROTO_ENABLED}"
+    if declare -F firewall_mtproto_sync >/dev/null 2>&1; then
+        firewall_mtproto_sync || {
+            rm -f "${CLIENT_MTPROTO_ENABLED}"
+            err "MTProto firewall sync failed; MTProto not enabled"
+            return 1
+        }
+    fi
+    systemctl enable --now 5gpn-mtg.service 5gpn-client-mtproto.service
+    systemctl restart 5gpn-mtg.service 5gpn-client-mtproto.service
+    local host; host="$(client_mtproto_host_ip)"
+    ok "私网 MTProto 已开启"
+    echo "  地址:   ${host}:${MTPROTO_PORT}"
+    echo "  密钥:   ${MTPROTO_SECRET}"
+    echo "  允许源: ${MTPROTO_ALLOW_CIDR}"
+    echo "  链接:   tg://proxy?server=${host}&port=${MTPROTO_PORT}&secret=${MTPROTO_SECRET}"
+    echo "  Telegram: 设置 → 数据与存储 → 代理 → 添加代理 → MTProto"
+    warn "密钥仅此时完整显示；之后 status 会隐藏。可用 --set-client-mtproto-secret 指定"
+}
+
+disable_client_mtproto() {
+    check_root
+    systemctl disable --now 5gpn-client-mtproto.service 5gpn-mtg.service 2>/dev/null || true
+    rm -f "${CLIENT_MTPROTO_ENABLED}"
+    declare -F firewall_mtproto_sync >/dev/null 2>&1 && firewall_mtproto_sync || true
+    ok "私网 MTProto 已关闭"
+}
+
+client_mtproto_status() {
+    local on=0 host port cidr
+    [[ -f "${CLIENT_MTPROTO_ENABLED}" ]] && on=1
+    port="$(cat "${CLIENT_MTPROTO_PORT_FILE}" 2>/dev/null || echo "${CLIENT_MTPROTO_PORT_DEFAULT}")"
+    host="$(client_mtproto_host_ip)"
+    cidr="$(cat /etc/mosdns/.client_cidr 2>/dev/null || echo '172.22.0.0/16')"
+    echo "client-mtproto: $([[ $on -eq 1 ]] && echo enabled || echo disabled)"
+    echo "listen: ${host}:${port}"
+    echo "secret: ***"
+    echo "allow: ${cidr}"
+    echo "engine: mtg (loopback ${CLIENT_MTPROTO_BACKEND_DEFAULT})"
+    if [[ $on -eq 1 ]]; then
+        systemctl is-active --quiet 5gpn-mtg.service \
+            && echo "mtg: running" || echo "mtg: not running"
+        systemctl is-active --quiet 5gpn-client-mtproto.service \
+            && echo "front: running" || echo "front: not running"
+    fi
+}
+
+set_client_mtproto_secret() {
+    check_root
+    local secret="${1:-}"
+    validate_mtproto_secret "$secret" || {
+        err "无效 secret（需要 ee…/dd… FakeTLS hex、纯 hex，或 mtg base64url）"
+        return 1
+    }
+    install_client_mtproto_binary || return 1
+    client_mtproto_ensure_creds || return 1
+    local port cidr backend
+    port="$(cat "${CLIENT_MTPROTO_PORT_FILE}" 2>/dev/null || echo "${CLIENT_MTPROTO_PORT_DEFAULT}")"
+    cidr="$(cat /etc/mosdns/.client_cidr 2>/dev/null || echo '172.22.0.0/16')"
+    backend="${CLIENT_MTPROTO_BACKEND_DEFAULT}"
+    umask 077
+    cat > "${CLIENT_MTPROTO_ENV}" <<EOF
+MTPROTO_PORT=${port}
+MTPROTO_BACKEND=${backend}
+MTPROTO_SECRET=${secret}
+MTPROTO_ALLOW_CIDR=${cidr}
+EOF
+    chmod 600 "${CLIENT_MTPROTO_ENV}"
+    client_mtproto_write_toml "$secret"
+    if [[ -f "${CLIENT_MTPROTO_ENABLED}" ]]; then
+        systemctl restart 5gpn-mtg.service 5gpn-client-mtproto.service 2>/dev/null || true
+    fi
+    local host; host="$(client_mtproto_host_ip)"
+    ok "MTProto 密钥已更新"
+    echo "  地址: ${host}:${port}"
+    echo "  密钥: ${secret}"
+    echo "  链接: tg://proxy?server=${host}&port=${port}&secret=${secret}"
+}
+
+generate_client_mtproto_secret() {
+    check_root
+    ensure_mtg_binary || return 1
+    local secret
+    secret="$("${MTG_BIN}" generate-secret --hex cloudflare.com 2>/dev/null | tr -d '[:space:]')"
+    set_client_mtproto_secret "$secret"
 }
 
 install_mosdns() {
@@ -3529,6 +3807,13 @@ do_update() {
         systemctl restart 5gpn-client-socks.service 2>/dev/null || true
         declare -F firewall_socks_sync >/dev/null 2>&1 && firewall_socks_sync || true
     fi
+    cmp -s "${LIB_DIR}/client-mtproto.go" "${SRC_DIR}/client-mtproto.go" 2>/dev/null || rm -f "${BASE_DIR}/bin/client-mtproto"
+    install_client_mtproto_binary || warn "client-mtproto 二进制安装失败（可稍后手动 enable-client-mtproto）"
+    if [[ -f "${CLIENT_MTPROTO_ENABLED}" ]]; then
+        client_mtproto_ensure_creds || warn "MTProto 凭据同步失败"
+        systemctl restart 5gpn-mtg.service 5gpn-client-mtproto.service 2>/dev/null || true
+        declare -F firewall_mtproto_sync >/dev/null 2>&1 && firewall_mtproto_sync || true
+    fi
     install_mosdns_binary
     cp "${LIB_DIR}/mosdns.yaml.template" /etc/mosdns/config.yaml.template
     install -m 0755 "${LIB_DIR}/update-rules.sh" /usr/local/bin/update-mosdns-rules.sh
@@ -3590,14 +3875,16 @@ do_uninstall() {
         systemctl stop "5gpn-singbox@$(basename "$f" .type).service" 2>/dev/null || true
     done
     shopt -u nullglob
-    systemctl stop mosdns dnsdist sniproxy wa-shim quic-proxy china-dns-race-proxy 5gpn-ios-profile.socket 5gpn-ios-profile 5gpn-exit 5gpn-tgbot 5gpn-api 5gpn-wloc 5gpn-health.timer 5gpn-health.service 5gpn-client-socks 2>/dev/null || true
-    systemctl disable mosdns dnsdist sniproxy wa-shim quic-proxy china-dns-race-proxy 5gpn-ios-profile.socket 5gpn-ios-profile 5gpn-exit 5gpn-tgbot 5gpn-api 5gpn-wloc 5gpn-health.timer 5gpn-health.service 5gpn-client-socks 2>/dev/null || true
+    systemctl stop mosdns dnsdist sniproxy wa-shim quic-proxy china-dns-race-proxy 5gpn-ios-profile.socket 5gpn-ios-profile 5gpn-exit 5gpn-tgbot 5gpn-api 5gpn-wloc 5gpn-health.timer 5gpn-health.service 5gpn-client-socks 5gpn-client-mtproto 5gpn-mtg 2>/dev/null || true
+    systemctl disable mosdns dnsdist sniproxy wa-shim quic-proxy china-dns-race-proxy 5gpn-ios-profile.socket 5gpn-ios-profile 5gpn-exit 5gpn-tgbot 5gpn-api 5gpn-wloc 5gpn-health.timer 5gpn-health.service 5gpn-client-socks 5gpn-client-mtproto 5gpn-mtg 2>/dev/null || true
     rm -f /etc/systemd/system/{mosdns,sniproxy,wa-shim,quic-proxy,china-dns-race-proxy,5gpn-ios-profile,update-mosdns-rules,5gpn-exit,5gpn-tgbot}.*
     rm -f /etc/systemd/system/5gpn-api.*
     rm -f /etc/systemd/system/5gpn-wloc.*
     rm -f /etc/systemd/system/5gpn-health.service /etc/systemd/system/5gpn-health.timer
     rm -f /etc/systemd/system/5gpn-client-socks.service
+    rm -f /etc/systemd/system/5gpn-client-mtproto.service /etc/systemd/system/5gpn-mtg.service
     declare -F firewall_socks_remove_rules >/dev/null 2>&1 && firewall_socks_remove_rules || true
+    declare -F firewall_mtproto_remove_rules >/dev/null 2>&1 && firewall_mtproto_remove_rules || true
     rm -f /usr/local/bin/5gpn
     rm -f /etc/systemd/system/5gpn-ios-profile@.service \
         /etc/systemd/system/5gpn-mihomo@.service \
@@ -3871,6 +4158,14 @@ PY
         fi
         [[ -f "${CLIENT_SOCKS_ENABLED}" ]] && systemctl restart 5gpn-client-socks.service 2>/dev/null || true
     fi
+    if [[ -f "${CLIENT_MTPROTO_ENV}" ]]; then
+        if grep -q '^MTPROTO_ALLOW_CIDR=' "${CLIENT_MTPROTO_ENV}"; then
+            sed -i -E "s#^MTPROTO_ALLOW_CIDR=.*#MTPROTO_ALLOW_CIDR=${cidr}#" "${CLIENT_MTPROTO_ENV}"
+        else
+            echo "MTPROTO_ALLOW_CIDR=${cidr}" >> "${CLIENT_MTPROTO_ENV}"
+        fi
+        [[ -f "${CLIENT_MTPROTO_ENABLED}" ]] && systemctl restart 5gpn-client-mtproto.service 2>/dev/null || true
+    fi
     /usr/local/bin/update-mosdns-rules.sh >/dev/null 2>&1 || warn "mosdns 刷新失败，请手动 --update-rules"
     if [[ -f /etc/5gpn/.firewall-managed ]] && declare -F firewall_managed_apply >/dev/null 2>&1; then
         local ssh_ports tcp_ports tcp_ports_ipt
@@ -3883,6 +4178,7 @@ PY
         info "若使用自管防火墙，请自行放行来源 ${cidr} 的 53/80/443"
     fi
     declare -F firewall_socks_sync >/dev/null 2>&1 && firewall_socks_sync || true
+    declare -F firewall_mtproto_sync >/dev/null 2>&1 && firewall_mtproto_sync || true
     ok "客户端网段已设置为 ${cidr}"
 }
 confirm_client_cidr_choice() {
@@ -4157,6 +4453,7 @@ main_install() {
     install_wloc
     install_quic_proxy
     install_client_socks_binary
+    install_client_mtproto_binary || warn "client-mtproto 预装失败（可稍后 enable-client-mtproto）"
     prompt_client_cidr_install
     install_mosdns
     init_rules
@@ -4373,6 +4670,21 @@ case "${1:-}" in
         ;;
     --reset-client-socks-creds)
         reset_client_socks_creds
+        ;;
+    --enable-client-mtproto)
+        enable_client_mtproto
+        ;;
+    --disable-client-mtproto)
+        disable_client_mtproto
+        ;;
+    --client-mtproto-status)
+        client_mtproto_status
+        ;;
+    --set-client-mtproto-secret)
+        set_client_mtproto_secret "${2:-}"
+        ;;
+    --generate-client-mtproto-secret)
+        generate_client_mtproto_secret
         ;;
     --uninstall)
         do_uninstall

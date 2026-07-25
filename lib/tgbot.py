@@ -2440,7 +2440,8 @@ def ops_menu():
          {"text": "📜 快照列表", "callback_data": "act:snaplist"}],
         [{"text": "⏪ 回滚最新", "callback_data": "act:rollback"},
          {"text": "🧭 向导", "callback_data": "wiz:start"}],
-        [{"text": "🧦 私网 SOCKS5", "callback_data": "menu:socks"}],
+        [{"text": "🧦 私网 SOCKS5", "callback_data": "menu:socks"},
+         {"text": "📡 私网 MTProto", "callback_data": "menu:mtproto"}],
         [{"text": "♻️ 重启服务", "callback_data": "act:restart"},
          {"text": "📜 日志", "callback_data": "menu:logs"}],
         [{"text": "« 返回", "callback_data": "menu:main"}],
@@ -2453,6 +2454,17 @@ def client_socks_menu():
          {"text": "⏹ 关闭", "callback_data": "socks:disable"}],
         [{"text": "🔑 重置密码", "callback_data": "socks:reset"},
          {"text": "🔄 刷新状态", "callback_data": "socks:status"}],
+        [{"text": "« 返回", "callback_data": "menu:ops"}],
+    ]
+
+
+def client_mtproto_menu():
+    return [
+        [{"text": "▶️ 开启", "callback_data": "mtproto:enable"},
+         {"text": "⏹ 关闭", "callback_data": "mtproto:disable"}],
+        [{"text": "🔑 填写密钥", "callback_data": "mtproto:set_secret"},
+         {"text": "🎲 生成密钥", "callback_data": "mtproto:generate"}],
+        [{"text": "🔄 刷新状态", "callback_data": "mtproto:status"}],
         [{"text": "« 返回", "callback_data": "menu:ops"}],
     ]
 
@@ -2486,6 +2498,48 @@ def op_reset_client_socks_creds():
     if ok:
         return ("✅ <b>凭据已轮换</b>\n<pre>%s</pre>\n请立即保存新密码。" % body)
     return "❌ <b>轮换失败</b>\n%s" % html.escape(_reason(out))
+
+
+def op_client_mtproto_status():
+    ok, out = run2(["bash", MGMT, "--client-mtproto-status"], timeout=60)
+    body = html.escape(_strip_ansi(out)[-2000:] or "无输出")
+    return ("📡 <b>私网 MTProto</b>\n<pre>%s</pre>\n"
+            "仅客户端网段可访问；默认端口 5753；密钥请用「填写/生成」。" % body)
+
+
+def op_enable_client_mtproto():
+    ok, out = run2(["bash", MGMT, "--enable-client-mtproto"], timeout=240)
+    body = html.escape(_strip_ansi(out)[-2500:])
+    if ok:
+        return ("✅ <b>MTProto 已开启</b>\n<pre>%s</pre>\n"
+                "请立即保存密钥/链接；之后状态页会隐藏密钥。" % body)
+    return "❌ <b>开启失败</b>\n%s" % html.escape(_reason(out))
+
+
+def op_disable_client_mtproto():
+    ok, out = run2(["bash", MGMT, "--disable-client-mtproto"], timeout=120)
+    if ok:
+        return "✅ <b>MTProto 已关闭</b>\n%s" % html.escape(_strip_ansi(out)[-800:])
+    return "❌ <b>关闭失败</b>\n%s" % html.escape(_reason(out))
+
+
+def op_generate_client_mtproto_secret():
+    ok, out = run2(["bash", MGMT, "--generate-client-mtproto-secret"], timeout=180)
+    body = html.escape(_strip_ansi(out)[-2500:])
+    if ok:
+        return ("✅ <b>密钥已生成</b>\n<pre>%s</pre>\n请立即保存；若已开启服务会自动重载。" % body)
+    return "❌ <b>生成失败</b>\n%s" % html.escape(_reason(out))
+
+
+def op_set_client_mtproto_secret(secret):
+    secret = (secret or "").strip()
+    if not secret or any(c.isspace() for c in secret):
+        return "❌ 密钥不能为空，且不能含空白字符。"
+    ok, out = run2(["bash", MGMT, "--set-client-mtproto-secret", secret], timeout=180)
+    body = html.escape(_strip_ansi(out)[-2500:])
+    if ok:
+        return ("✅ <b>密钥已更新</b>\n<pre>%s</pre>\n请立即保存链接。" % body)
+    return "❌ <b>设置失败</b>\n%s" % html.escape(_reason(out))
 
 
 def rules_menu():
@@ -2889,6 +2943,15 @@ def handle_message(msg):
         console_async(chat_id, lambda: op_set_client_cidr(cidr_text),
                       client_cidr_menu(), message_id=mid)
         return
+    if state and state.get("action") == "mtproto_set_secret":
+        prompt_mid = state.get("prompt_mid")
+        PENDING.pop(chat_id, None)
+        secret_text = text
+        background(delete_message, chat_id, msg.get("message_id"))
+        mid = upsert_console(chat_id, "⏳ 正在设置 MTProto 密钥…", message_id=prompt_mid)
+        console_async(chat_id, lambda: op_set_client_mtproto_secret(secret_text),
+                      client_mtproto_menu(), message_id=mid)
+        return
 
     send(chat_id, "未知命令。发送 /menu 打开操作面板。")
 
@@ -2968,6 +3031,10 @@ def handle_callback(cb):
     elif data == "menu:socks":
         edit(cb, "⏳ 正在读取 SOCKS5 状态…")
         edit_async(cb, op_client_socks_status, client_socks_menu())
+    elif data == "menu:mtproto":
+        PENDING.pop(chat_id, None)
+        edit(cb, "⏳ 正在读取 MTProto 状态…")
+        edit_async(cb, op_client_mtproto_status, client_mtproto_menu())
     elif data == "menu:logs":
         edit(cb, "选择要查看日志的服务：", services_menu("logs", "menu:ops"))
     elif data == "wiz:start":
@@ -3290,6 +3357,25 @@ def handle_callback(cb):
     elif data == "socks:reset":
         edit(cb, "⏳ 正在轮换 SOCKS5 凭据…")
         edit_async(cb, op_reset_client_socks_creds, client_socks_menu())
+    elif data == "mtproto:status":
+        edit(cb, "⏳ 正在读取 MTProto 状态…")
+        edit_async(cb, op_client_mtproto_status, client_mtproto_menu())
+    elif data == "mtproto:enable":
+        edit(cb, "⏳ 正在开启私网 MTProto…")
+        edit_async(cb, op_enable_client_mtproto, client_mtproto_menu())
+    elif data == "mtproto:disable":
+        edit(cb, "⏳ 正在关闭私网 MTProto…")
+        edit_async(cb, op_disable_client_mtproto, client_mtproto_menu())
+    elif data == "mtproto:generate":
+        edit(cb, "⏳ 正在生成 MTProto 密钥…")
+        edit_async(cb, op_generate_client_mtproto_secret, client_mtproto_menu())
+    elif data == "mtproto:set_secret":
+        PENDING[chat_id] = {"action": "mtproto_set_secret", "prompt_mid": cb_mid}
+        edit(cb,
+             "📡 <b>填写 MTProto 密钥</b>\n"
+             "发送一行 secret（ee… FakeTLS hex，或 mtg base64url）。\n"
+             "端口固定 <code>5753</code>；仅客户端网段可连。",
+             back_kb("menu:mtproto"))
     elif data == "act:report":
         edit(cb, "⏳ 正在生成脱敏诊断报告…")
         edit_report_async(cb, chat_id)

@@ -1126,12 +1126,14 @@ BACKUP_PATHS = ["etc/5gpn", "etc/mosdns/gfwlist-extra-local.txt",
                 "etc/mosdns/.remote_dns", "etc/mosdns/.local_dns",
                 "etc/mosdns/.ecs", "etc/mosdns/.sniproxy_dns",
                 "etc/wireguard", "opt/5gpn/etc/current-exit",
-                "opt/5gpn/etc/.client_cidr", "opt/5gpn/etc/client-socks.port"]
+                "opt/5gpn/etc/.client_cidr", "opt/5gpn/etc/client-socks.port",
+                "opt/5gpn/etc/client-mtproto.port"]
 
 
 def _backup_secret_name(name):
     base = os.path.basename(name).lower()
-    if base in ("api.env", "tgbot.env", "client-socks.env", "mihomo-api-secret"):
+    if base in ("api.env", "tgbot.env", "client-socks.env", "client-mtproto.env",
+                "mtg.toml", "mihomo-api-secret"):
         return True
     if base.endswith(".pem"):
         return True
@@ -1181,7 +1183,8 @@ def _backup_allowed(name):
                             "etc/mosdns/.sniproxy_dns")
                 or re.match(r"etc/wireguard/pgw-[^/]+\.conf$", name)
                 or name in ("opt/5gpn/etc/current-exit", "opt/5gpn/etc/.client_cidr",
-                            "opt/5gpn/etc/client-socks.port"))
+                            "opt/5gpn/etc/client-socks.port",
+                            "opt/5gpn/etc/client-mtproto.port"))
 
 
 def restore_backup(b64):
@@ -1676,6 +1679,30 @@ class Handler(BaseHTTPRequestHandler):
                 "allow_cidr": get_client_cidr(),
                 "note": "password is masked; use enable/reset-creds to receive it once",
             })
+        if path == "/api/client-mtproto":
+            enabled = os.path.isfile(os.path.join(CONF_DIR, "client-mtproto.enabled"))
+            port = read_file(os.path.join(CONF_DIR, "client-mtproto.port")).strip() or "5753"
+            has_secret = False
+            env = read_file(os.path.join(CONF_DIR, "client-mtproto.env"))
+            for line in env.splitlines():
+                if line.startswith("MTPROTO_SECRET=") and line.split("=", 1)[1].strip():
+                    has_secret = True
+                    break
+            running = False
+            if enabled:
+                front = run(["systemctl", "is-active", "5gpn-client-mtproto"], timeout=5)[0]
+                core = run(["systemctl", "is-active", "5gpn-mtg"], timeout=5)[0]
+                running = bool(front and core)
+            host = read_file("/etc/mosdns/.public_ip").strip() or ""
+            return self._send(200, {
+                "ok": True, "enabled": enabled, "running": running,
+                "host": host, "port": port,
+                "secret": "***" if has_secret else "",
+                "link": "",
+                "allow_cidr": get_client_cidr(),
+                "engine": "mtg",
+                "note": "secret is masked; use enable/set-secret/generate-secret to receive it once",
+            })
         return self._send(404, {"ok": False, "error": "not found"})
 
     def do_POST(self):
@@ -1949,6 +1976,49 @@ class Handler(BaseHTTPRequestHandler):
                 "allow_cidr": get_client_cidr(),
                 "note": ("password returned once; future GET responses mask it"
                          if action in ("enable", "reset-creds") else "password is masked"),
+            })
+
+        if path == "/api/client-mtproto":
+            action = str(b.get("action", "")).strip().lower()
+            if action == "enable":
+                ok, out = ctl("--enable-client-mtproto", timeout=240)
+            elif action == "disable":
+                ok, out = ctl("--disable-client-mtproto", timeout=120)
+            elif action == "generate-secret":
+                ok, out = ctl("--generate-client-mtproto-secret", timeout=180)
+            elif action == "set-secret":
+                secret = str(b.get("secret", "")).strip()
+                if not secret or any(c.isspace() for c in secret):
+                    return self._send(400, {"ok": False, "error": "secret required (no whitespace)"})
+                ok, out = ctl("--set-client-mtproto-secret", secret, timeout=180)
+            else:
+                return self._send(400, {"ok": False,
+                                        "error": "action must be enable|disable|set-secret|generate-secret"})
+            host = port = secret = link = ""
+            for line in (out or "").splitlines():
+                s = line.strip()
+                if "地址:" in s or "地址：" in s:
+                    val = s.split(":", 1)[-1].split("：", 1)[-1].strip()
+                    if ":" in val and not val.startswith("http") and not val.startswith("tg:"):
+                        host, port = val.rsplit(":", 1)
+                elif "密钥:" in s or "密钥：" in s:
+                    secret = s.split(":", 1)[-1].split("：", 1)[-1].strip()
+                elif "链接:" in s or "链接：" in s:
+                    link = s.split(":", 1)[-1].split("：", 1)[-1].strip()
+                    if not link.startswith("tg:") and "tg://" in s:
+                        link = s[s.find("tg://"):].strip()
+            if not link and host and port and secret:
+                link = "tg://proxy?server=%s&port=%s&secret=%s" % (host, port, secret)
+            return self._send(200 if ok else 500, {
+                "ok": ok, "output": out,
+                "enabled": os.path.isfile(os.path.join(CONF_DIR, "client-mtproto.enabled")),
+                "host": host,
+                "port": port or read_file(os.path.join(CONF_DIR, "client-mtproto.port")).strip() or "5753",
+                "secret": secret,
+                "link": link,
+                "allow_cidr": get_client_cidr(),
+                "note": ("secret returned once; future GET responses mask it"
+                         if action in ("enable", "set-secret", "generate-secret") else "secret is masked"),
             })
 
         if path == "/api/restore":

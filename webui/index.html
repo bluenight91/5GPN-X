@@ -610,6 +610,22 @@ iframe.mihomo{
           <div id="socks_creds" class="mono small" style="margin-top:8px;white-space:pre-wrap"></div>
         </div>
         <div class="card">
+          <h2>私网 MTProto</h2>
+          <p class="lede">可选：仅客户端网段可访问的 Telegram MTProto 代理（固定端口 <span class="mono">5753</span>，引擎 mtg）。可手动填写或一键生成密钥。</p>
+          <div id="mtproto_state" class="mono small" style="margin-bottom:8px">（加载中…）</div>
+          <div class="row">
+            <input id="mtproto_secret" type="text" placeholder="自定义 secret（ee… 或 mtg 密钥）" autocomplete="off" style="flex:1" class="mono">
+          </div>
+          <div class="row">
+            <button class="primary" onclick="mtprotoAction('enable')">开启</button>
+            <button class="danger" onclick="mtprotoAction('disable')">关闭</button>
+            <button onclick="mtprotoAction('set-secret')">保存密钥</button>
+            <button onclick="mtprotoAction('generate-secret')">生成密钥</button>
+            <button onclick="loadClientMtproto()">刷新</button>
+          </div>
+          <div id="mtproto_creds" class="mono small" style="margin-top:8px;white-space:pre-wrap"></div>
+        </div>
+        <div class="card">
           <h2>DNS 直连域名</h2>
           <p class="lede">私网客户端默认把非 ChinaList 域名解析成网关 IP。把 SSH 等主机名加入此名单后返回真实 A 记录。公网 DoT 本身不劫持。</p>
           <div class="row"><input id="dd_add" type="text" placeholder="例如 box2.example.com 或 servers.example.com" autocomplete="off" style="flex:1"></div>
@@ -770,7 +786,7 @@ function onEnter(sec){
   else if(sec==="rules"){ loadStatus(); loadRules(); }
   else if(sec==="monitor"){ loadMihomoOverview(); loadXdFrame(); }
   else if(sec==="ai"){ aiLoadConfig(); }
-  else if(sec==="settings"){ fillSettings(); showSettingsPanel(localStorage.getItem("pgw_set_panel")||"network"); loadClientCidr(); loadClientSocks(); loadDirectDomains(); }
+  else if(sec==="settings"){ fillSettings(); showSettingsPanel(localStorage.getItem("pgw_set_panel")||"network"); loadClientCidr(); loadClientSocks(); loadClientMtproto(); loadDirectDomains(); }
 }
 document.querySelectorAll('[data-section]').forEach(el=>el.addEventListener('click',()=>{
   showSection(el.dataset.section);
@@ -1557,6 +1573,50 @@ async function socksAction(action){
     }
     await loadClientSocks();
   }catch(e){ log("❌ SOCKS5："+e.message); }
+  finally{ busy(false); }
+}
+
+/* ---- private client MTProto (mtg, TCP 5753) ---- */
+async function loadClientMtproto(){
+  const box=$("mtproto_state"), cred=$("mtproto_creds");
+  if(!box) return;
+  try{
+    const r=await api("/api/client-mtproto");
+    const st = r.enabled ? (r.running ? "已开启 · 运行中" : "已开启 · 未运行") : "已关闭";
+    box.textContent = st+"\n"+
+      (r.host||"?")+":"+(r.port||"5753")+
+      "  secret="+(r.secret||"(未设置)")+
+      "  allow="+(r.allow_cidr||"?");
+    if(cred && !cred.dataset.keep) cred.textContent="";
+  }catch(e){ box.textContent="加载失败："+e.message; }
+}
+async function mtprotoAction(action){
+  const cred=$("mtproto_creds");
+  if(action==="disable" && !confirm("关闭私网 MTProto？")) return;
+  if(action==="generate-secret" && !confirm("生成新密钥？旧密钥立即失效。")) return;
+  const body={action};
+  if(action==="set-secret"){
+    const secret=($("mtproto_secret")&&$("mtproto_secret").value||"").trim();
+    if(!secret){ log("请先填写 MTProto secret"); return; }
+    body.secret=secret;
+  }
+  busy(true);
+  try{
+    const r=await api("/api/client-mtproto","POST",body);
+    log((r.ok?"✅ ":"❌ ")+(action)+" MTProto");
+    if(cred){
+      if(r.ok && (r.secret||"").length>3){
+        cred.dataset.keep="1";
+        cred.textContent = "请立即保存（仅显示一次）：\n"+
+          "host "+(r.host||"")+"\nport "+(r.port||"5753")+"\nsecret "+r.secret+
+          (r.link?"\n"+r.link:"");
+      } else if(action==="disable"){
+        delete cred.dataset.keep;
+        cred.textContent="";
+      }
+    }
+    await loadClientMtproto();
+  }catch(e){ log("❌ MTProto："+e.message); }
   finally{ busy(false); }
 }
 
