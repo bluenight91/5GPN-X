@@ -1523,8 +1523,12 @@ install_client_mtproto_binary() {
             cd "${SRC_DIR}"
             export PATH=$PATH:/usr/local/go/bin
             go build -ldflags="-s -w" -o "${CLIENT_MTPROTO_BIN}" client-mtproto.go
-        )
+        ) || { err "client-mtproto 编译失败"; return 1; }
     fi
+    [[ -x "${CLIENT_MTPROTO_BIN}" ]] || { err "client-mtproto 二进制不存在: ${CLIENT_MTPROTO_BIN}"; return 1; }
+    [[ -x "${MTG_BIN}" ]] || { err "mtg 二进制不存在: ${MTG_BIN}"; return 1; }
+    # go build often inherits umask 077 (700); unit runs as pxout and must exec it.
+    chmod 755 "${CLIENT_MTPROTO_BIN}" "${MTG_BIN}" 2>/dev/null || true
     cat > /etc/systemd/system/5gpn-mtg.service <<EOF
 [Unit]
 Description=5GPN-X mtg MTProto core (loopback only)
@@ -1638,8 +1642,24 @@ enable_client_mtproto() {
             return 1
         }
     fi
-    systemctl enable --now 5gpn-mtg.service 5gpn-client-mtproto.service
-    systemctl restart 5gpn-mtg.service 5gpn-client-mtproto.service
+    systemctl enable 5gpn-mtg.service 5gpn-client-mtproto.service >/dev/null 2>&1 || true
+    systemctl restart 5gpn-mtg.service || true
+    # Front requires mtg; start after core is up.
+    sleep 0.5
+    systemctl restart 5gpn-client-mtproto.service || true
+    if ! systemctl is-active --quiet 5gpn-mtg.service \
+        || ! systemctl is-active --quiet 5gpn-client-mtproto.service; then
+        rm -f "${CLIENT_MTPROTO_ENABLED}"
+        declare -F firewall_mtproto_sync >/dev/null 2>&1 && firewall_mtproto_sync || true
+        err "MTProto 服务启动失败（已回滚 enabled 标记）"
+        echo "---- 5gpn-mtg ----"
+        systemctl status 5gpn-mtg.service --no-pager -l 2>&1 | tail -n 40 || true
+        journalctl -u 5gpn-mtg.service -n 40 --no-pager 2>&1 || true
+        echo "---- 5gpn-client-mtproto ----"
+        systemctl status 5gpn-client-mtproto.service --no-pager -l 2>&1 | tail -n 40 || true
+        journalctl -u 5gpn-client-mtproto.service -n 40 --no-pager 2>&1 || true
+        return 1
+    fi
     local host; host="$(client_mtproto_host_ip)"
     ok "私网 MTProto 已开启"
     echo "  地址:   ${host}:${MTPROTO_PORT}"
