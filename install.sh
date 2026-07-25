@@ -450,7 +450,8 @@ Options:
   --client-mtproto-status
                  Show MTProto status (secret omitted)
   --set-client-mtproto-secret <secret>
-                 Set a custom MTProto secret (ee… FakeTLS hex or mtg secret)
+                 Set a custom MTProto secret (ee… FakeTLS hex or mtg base64url;
+                 bare 32-char hex is rejected by mtg v2)
   --generate-client-mtproto-secret
                  Generate a FakeTLS secret via mtg and save it
   --setup-whatsapp
@@ -1465,9 +1466,9 @@ validate_mtproto_secret() {
     local s="${1:-}"
     [[ -n "$s" ]] || return 1
     [[ "$s" != *$'\n'* && "$s" != *' '* && "$s" != *$'\t'* ]] || return 1
-    # FakeTLS hex (ee/dd…) or plain hex, or mtg base64url secret.
-    [[ "$s" =~ ^(ee|dd)[0-9a-fA-F]{32,}$ ]] && return 0
-    [[ "$s" =~ ^[0-9a-fA-F]{32,}$ ]] && return 0
+    # mtg v2 FakeTLS only: hex must start with ee/dd and include key+hostname,
+    # or be mtg base64url (not bare 32-char hex — that crashes mtg on start).
+    [[ "$s" =~ ^(ee|dd)[0-9a-fA-F]{34,}$ ]] && return 0
     [[ "$s" =~ ^[A-Za-z0-9_-]{22,}$ ]] && return 0
     return 1
 }
@@ -1604,7 +1605,10 @@ client_mtproto_ensure_creds() {
         secret="${MTPROTO_SECRET:-}"
         backend="${MTPROTO_BACKEND:-$backend}"
     fi
-    if [[ -z "$secret" ]]; then
+    if [[ -z "$secret" ]] || ! validate_mtproto_secret "$secret"; then
+        if [[ -n "$secret" ]]; then
+            warn "已有 MTProto secret 不符合 mtg FakeTLS（需 ee…/base64url），将重新生成"
+        fi
         ensure_mtg_binary || return 1
         secret="$("${MTG_BIN}" generate-secret --hex cloudflare.com 2>/dev/null | tr -d '[:space:]')"
         validate_mtproto_secret "$secret" || {
@@ -1701,7 +1705,7 @@ set_client_mtproto_secret() {
     check_root
     local secret="${1:-}"
     validate_mtproto_secret "$secret" || {
-        err "无效 secret（需要 ee…/dd… FakeTLS hex、纯 hex，或 mtg base64url）"
+        err "无效 secret（mtg 仅接受 ee…/dd… FakeTLS hex，或 mtg base64url；不要用裸 32 位 hex）"
         return 1
     }
     install_client_mtproto_binary || return 1

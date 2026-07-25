@@ -75,8 +75,18 @@ DIRECT_DOMAINS_FILE = "/etc/mosdns/direct-domains.txt"
 CLIENT_CIDR_FILE = "/etc/mosdns/.client_cidr"
 CLIENT_CIDR_DEFAULT = "172.22.0.0/16"
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
-SERVICES = ["mosdns", "sniproxy", "wa-shim", "quic-proxy",
-            "5gpn-tgbot", "5gpn-api"]
+# Core units always reported on /api/status. Opt-in proxies are appended when
+# their .enabled markers exist so the dashboard reflects the full deploy.
+SERVICES = [
+    "mosdns",
+    "sniproxy",
+    "wa-shim",
+    "quic-proxy",
+    "5gpn-wloc",
+    "5gpn-ios-profile.socket",
+    "5gpn-tgbot",
+    "5gpn-api",
+]
 
 CLASH_ADDR = os.environ.get("CLASH_ADDR", "127.0.0.1:9090")
 CLASH_SECRET_FILE = os.environ.get("MIHOMO_API_SECRET_FILE", "/etc/5gpn/mihomo-api-secret")
@@ -1573,7 +1583,14 @@ class Handler(BaseHTTPRequestHandler):
             return self._serve_mihomo_static(self.path[len("/mihomo"):])
         if path == "/api/status":
             exits, cur = list_exits()
-            services = {s: run(["systemctl", "is-active", s], timeout=5)[0] for s in SERVICES}
+            units = list(SERVICES)
+            if os.path.isfile(os.path.join(CONF_DIR, "client-socks.enabled")):
+                units.append("5gpn-client-socks")
+            if os.path.isfile(os.path.join(CONF_DIR, "client-mtproto.enabled")):
+                units.extend(["5gpn-mtg", "5gpn-client-mtproto"])
+            if cur and cur not in ("local", ""):
+                units.append("5gpn-mihomo@%s" % cur)
+            services = {s: run(["systemctl", "is-active", s], timeout=5)[0] for s in units}
             res = resources()
             return self._send(200, {"ok": True, "current": cur, "exits": exits,
                                     "resources": res, "memory": res, "services": services,
@@ -1683,25 +1700,39 @@ class Handler(BaseHTTPRequestHandler):
             enabled = os.path.isfile(os.path.join(CONF_DIR, "client-mtproto.enabled"))
             port = read_file(os.path.join(CONF_DIR, "client-mtproto.port")).strip() or "5753"
             has_secret = False
+            secret_raw = ""
             env = read_file(os.path.join(CONF_DIR, "client-mtproto.env"))
             for line in env.splitlines():
-                if line.startswith("MTPROTO_SECRET=") and line.split("=", 1)[1].strip():
-                    has_secret = True
+                if line.startswith("MTPROTO_SECRET="):
+                    secret_raw = line.split("=", 1)[1].strip()
+                    has_secret = bool(secret_raw)
                     break
-            running = False
-            if enabled:
-                front = run(["systemctl", "is-active", "5gpn-client-mtproto"], timeout=5)[0]
-                core = run(["systemctl", "is-active", "5gpn-mtg"], timeout=5)[0]
-                running = bool(front and core)
+            front = run(["systemctl", "is-active", "5gpn-client-mtproto"], timeout=5)[0] if enabled else False
+            core = run(["systemctl", "is-active", "5gpn-mtg"], timeout=5)[0] if enabled else False
+            running = bool(front and core)
+            # Bare 32-hex secrets are rejected by mtg v2 (needs FakeTLS ee…).
+            sl = secret_raw.lower()
+            secret_ok = bool(secret_raw) and (
+                (sl.startswith(("ee", "dd")) and len(secret_raw) >= 36
+                 and all(c in "0123456789abcdef" for c in sl))
+                or (len(secret_raw) >= 22
+                    and not re.fullmatch(r"[0-9a-fA-F]{32}", secret_raw)
+                    and re.fullmatch(r"[A-Za-z0-9_-]+", secret_raw) is not None)
+            )
             host = read_file("/etc/mosdns/.public_ip").strip() or ""
+            note = "secret is masked; use enable/set-secret/generate-secret to receive it once"
+            if enabled and has_secret and not secret_ok:
+                note = "secret is not FakeTLS (ee…); regenerate or set a valid mtg secret"
             return self._send(200, {
                 "ok": True, "enabled": enabled, "running": running,
+                "mtg_running": bool(core), "front_running": bool(front),
                 "host": host, "port": port,
                 "secret": "***" if has_secret else "",
+                "secret_ok": secret_ok if has_secret else False,
                 "link": "",
                 "allow_cidr": get_client_cidr(),
                 "engine": "mtg",
-                "note": "secret is masked; use enable/set-secret/generate-secret to receive it once",
+                "note": note,
             })
         return self._send(404, {"ok": False, "error": "not found"})
 

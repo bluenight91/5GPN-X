@@ -19,6 +19,9 @@ rm -f /tmp/client-mtproto-test /tmp/client-mtproto.go
 
 [[ "${install}" == *'CLIENT_MTPROTO_PORT_DEFAULT=5753'* ]] || fail "default MTProto port must be 5753"
 [[ "${install}" == *'MTG_VERSION_DEFAULT="2.2.8"'* ]] || fail "mtg must be pinned to 2.2.8"
+[[ "${install}" == *'ee…/dd… FakeTLS'* || "${install}" == *'FakeTLS'* ]] \
+    || fail "secret validation must require FakeTLS (ee…) for mtg v2"
+[[ "${install}" != *'纯 hex'* ]] || fail "bare hex secrets must not be accepted (mtg rejects them)"
 [[ "${install}" == *'enable_client_mtproto()'* ]] || fail "install must define enable_client_mtproto"
 [[ "${install}" == *'--enable-client-mtproto)'* ]] || fail "CLI must expose --enable-client-mtproto"
 [[ "${install}" == *'--disable-client-mtproto)'* ]] || fail "CLI must expose --disable-client-mtproto"

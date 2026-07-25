@@ -58,6 +58,10 @@ SERVICES = [
     "5gpn-wloc",
     "5gpn-ios-profile",
     "5gpn-tgbot",
+    "5gpn-api",
+    "5gpn-client-socks",
+    "5gpn-mtg",
+    "5gpn-client-mtproto",
 ]
 RESTART_SERVICES = [
     "mosdns",
@@ -853,12 +857,16 @@ def _exit_ip():
     return ""
 
 
-# (unit, friendly label) shown on the status card.
+# (unit, friendly label) shown on the status card. Opt-in proxies are appended
+# in op_status() when their .enabled markers exist.
 STATUS_ITEMS = [
     ("mosdns", "mosdns"),
     ("sniproxy", "sniproxy"),
+    ("wa-shim", "wa-shim"),
     ("quic-proxy", "quic-proxy"),
+    ("5gpn-wloc", "WLOC"),
     ("5gpn-ios-profile.socket", "iOS 描述文件"),
+    ("5gpn-api", "控制 API"),
     ("5gpn-tgbot", "Telegram Bot"),
 ]
 
@@ -1017,12 +1025,31 @@ def system_metrics():
     return "\n".join(out)
 
 
+def _status_items():
+    """Core STATUS_ITEMS plus opt-in / current-exit units when present."""
+    items = list(STATUS_ITEMS)
+    if os.path.isfile("/opt/5gpn/etc/client-socks.enabled"):
+        items.append(("5gpn-client-socks", "私网 SOCKS5"))
+    if os.path.isfile("/opt/5gpn/etc/client-mtproto.enabled"):
+        items.append(("5gpn-mtg", "MTProto mtg"))
+        items.append(("5gpn-client-mtproto", "MTProto front"))
+    cur = _read_file("/opt/5gpn/etc/current-exit") or "local"
+    if cur and cur not in ("local",):
+        items.append(("5gpn-mihomo@%s" % cur, "出口 %s" % cur))
+    return items
+
+
 def op_status():
     """A compact, human-readable status card (no raw shell output)."""
     lines = ["<b>📊 Proxy Gateway 状态</b>", ""]
     down = []
-    for unit, label in STATUS_ITEMS:
-        ok = _is_active(unit) == "active"
+    for unit, label in _status_items():
+        st = _is_active(unit)
+        ok = st == "active"
+        # WLOC / wa-shim may be intentionally inactive — show as note, not ❌.
+        if not ok and unit in ("5gpn-wloc", "wa-shim") and st in ("inactive", "dead"):
+            lines.append("⚪ " + html.escape(label) + "（未启用）")
+            continue
         lines.append(("✅ " if ok else "❌ ") + html.escape(label))
         if not ok:
             down.append(label)

@@ -1582,11 +1582,22 @@ async function loadClientMtproto(){
   if(!box) return;
   try{
     const r=await api("/api/client-mtproto");
-    const st = r.enabled ? (r.running ? "已开启 · 运行中" : "已开启 · 未运行") : "已关闭";
+    let st="已关闭";
+    if(r.enabled){
+      if(r.running) st="已开启 · 运行中";
+      else {
+        const parts=[];
+        if(r.mtg_running===false) parts.push("mtg未运行");
+        if(r.front_running===false) parts.push("front未运行");
+        st="已开启 · "+(parts.join(" · ")||"未运行");
+        if(r.secret_ok===false) st+=" · 密钥无效(需ee…)";
+      }
+    }
     box.textContent = st+"\n"+
       (r.host||"?")+":"+(r.port||"5753")+
       "  secret="+(r.secret||"(未设置)")+
-      "  allow="+(r.allow_cidr||"?");
+      "  allow="+(r.allow_cidr||"?")+
+      (r.note && r.secret_ok===false ? "\n"+r.note : "");
     if(cred && !cred.dataset.keep) cred.textContent="";
   }catch(e){ box.textContent="加载失败："+e.message; }
 }

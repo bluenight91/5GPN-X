@@ -39,8 +39,11 @@ api_body="$(cat "${api}")"
 [[ "${api_body}" != *'"8443"'* ]] || fail "API must not default to port 8443"
 
 # --- services it reports on must be the 5GPN-X units ---------------------------
-[[ "${api_body}" == *'"mosdns", "sniproxy", "wa-shim", "quic-proxy"'* ]] || fail "API SERVICES must list 5GPN-X units"
-[[ "${api_body}" == *'"5gpn-tgbot", "5gpn-api"'* ]] || fail "API SERVICES must list the bot and the API itself"
+[[ "${api_body}" == *'"mosdns",'* && "${api_body}" == *'"sniproxy",'* ]] || fail "API SERVICES must list 5GPN-X units"
+[[ "${api_body}" == *'"5gpn-tgbot",'* || "${api_body}" == *'"5gpn-tgbot"'* ]] || fail "API SERVICES must list the bot"
+[[ "${api_body}" == *'"5gpn-api"'* || "${api_body}" == *'"5gpn-api",'* ]] || fail "API SERVICES must list the API itself"
+[[ "${api_body}" == *'5gpn-client-mtproto'* ]] || fail "API status must include MTProto when enabled"
+[[ "${api_body}" == *'5gpn-client-socks'* ]] || fail "API status must include SOCKS when enabled"
 
 # --- exit names follow install.sh's validator (Chinese names allowed) ----------
 [[ "${api_body}" == *'{1,16}'* ]] || fail "API exit-name rule must allow 1-16 chars like install.sh"

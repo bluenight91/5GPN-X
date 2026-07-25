@@ -145,6 +145,11 @@ PY
 # --- user-supplied values must be validated ---------------------------------
 [[ "${bot_body}" == *'EXIT_NAME_RE'* ]] || fail "tgbot.py must validate exit names"
 [[ "${bot_body}" == *'if svc not in SERVICES'* ]] || fail "tgbot.py must validate service names against an allowlist"
+[[ "${bot_body}" == *'def _status_items('* ]] || fail "tgbot status must build dynamic status items"
+[[ "${bot_body}" == *'5gpn-client-mtproto'* ]] || fail "tgbot SERVICES/status must cover MTProto units"
+[[ "${bot_body}" == *'5gpn-api'* ]] || fail "tgbot status must cover control API"
+[[ "${bot_body}" == *'私网 SOCKS5'* && "${bot_body}" == *'client-socks.enabled'* ]] \
+    || fail "tgbot status must include SOCKS when enabled"
 [[ "${bot_body}" == *'DOMAIN_RE'* ]] || fail "tgbot.py must validate custom DoT domains"
 [[ "${bot_body}" == *'DNS_LIST_RE'* ]] || fail "tgbot.py must validate custom DNS upstreams"
 [[ "${bot_body}" == *'DNS_UPSTREAM_SCHEMES = {"https", "tls", "udp", "tcp"}'* ]] || fail "tgbot.py must accept validated mosdns upstream URLs"
