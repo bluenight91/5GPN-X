@@ -611,10 +611,10 @@ iframe.mihomo{
         </div>
         <div class="card">
           <h2>私网 MTProto</h2>
-          <p class="lede">可选：仅客户端网段可访问的 Telegram MTProto 代理（固定端口 <span class="mono">5753</span>，引擎 mtg）。可手动填写或一键生成密钥。</p>
+          <p class="lede">可选：仅客户端网段可访问的 Telegram MTProto 代理（固定端口 <span class="mono">5753</span>，classic）。密钥为 <span class="mono">32</span> 位 hex，可直接填进 Telegram。</p>
           <div id="mtproto_state" class="mono small" style="margin-bottom:8px">（加载中…）</div>
           <div class="row">
-            <input id="mtproto_secret" type="text" placeholder="自定义 secret（ee… 或 mtg 密钥）" autocomplete="off" style="flex:1" class="mono">
+            <input id="mtproto_secret" type="text" placeholder="32 位 hex（Telegram 同款，如 2cf16b88…）" autocomplete="off" style="flex:1" class="mono">
           </div>
           <div class="row">
             <button class="primary" onclick="mtprotoAction('enable')">开启</button>
@@ -1576,7 +1576,7 @@ async function socksAction(action){
   finally{ busy(false); }
 }
 
-/* ---- private client MTProto (mtg, TCP 5753) ---- */
+/* ---- private client MTProto (classic, TCP 5753) ---- */
 async function loadClientMtproto(){
   const box=$("mtproto_state"), cred=$("mtproto_creds");
   if(!box) return;
@@ -1587,17 +1587,17 @@ async function loadClientMtproto(){
       if(r.running) st="已开启 · 运行中";
       else {
         const parts=[];
-        if(r.mtg_running===false) parts.push("mtg未运行");
+        if(r.core_running===false || r.mtg_running===false) parts.push("core未运行");
         if(r.front_running===false) parts.push("front未运行");
         st="已开启 · "+(parts.join(" · ")||"未运行");
-        if(r.secret_ok===false) st+=" · 密钥无效(需ee…)";
+        if(r.secret_ok===false) st+=" · 密钥无效(需32-hex)";
       }
     }
     box.textContent = st+"\n"+
       (r.host||"?")+":"+(r.port||"5753")+
       "  secret="+(r.secret||"(未设置)")+
       "  allow="+(r.allow_cidr||"?")+
-      (r.note && r.secret_ok===false ? "\n"+r.note : "");
+      (r.note && (r.secret_ok===false || !r.running) ? "\n"+r.note : "");
     if(cred && !cred.dataset.keep) cred.textContent="";
   }catch(e){ box.textContent="加载失败："+e.message; }
 }

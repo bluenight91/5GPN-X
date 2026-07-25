@@ -1143,7 +1143,7 @@ BACKUP_PATHS = ["etc/5gpn", "etc/mosdns/gfwlist-extra-local.txt",
 def _backup_secret_name(name):
     base = os.path.basename(name).lower()
     if base in ("api.env", "tgbot.env", "client-socks.env", "client-mtproto.env",
-                "mtg.toml", "mihomo-api-secret"):
+                "mtg.toml", "mtprotoproxy.conf.py", "mihomo-api-secret"):
         return True
     if base.endswith(".pem"):
         return True
@@ -1587,7 +1587,7 @@ class Handler(BaseHTTPRequestHandler):
             if os.path.isfile(os.path.join(CONF_DIR, "client-socks.enabled")):
                 units.append("5gpn-client-socks")
             if os.path.isfile(os.path.join(CONF_DIR, "client-mtproto.enabled")):
-                units.extend(["5gpn-mtg", "5gpn-client-mtproto"])
+                units.extend(["5gpn-mtproxy", "5gpn-client-mtproto"])
             if cur and cur not in ("local", ""):
                 units.append("5gpn-mihomo@%s" % cur)
             services = {s: run(["systemctl", "is-active", s], timeout=5)[0] for s in units}
@@ -1708,30 +1708,23 @@ class Handler(BaseHTTPRequestHandler):
                     has_secret = bool(secret_raw)
                     break
             front = run(["systemctl", "is-active", "5gpn-client-mtproto"], timeout=5)[0] if enabled else False
-            core = run(["systemctl", "is-active", "5gpn-mtg"], timeout=5)[0] if enabled else False
+            core = run(["systemctl", "is-active", "5gpn-mtproxy"], timeout=5)[0] if enabled else False
             running = bool(front and core)
-            # Bare 32-hex secrets are rejected by mtg v2 (needs FakeTLS ee…).
-            sl = secret_raw.lower()
-            secret_ok = bool(secret_raw) and (
-                (sl.startswith(("ee", "dd")) and len(secret_raw) >= 36
-                 and all(c in "0123456789abcdef" for c in sl))
-                or (len(secret_raw) >= 22
-                    and not re.fullmatch(r"[0-9a-fA-F]{32}", secret_raw)
-                    and re.fullmatch(r"[A-Za-z0-9_-]+", secret_raw) is not None)
-            )
+            secret_ok = bool(re.fullmatch(r"[0-9a-fA-F]{32}", secret_raw or ""))
             host = read_file("/etc/mosdns/.public_ip").strip() or ""
-            note = "secret is masked; use enable/set-secret/generate-secret to receive it once"
+            note = "classic 32-hex secret; paste into Telegram as-is"
             if enabled and has_secret and not secret_ok:
-                note = "secret is not FakeTLS (ee…); regenerate or set a valid mtg secret"
+                note = "secret is not classic 32-hex; set/generate a 32-hex key for Telegram"
             return self._send(200, {
                 "ok": True, "enabled": enabled, "running": running,
-                "mtg_running": bool(core), "front_running": bool(front),
+                "mtg_running": bool(core), "core_running": bool(core),
+                "front_running": bool(front),
                 "host": host, "port": port,
                 "secret": "***" if has_secret else "",
                 "secret_ok": secret_ok if has_secret else False,
                 "link": "",
                 "allow_cidr": get_client_cidr(),
-                "engine": "mtg",
+                "engine": "mtprotoproxy",
                 "note": note,
             })
         return self._send(404, {"ok": False, "error": "not found"})

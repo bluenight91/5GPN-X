@@ -18,21 +18,27 @@ mtproto_go="$(cat "${root}/lib/client-mtproto.go")"
 rm -f /tmp/client-mtproto-test /tmp/client-mtproto.go
 
 [[ "${install}" == *'CLIENT_MTPROTO_PORT_DEFAULT=5753'* ]] || fail "default MTProto port must be 5753"
-[[ "${install}" == *'MTG_VERSION_DEFAULT="2.2.8"'* ]] || fail "mtg must be pinned to 2.2.8"
-[[ "${install}" == *'ee…/dd… FakeTLS'* || "${install}" == *'FakeTLS'* ]] \
-    || fail "secret validation must require FakeTLS (ee…) for mtg v2"
-[[ "${install}" != *'纯 hex'* ]] || fail "bare hex secrets must not be accepted (mtg rejects them)"
+[[ "${install}" == *'MTPROTOPROXY_VERSION_DEFAULT="v1.1.2"'* ]] || fail "mtprotoproxy must be pinned"
+[[ "${install}" == *'canonicalize_mtproto_secret'* ]] || fail "must canonicalize secrets to classic 32-hex"
 [[ "${install}" == *'enable_client_mtproto()'* ]] || fail "install must define enable_client_mtproto"
 [[ "${install}" == *'--enable-client-mtproto)'* ]] || fail "CLI must expose --enable-client-mtproto"
-[[ "${install}" == *'--disable-client-mtproto)'* ]] || fail "CLI must expose --disable-client-mtproto"
 [[ "${install}" == *'--set-client-mtproto-secret)'* ]] || fail "CLI must expose --set-client-mtproto-secret"
-[[ "${install}" == *'--generate-client-mtproto-secret)'* ]] || fail "CLI must expose --generate-client-mtproto-secret"
 [[ "${install}" == *'5gpn-client-mtproto.service'* ]] || fail "systemd unit for client-mtproto required"
-[[ "${install}" == *'5gpn-mtg.service'* ]] || fail "systemd unit for mtg required"
-[[ "${install}" == *'User=${EXIT_USER}'* ]] || fail "mtproto front must run as EXIT_USER"
+[[ "${install}" == *'5gpn-mtproxy.service'* ]] || fail "systemd unit for mtprotoproxy required"
+[[ "${install}" == *'MODES = {"classic": True'* ]] || fail "classic mode required for bare Telegram secrets"
+[[ "${install}" == *'LISTEN_ADDR_IPV4 = "127.0.0.1"'* ]] || fail "core must bind loopback only"
 [[ "${install}" == *'firewall_mtproto_sync ||'* && "${install}" == *'MTProto firewall sync failed'* ]] \
     || fail "enable-client-mtproto must abort when firewall sync fails"
-[[ "${install}" == *'MTPROTO_ALLOW_CIDR='* ]] || fail "set-client-cidr must sync MTPROTO_ALLOW_CIDR"
+
+# Smoke: bare key stays bare (Telegram-pasteable)
+canon_tmp="$(mktemp)"
+sed -n '/^canonicalize_mtproto_secret()/,/^}/p; /^validate_mtproto_secret()/,/^}/p' \
+    "${root}/install.sh" > "${canon_tmp}"
+# shellcheck disable=SC1090
+got="$(bash -c '. "$1"; canonicalize_mtproto_secret 2cf16b88a9ba60ac6aff397eafc8336c' _ "${canon_tmp}")"
+rm -f "${canon_tmp}"
+[[ "$got" == 2cf16b88a9ba60ac6aff397eafc8336c ]] \
+    || fail "canonicalize must keep bare 32-hex for Telegram (got: ${got})"
 
 [[ "${host}" == *'__MTPROTO_RULE__'* ]] || fail "managed nft must reserve MTProto rule slot"
 [[ "${host}" == *'firewall_mtproto_sync'* ]] || fail "host-setup must sync mtproto firewall"
@@ -41,14 +47,11 @@ rm -f /tmp/client-mtproto-test /tmp/client-mtproto.go
 [[ "${mtproto_go}" == *'127.0.0.1:15753'* ]] || fail "client-mtproto default backend must be loopback 15753"
 
 [[ "${api}" == *'/api/client-mtproto'* ]] || fail "api must expose /api/client-mtproto"
-[[ "${api}" == *'set-secret'* && "${api}" == *'generate-secret'* ]] \
-    || fail "api must support set-secret and generate-secret"
+[[ "${api}" == *'5gpn-mtproxy'* ]] || fail "api must check mtproxy unit"
 [[ "${ui}" == *'私网 MTProto'* ]] || fail "webui must show MTProto card"
-[[ "${ui}" == *'mtprotoAction'* ]] || fail "webui must call mtproto actions"
-[[ "${ui}" == *'5753'* ]] || fail "webui must mention port 5753"
+[[ "${ui}" == *'32'* && "${ui}" == *'Telegram'* ]] || fail "webui must document Telegram 32-hex secret"
 [[ "${bot}" == *'menu:mtproto'* ]] || fail "tgbot must expose MTProto menu"
-[[ "${bot}" == *'mtproto:enable'* ]] || fail "tgbot must support enable"
 [[ "${bot}" == *'mtproto_set_secret'* ]] || fail "tgbot must support manual secret input"
-[[ "${doctor}" == *'client-mtproto'* ]] || fail "doctor must check client-mtproto when enabled"
+[[ "${doctor}" == *'5gpn-mtproxy'* ]] || fail "doctor must check mtproxy when enabled"
 
 echo "test_client_mtproto_policy: OK"

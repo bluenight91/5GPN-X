@@ -60,7 +60,7 @@ SERVICES = [
     "5gpn-tgbot",
     "5gpn-api",
     "5gpn-client-socks",
-    "5gpn-mtg",
+    "5gpn-mtproxy",
     "5gpn-client-mtproto",
 ]
 RESTART_SERVICES = [
@@ -1031,7 +1031,7 @@ def _status_items():
     if os.path.isfile("/opt/5gpn/etc/client-socks.enabled"):
         items.append(("5gpn-client-socks", "私网 SOCKS5"))
     if os.path.isfile("/opt/5gpn/etc/client-mtproto.enabled"):
-        items.append(("5gpn-mtg", "MTProto mtg"))
+        items.append(("5gpn-mtproxy", "MTProto core"))
         items.append(("5gpn-client-mtproto", "MTProto front"))
     cur = _read_file("/opt/5gpn/etc/current-exit") or "local"
     if cur and cur not in ("local",):
@@ -2531,7 +2531,7 @@ def op_client_mtproto_status():
     ok, out = run2(["bash", MGMT, "--client-mtproto-status"], timeout=60)
     body = html.escape(_strip_ansi(out)[-2000:] or "无输出")
     return ("📡 <b>私网 MTProto</b>\n<pre>%s</pre>\n"
-            "仅客户端网段可访问；默认端口 5753；密钥请用「填写/生成」。" % body)
+            "仅客户端网段可访问；端口 5753；Telegram 直接填 32 位 hex 密钥。" % body)
 
 
 def op_enable_client_mtproto():
@@ -3400,7 +3400,8 @@ def handle_callback(cb):
         PENDING[chat_id] = {"action": "mtproto_set_secret", "prompt_mid": cb_mid}
         edit(cb,
              "📡 <b>填写 MTProto 密钥</b>\n"
-             "发送一行 secret（ee… FakeTLS hex，或 mtg base64url）。\n"
+             "发送一行 <b>32 位 hex</b>（Telegram 里填同一个）。\n"
+             "也可用 <code>dd</code>+32hex；旧 ee… FakeTLS 会提取其中的 key。\n"
              "端口固定 <code>5753</code>；仅客户端网段可连。",
              back_kb("menu:mtproto"))
     elif data == "act:report":

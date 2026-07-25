@@ -14,7 +14,10 @@ CLIENT_SOCKS_PORT_DEFAULT=38443
 CLIENT_SOCKS_USER_DEFAULT=5gpn
 CLIENT_MTPROTO_PORT_DEFAULT=5753
 CLIENT_MTPROTO_BACKEND_DEFAULT=127.0.0.1:15753
-MTG_VERSION_DEFAULT="2.2.8"
+# Classic MTProto (bare 32-hex secrets Telegram can paste directly).
+# mtg v2 FakeTLS cannot accept bare hex client secrets.
+MTPROTOPROXY_VERSION_DEFAULT="v1.1.2"
+MTPROTOPROXY_REPO_DEFAULT="https://raw.githubusercontent.com/alexbers/mtprotoproxy"
 EXIT_USER="pxout"
 EXIT_MARK="0x1"
 EXIT_TABLE="100"
@@ -444,16 +447,15 @@ Options:
   --reset-client-socks-creds
                  Rotate SOCKS5 username/password (prints once)
   --enable-client-mtproto
-                 Enable private MTProto proxy (mtg; only client CIDR; default TCP 5753)
+                 Enable private MTProto proxy (classic; only client CIDR; TCP 5753)
   --disable-client-mtproto
                  Disable the private MTProto proxy
   --client-mtproto-status
                  Show MTProto status (secret omitted)
   --set-client-mtproto-secret <secret>
-                 Set a custom MTProto secret (ee… FakeTLS hex or mtg base64url;
-                 bare 32-char hex is rejected by mtg v2)
+                 Set classic 32-hex secret (Telegram pastes this as-is; optional dd prefix OK)
   --generate-client-mtproto-secret
-                 Generate a FakeTLS secret via mtg and save it
+                 Generate a new random 32-hex secret
   --setup-whatsapp
                  Install/repair the iOS WhatsApp no-SNI TCP/443 shim.
   --uninstall    Remove all installed components
@@ -1454,67 +1456,95 @@ EOF
     echo "  密码: ${pass}"
 }
 
-# ----- private client MTProto (mtg + CIDR ACL front; opt-in; TCP 5753) -----
+# ----- private client MTProto (classic mtprotoproxy + CIDR ACL; TCP 5753) -----
 CLIENT_MTPROTO_BIN="${BASE_DIR}/bin/client-mtproto"
 CLIENT_MTPROTO_ENV="${CONF_DIR}/client-mtproto.env"
 CLIENT_MTPROTO_ENABLED="${CONF_DIR}/client-mtproto.enabled"
 CLIENT_MTPROTO_PORT_FILE="${CONF_DIR}/client-mtproto.port"
-CLIENT_MTPROTO_TOML="${CONF_DIR}/mtg.toml"
-MTG_BIN="${BASE_DIR}/bin/mtg"
+MTPROTOPROXY_PY="${BASE_DIR}/bin/mtprotoproxy.py"
+MTPROTOPROXY_CONF="${CONF_DIR}/mtprotoproxy.conf.py"
+MTPROTOPROXY_PIN="${CONF_DIR}/mtprotoproxy.pin"
 
-validate_mtproto_secret() {
-    local s="${1:-}"
+# Normalize to classic 32-hex secret Telegram can paste directly.
+# Accepts: 32-hex | dd+32-hex | legacy ee… FakeTLS (extracts key).
+canonicalize_mtproto_secret() {
+    local s="${1:-}" out=""
     [[ -n "$s" ]] || return 1
     [[ "$s" != *$'\n'* && "$s" != *' '* && "$s" != *$'\t'* ]] || return 1
-    # mtg v2 FakeTLS only: hex must start with ee/dd and include key+hostname,
-    # or be mtg base64url (not bare 32-char hex — that crashes mtg on start).
-    [[ "$s" =~ ^(ee|dd)[0-9a-fA-F]{34,}$ ]] && return 0
-    [[ "$s" =~ ^[A-Za-z0-9_-]{22,}$ ]] && return 0
-    return 1
+    out="$(python3 - "$s" <<'PY'
+import re, sys
+s = sys.argv[1].strip()
+if re.fullmatch(r"[0-9a-fA-F]{32}", s):
+    print(s.lower()); raise SystemExit(0)
+if re.fullmatch(r"[dD][dD][0-9a-fA-F]{32}", s):
+    print(s[2:].lower()); raise SystemExit(0)
+# Legacy mtg FakeTLS: ee + 16-byte key + hostname → reuse key as classic secret
+if s.lower().startswith("ee") and len(s) >= 34 and re.fullmatch(r"[0-9a-fA-F]+", s):
+    key = s[2:34].lower()
+    if re.fullmatch(r"[0-9a-f]{32}", key):
+        print(key); raise SystemExit(0)
+raise SystemExit(1)
+PY
+)" || return 1
+    [[ "$out" =~ ^[0-9a-f]{32}$ ]] || return 1
+    printf '%s\n' "$out"
 }
 
-ensure_mtg_binary() {
-    local ver="${MTG_VERSION:-${MTG_VERSION_DEFAULT}}"
-    local arch asset url tmp dir
-    mkdir -p "${BASE_DIR}/bin"
-    if [[ -x "${MTG_BIN}" ]]; then
-        if "${MTG_BIN}" version 2>/dev/null | grep -qE "${ver}|v${ver}" \
-            || "${MTG_BIN}" --version 2>/dev/null | grep -qE "${ver}|v${ver}"; then
-            return 0
-        fi
+validate_mtproto_secret() {
+    canonicalize_mtproto_secret "${1:-}" >/dev/null
+}
+
+ensure_mtprotoproxy() {
+    local ver="${MTPROTOPROXY_VERSION:-${MTPROTOPROXY_VERSION_DEFAULT}}"
+    local repo="${MTPROTOPROXY_REPO:-${MTPROTOPROXY_REPO_DEFAULT}}"
+    local url pin
+    mkdir -p "${BASE_DIR}/bin" "${CONF_DIR}"
+    pin="$(cat "${MTPROTOPROXY_PIN}" 2>/dev/null || true)"
+    if [[ -f "${MTPROTOPROXY_PY}" && "$pin" == "$ver" ]]; then
+        return 0
     fi
-    case "$(uname -m)" in
-        x86_64|amd64) arch="amd64" ;;
-        aarch64|arm64) arch="arm64" ;;
-        *) err "Unsupported architecture for mtg: $(uname -m)"; return 1 ;;
-    esac
-    asset="mtg-${ver}-linux-${arch}.tar.gz"
-    url="https://github.com/9seconds/mtg/releases/download/v${ver}/${asset}"
-    info "Downloading mtg v${ver} (${arch})..."
-    tmp="$(mktemp)"
-    dir="$(mktemp -d)"
-    if ! curl -fsSL --max-time 90 "$url" -o "$tmp"; then
-        rm -f "$tmp"; rm -rf "$dir"
-        err "mtg v${ver} 下载失败: $url"
+    url="${repo}/${ver}/mtprotoproxy.py"
+    info "Downloading mtprotoproxy ${ver}..."
+    if ! curl -fsSL --max-time 60 "$url" -o "${MTPROTOPROXY_PY}.new"; then
+        rm -f "${MTPROTOPROXY_PY}.new"
+        err "mtprotoproxy 下载失败: $url"
         return 1
     fi
-    if ! tar -xzf "$tmp" -C "$dir" 2>/dev/null; then
-        rm -f "$tmp"; rm -rf "$dir"
-        err "mtg 解压失败"
+    head -n1 "${MTPROTOPROXY_PY}.new" | grep -q python || {
+        rm -f "${MTPROTOPROXY_PY}.new"
+        err "mtprotoproxy 内容无效"
         return 1
-    fi
-    local found
-    found="$(find "$dir" -type f -name mtg | head -n1)"
-    [[ -n "$found" && -f "$found" ]] || { rm -f "$tmp"; rm -rf "$dir"; err "mtg binary missing in archive"; return 1; }
-    install -m 0755 "$found" "${MTG_BIN}"
-    rm -f "$tmp"; rm -rf "$dir"
-    ok "mtg v${ver} installed to ${MTG_BIN}"
+    }
+    mv -f "${MTPROTOPROXY_PY}.new" "${MTPROTOPROXY_PY}"
+    chmod 755 "${MTPROTOPROXY_PY}"
+    echo "$ver" > "${MTPROTOPROXY_PIN}"
+    ok "mtprotoproxy ${ver} → ${MTPROTOPROXY_PY}"
+}
+
+client_mtproto_write_conf() {
+    local secret="${1:-}" backend_port
+    [[ -n "$secret" ]] || return 1
+    backend_port="${CLIENT_MTPROTO_BACKEND_DEFAULT##*:}"
+    [[ "$backend_port" =~ ^[0-9]+$ ]] || backend_port=15753
+    umask 077
+    cat > "${MTPROTOPROXY_CONF}" <<EOF
+# Generated by 5gpn — classic MTProto (Telegram pastes the 32-hex secret as-is).
+PORT = ${backend_port}
+LISTEN_ADDR_IPV4 = "127.0.0.1"
+LISTEN_ADDR_IPV6 = ""
+USERS = {"tg": "${secret}"}
+MODES = {"classic": True, "secure": True, "tls": False}
+FAST_MODE = True
+USE_MIDDLE_PROXY = False
+EOF
+    chmod 600 "${MTPROTOPROXY_CONF}"
+    chown "${EXIT_USER}:${EXIT_USER}" "${MTPROTOPROXY_CONF}" 2>/dev/null || true
 }
 
 install_client_mtproto_binary() {
     ensure_proxy_user
     mkdir -p "${BASE_DIR}/bin" "${SRC_DIR}" "${CONF_DIR}"
-    ensure_mtg_binary || return 1
+    ensure_mtprotoproxy || return 1
     [[ -f "${LIB_DIR}/client-mtproto.go" ]] || { err "client-mtproto.go missing"; return 1; }
     if ! cmp -s "${LIB_DIR}/client-mtproto.go" "${SRC_DIR}/client-mtproto.go" 2>/dev/null \
         || [[ ! -x "${CLIENT_MTPROTO_BIN}" ]]; then
@@ -1527,18 +1557,23 @@ install_client_mtproto_binary() {
         ) || { err "client-mtproto 编译失败"; return 1; }
     fi
     [[ -x "${CLIENT_MTPROTO_BIN}" ]] || { err "client-mtproto 二进制不存在: ${CLIENT_MTPROTO_BIN}"; return 1; }
-    [[ -x "${MTG_BIN}" ]] || { err "mtg 二进制不存在: ${MTG_BIN}"; return 1; }
-    # go build often inherits umask 077 (700); unit runs as pxout and must exec it.
-    chmod 755 "${CLIENT_MTPROTO_BIN}" "${MTG_BIN}" 2>/dev/null || true
-    cat > /etc/systemd/system/5gpn-mtg.service <<EOF
+    [[ -f "${MTPROTOPROXY_PY}" ]] || { err "mtprotoproxy.py missing"; return 1; }
+    chmod 755 "${CLIENT_MTPROTO_BIN}" "${MTPROTOPROXY_PY}" 2>/dev/null || true
+    # Retire previous mtg unit if present (FakeTLS engine cannot serve bare hex).
+    if [[ -f /etc/systemd/system/5gpn-mtg.service ]]; then
+        systemctl disable --now 5gpn-mtg.service 2>/dev/null || true
+        rm -f /etc/systemd/system/5gpn-mtg.service
+    fi
+    cat > /etc/systemd/system/5gpn-mtproxy.service <<EOF
 [Unit]
-Description=5GPN-X mtg MTProto core (loopback only)
+Description=5GPN-X classic MTProto core (mtprotoproxy, loopback)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=${MTG_BIN} run ${CLIENT_MTPROTO_TOML}
+WorkingDirectory=${CONF_DIR}
+ExecStart=/usr/bin/python3 ${MTPROTOPROXY_PY} ${MTPROTOPROXY_CONF}
 Restart=on-failure
 RestartSec=3
 User=${EXIT_USER}
@@ -1554,10 +1589,10 @@ WantedBy=multi-user.target
 EOF
     cat > /etc/systemd/system/5gpn-client-mtproto.service <<EOF
 [Unit]
-Description=5GPN-X private MTProto ACL front (client CIDR → mtg)
-After=network-online.target 5gpn-mtg.service
+Description=5GPN-X private MTProto ACL front (client CIDR → mtprotoproxy)
+After=network-online.target 5gpn-mtproxy.service
 Wants=network-online.target
-Requires=5gpn-mtg.service
+Requires=5gpn-mtproxy.service
 
 [Service]
 Type=simple
@@ -1578,21 +1613,9 @@ EOF
     systemctl daemon-reload
 }
 
-client_mtproto_write_toml() {
-    local secret="${1:-}"
-    [[ -n "$secret" ]] || return 1
-    umask 077
-    cat > "${CLIENT_MTPROTO_TOML}" <<EOF
-secret = "${secret}"
-bind-to = "${CLIENT_MTPROTO_BACKEND_DEFAULT}"
-EOF
-    chmod 600 "${CLIENT_MTPROTO_TOML}"
-    chown "${EXIT_USER}:${EXIT_USER}" "${CLIENT_MTPROTO_TOML}" 2>/dev/null || true
-}
-
 client_mtproto_ensure_creds() {
     mkdir -p "${CONF_DIR}"
-    local port cidr secret backend
+    local port cidr secret backend raw
     port="$(cat "${CLIENT_MTPROTO_PORT_FILE}" 2>/dev/null || echo "${CLIENT_MTPROTO_PORT_DEFAULT}")"
     [[ "$port" =~ ^[0-9]+$ ]] || port="${CLIENT_MTPROTO_PORT_DEFAULT}"
     echo "$port" > "${CLIENT_MTPROTO_PORT_FILE}"
@@ -1602,15 +1625,19 @@ client_mtproto_ensure_creds() {
     if [[ -f "${CLIENT_MTPROTO_ENV}" ]]; then
         # shellcheck disable=SC1090
         set -a; source "${CLIENT_MTPROTO_ENV}"; set +a
-        secret="${MTPROTO_SECRET:-}"
+        raw="${MTPROTO_SECRET:-}"
         backend="${MTPROTO_BACKEND:-$backend}"
-    fi
-    if [[ -z "$secret" ]] || ! validate_mtproto_secret "$secret"; then
-        if [[ -n "$secret" ]]; then
-            warn "已有 MTProto secret 不符合 mtg FakeTLS（需 ee…/base64url），将重新生成"
+        if [[ -n "$raw" ]]; then
+            secret="$(canonicalize_mtproto_secret "$raw" 2>/dev/null || true)"
+            if [[ -z "$secret" ]]; then
+                warn "已有 MTProto secret 无法转为 classic 32-hex，将重新生成"
+            elif [[ "$secret" != "$raw" ]]; then
+                info "已将旧 secret 规范为 classic 32-hex（Telegram 请直接填此密钥）"
+            fi
         fi
-        ensure_mtg_binary || return 1
-        secret="$("${MTG_BIN}" generate-secret --hex cloudflare.com 2>/dev/null | tr -d '[:space:]')"
+    fi
+    if [[ -z "$secret" ]]; then
+        secret="$(openssl rand -hex 16 2>/dev/null || head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
         validate_mtproto_secret "$secret" || {
             err "无法生成 MTProto secret"
             return 1
@@ -1624,7 +1651,7 @@ MTPROTO_SECRET=${secret}
 MTPROTO_ALLOW_CIDR=${cidr}
 EOF
     chmod 600 "${CLIENT_MTPROTO_ENV}"
-    client_mtproto_write_toml "$secret"
+    client_mtproto_write_conf "$secret"
 }
 
 client_mtproto_host_ip() {
@@ -1646,26 +1673,25 @@ enable_client_mtproto() {
             return 1
         }
     fi
-    systemctl enable 5gpn-mtg.service 5gpn-client-mtproto.service >/dev/null 2>&1 || true
-    systemctl restart 5gpn-mtg.service || true
-    # Front requires mtg; start after core is up.
+    systemctl enable 5gpn-mtproxy.service 5gpn-client-mtproto.service >/dev/null 2>&1 || true
+    systemctl restart 5gpn-mtproxy.service || true
     sleep 0.5
     systemctl restart 5gpn-client-mtproto.service || true
-    if ! systemctl is-active --quiet 5gpn-mtg.service \
+    if ! systemctl is-active --quiet 5gpn-mtproxy.service \
         || ! systemctl is-active --quiet 5gpn-client-mtproto.service; then
         rm -f "${CLIENT_MTPROTO_ENABLED}"
         declare -F firewall_mtproto_sync >/dev/null 2>&1 && firewall_mtproto_sync || true
         err "MTProto 服务启动失败（已回滚 enabled 标记）"
-        echo "---- 5gpn-mtg ----"
-        systemctl status 5gpn-mtg.service --no-pager -l 2>&1 | tail -n 40 || true
-        journalctl -u 5gpn-mtg.service -n 40 --no-pager 2>&1 || true
+        echo "---- 5gpn-mtproxy ----"
+        systemctl status 5gpn-mtproxy.service --no-pager -l 2>&1 | tail -n 40 || true
+        journalctl -u 5gpn-mtproxy.service -n 40 --no-pager 2>&1 || true
         echo "---- 5gpn-client-mtproto ----"
         systemctl status 5gpn-client-mtproto.service --no-pager -l 2>&1 | tail -n 40 || true
         journalctl -u 5gpn-client-mtproto.service -n 40 --no-pager 2>&1 || true
         return 1
     fi
     local host; host="$(client_mtproto_host_ip)"
-    ok "私网 MTProto 已开启"
+    ok "私网 MTProto 已开启（classic，Telegram 可直接填 32-hex 密钥）"
     echo "  地址:   ${host}:${MTPROTO_PORT}"
     echo "  密钥:   ${MTPROTO_SECRET}"
     echo "  允许源: ${MTPROTO_ALLOW_CIDR}"
@@ -1676,7 +1702,7 @@ enable_client_mtproto() {
 
 disable_client_mtproto() {
     check_root
-    systemctl disable --now 5gpn-client-mtproto.service 5gpn-mtg.service 2>/dev/null || true
+    systemctl disable --now 5gpn-client-mtproto.service 5gpn-mtproxy.service 5gpn-mtg.service 2>/dev/null || true
     rm -f "${CLIENT_MTPROTO_ENABLED}"
     declare -F firewall_mtproto_sync >/dev/null 2>&1 && firewall_mtproto_sync || true
     ok "私网 MTProto 已关闭"
@@ -1692,10 +1718,10 @@ client_mtproto_status() {
     echo "listen: ${host}:${port}"
     echo "secret: ***"
     echo "allow: ${cidr}"
-    echo "engine: mtg (loopback ${CLIENT_MTPROTO_BACKEND_DEFAULT})"
+    echo "engine: mtprotoproxy classic (loopback ${CLIENT_MTPROTO_BACKEND_DEFAULT})"
     if [[ $on -eq 1 ]]; then
-        systemctl is-active --quiet 5gpn-mtg.service \
-            && echo "mtg: running" || echo "mtg: not running"
+        systemctl is-active --quiet 5gpn-mtproxy.service \
+            && echo "core: running" || echo "core: not running"
         systemctl is-active --quiet 5gpn-client-mtproto.service \
             && echo "front: running" || echo "front: not running"
     fi
@@ -1703,13 +1729,15 @@ client_mtproto_status() {
 
 set_client_mtproto_secret() {
     check_root
-    local secret="${1:-}"
-    validate_mtproto_secret "$secret" || {
-        err "无效 secret（mtg 仅接受 ee…/dd… FakeTLS hex，或 mtg base64url；不要用裸 32 位 hex）"
+    local raw="${1:-}" secret=""
+    secret="$(canonicalize_mtproto_secret "$raw")" || {
+        err "无效 secret（需要 32 位 hex；也可 dd+32hex，或从旧 ee… FakeTLS 提取 key）"
         return 1
     }
+    if [[ "$secret" != "$raw" ]]; then
+        info "已规范为 classic 32-hex；Telegram 请填: ${secret}"
+    fi
     install_client_mtproto_binary || return 1
-    client_mtproto_ensure_creds || return 1
     local port cidr backend
     port="$(cat "${CLIENT_MTPROTO_PORT_FILE}" 2>/dev/null || echo "${CLIENT_MTPROTO_PORT_DEFAULT}")"
     cidr="$(cat /etc/mosdns/.client_cidr 2>/dev/null || echo '172.22.0.0/16')"
@@ -1722,12 +1750,17 @@ MTPROTO_SECRET=${secret}
 MTPROTO_ALLOW_CIDR=${cidr}
 EOF
     chmod 600 "${CLIENT_MTPROTO_ENV}"
-    client_mtproto_write_toml "$secret"
+    client_mtproto_write_conf "$secret"
     if [[ -f "${CLIENT_MTPROTO_ENABLED}" ]]; then
-        systemctl restart 5gpn-mtg.service 5gpn-client-mtproto.service 2>/dev/null || true
+        systemctl restart 5gpn-mtproxy.service 5gpn-client-mtproto.service 2>/dev/null || true
+        if ! systemctl is-active --quiet 5gpn-mtproxy.service \
+            || ! systemctl is-active --quiet 5gpn-client-mtproto.service; then
+            err "密钥已写入，但服务未就绪；journalctl -u 5gpn-mtproxy -n 40"
+            return 1
+        fi
     fi
     local host; host="$(client_mtproto_host_ip)"
-    ok "MTProto 密钥已更新"
+    ok "MTProto 密钥已更新（Telegram 直接填此 32-hex）"
     echo "  地址: ${host}:${port}"
     echo "  密钥: ${secret}"
     echo "  链接: tg://proxy?server=${host}&port=${port}&secret=${secret}"
@@ -1735,9 +1768,8 @@ EOF
 
 generate_client_mtproto_secret() {
     check_root
-    ensure_mtg_binary || return 1
     local secret
-    secret="$("${MTG_BIN}" generate-secret --hex cloudflare.com 2>/dev/null | tr -d '[:space:]')"
+    secret="$(openssl rand -hex 16 2>/dev/null || head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
     set_client_mtproto_secret "$secret"
 }
 
@@ -3835,7 +3867,7 @@ do_update() {
     install_client_mtproto_binary || warn "client-mtproto 二进制安装失败（可稍后手动 enable-client-mtproto）"
     if [[ -f "${CLIENT_MTPROTO_ENABLED}" ]]; then
         client_mtproto_ensure_creds || warn "MTProto 凭据同步失败"
-        systemctl restart 5gpn-mtg.service 5gpn-client-mtproto.service 2>/dev/null || true
+        systemctl restart 5gpn-mtproxy.service 5gpn-client-mtproto.service 2>/dev/null || true
         declare -F firewall_mtproto_sync >/dev/null 2>&1 && firewall_mtproto_sync || true
     fi
     install_mosdns_binary
@@ -3899,14 +3931,14 @@ do_uninstall() {
         systemctl stop "5gpn-singbox@$(basename "$f" .type).service" 2>/dev/null || true
     done
     shopt -u nullglob
-    systemctl stop mosdns dnsdist sniproxy wa-shim quic-proxy china-dns-race-proxy 5gpn-ios-profile.socket 5gpn-ios-profile 5gpn-exit 5gpn-tgbot 5gpn-api 5gpn-wloc 5gpn-health.timer 5gpn-health.service 5gpn-client-socks 5gpn-client-mtproto 5gpn-mtg 2>/dev/null || true
-    systemctl disable mosdns dnsdist sniproxy wa-shim quic-proxy china-dns-race-proxy 5gpn-ios-profile.socket 5gpn-ios-profile 5gpn-exit 5gpn-tgbot 5gpn-api 5gpn-wloc 5gpn-health.timer 5gpn-health.service 5gpn-client-socks 5gpn-client-mtproto 5gpn-mtg 2>/dev/null || true
+    systemctl stop mosdns dnsdist sniproxy wa-shim quic-proxy china-dns-race-proxy 5gpn-ios-profile.socket 5gpn-ios-profile 5gpn-exit 5gpn-tgbot 5gpn-api 5gpn-wloc 5gpn-health.timer 5gpn-health.service 5gpn-client-socks 5gpn-client-mtproto 5gpn-mtproxy 5gpn-mtg 2>/dev/null || true
+    systemctl disable mosdns dnsdist sniproxy wa-shim quic-proxy china-dns-race-proxy 5gpn-ios-profile.socket 5gpn-ios-profile 5gpn-exit 5gpn-tgbot 5gpn-api 5gpn-wloc 5gpn-health.timer 5gpn-health.service 5gpn-client-socks 5gpn-client-mtproto 5gpn-mtproxy 5gpn-mtg 2>/dev/null || true
     rm -f /etc/systemd/system/{mosdns,sniproxy,wa-shim,quic-proxy,china-dns-race-proxy,5gpn-ios-profile,update-mosdns-rules,5gpn-exit,5gpn-tgbot}.*
     rm -f /etc/systemd/system/5gpn-api.*
     rm -f /etc/systemd/system/5gpn-wloc.*
     rm -f /etc/systemd/system/5gpn-health.service /etc/systemd/system/5gpn-health.timer
     rm -f /etc/systemd/system/5gpn-client-socks.service
-    rm -f /etc/systemd/system/5gpn-client-mtproto.service /etc/systemd/system/5gpn-mtg.service
+    rm -f /etc/systemd/system/5gpn-client-mtproto.service /etc/systemd/system/5gpn-mtproxy.service /etc/systemd/system/5gpn-mtg.service
     declare -F firewall_socks_remove_rules >/dev/null 2>&1 && firewall_socks_remove_rules || true
     declare -F firewall_mtproto_remove_rules >/dev/null 2>&1 && firewall_mtproto_remove_rules || true
     rm -f /usr/local/bin/5gpn

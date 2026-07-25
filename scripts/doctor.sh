@@ -143,10 +143,10 @@ else
     note "私网 SOCKS5" "disabled"
 fi
 if [[ -f "${CONF_DIR}/client-mtproto.enabled" ]]; then
-    if svc_active 5gpn-mtg && svc_active 5gpn-client-mtproto; then
+    if svc_active 5gpn-mtproxy && svc_active 5gpn-client-mtproto; then
         ok "服务 client-mtproto" "running"
     else
-        bad "服务 client-mtproto" "enabled but mtg/front not running"
+        bad "服务 client-mtproto" "enabled but mtproxy/front not running"
     fi
 else
     note "私网 MTProto" "disabled"
