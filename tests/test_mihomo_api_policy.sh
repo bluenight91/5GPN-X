@@ -20,7 +20,7 @@ fail() { echo "$1" >&2; exit 1; }
 [[ "${install_body}" == *'MIHOMO_API_SECRET_FILE='/etc/5gpn/mihomo-api-secret''* ]] || fail "install.sh must define MIHOMO_API_SECRET_FILE"
 
 # --- installer vendors metacubexd (pinned version, download at install) ------
-[[ "${install_body}" == *'METACUBEXD_VERSION_DEFAULT="1.270.0"'* ]] || fail "install.sh must pin METACUBEXD_VERSION_DEFAULT"
+[[ "${install_body}" == *'METACUBEXD_VERSION_DEFAULT="1.270.5"'* ]] || fail "install.sh must pin METACUBEXD_VERSION_DEFAULT"
 [[ "${install_body}" == *'install_metacubexd() {'* ]] || fail "install.sh must define install_metacubexd()"
 [[ "${install_body}" == *'MetaCubeX/metacubexd/releases/download/v${ver}/compressed-dist.tgz'* ]] || fail "metacubexd must come from the pinned GitHub release asset"
 [[ "${install_body}" == *'${BASE_DIR}/webui/mihomo'* ]] || fail "metacubexd must unpack to \${BASE_DIR}/webui/mihomo"
