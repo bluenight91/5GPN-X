@@ -75,6 +75,23 @@ DIRECT_DOMAINS_FILE = "/etc/mosdns/direct-domains.txt"
 CLIENT_CIDR_FILE = "/etc/mosdns/.client_cidr"
 CLIENT_CIDR_DEFAULT = "172.22.0.0/16"
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
+# Self-service component version bumps (mirrors install.sh's pin mechanism):
+# current version files written by the installer, optional pins in CONF_DIR.
+COMPONENTS = {
+    "metacubexd": {
+        "version_file": WEBUI_DIR + "/mihomo/.metacubexd-version",
+        "pin_file": CONF_DIR + "/metacubexd.pin",
+        "repo": "MetaCubeX/metacubexd",
+        "flag": "--update-webui",
+    },
+    "mihomo": {
+        "version_file": "/opt/5gpn/bin/.mihomo-version",
+        "pin_file": CONF_DIR + "/mihomo.pin",
+        "repo": "MetaCubeX/mihomo",
+        "flag": "--update-mihomo",
+    },
+}
+COMPONENT_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
 # Core units always reported on /api/status. Opt-in proxies are appended when
 # their .enabled markers exist so the dashboard reflects the full deploy.
 SERVICES = [
@@ -433,6 +450,44 @@ def read_file(path):
 
 def current_exit():
     return read_file(CONF_DIR + "/current-exit").strip() or "local"
+
+
+# --- component versions (metacubexd dashboard / mihomo engine) ----------------
+_latest_cache = {}   # repo -> (monotonic ts, version|None); 10-minute TTL
+_LATEST_TTL = 600
+
+
+def _read_version(path):
+    text = read_file(path).strip()
+    return text.splitlines()[0].strip() if text else None
+
+
+def github_latest(repo, timeout=8):
+    """Latest release tag (x.y.z, no leading v) for a GitHub repo, cached."""
+    now = time.monotonic()
+    hit = _latest_cache.get(repo)
+    if hit and now - hit[0] < _LATEST_TTL:
+        return hit[1]
+    ver = None
+    try:
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{repo}/releases/latest",
+            headers={"Accept": "application/vnd.github+json", "User-Agent": "5gpn-api"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            tag = str(json.load(resp).get("tag_name", ""))
+        m = re.search(r"\d+\.\d+\.\d+", tag)
+        ver = m.group(0) if m else None
+    except Exception:  # noqa: BLE001
+        ver = None
+    _latest_cache[repo] = (now, ver)
+    return ver
+
+
+def component_versions():
+    return {name: {"current": _read_version(spec["version_file"]),
+                   "pinned": _read_version(spec["pin_file"]),
+                   "latest": github_latest(spec["repo"])}
+            for name, spec in COMPONENTS.items()}
 
 
 def list_exits():
@@ -1619,6 +1674,8 @@ class Handler(BaseHTTPRequestHandler):
                                     "series": series, "points": pts})
         if path == "/api/exits/latency":
             return self._send(200, {"ok": True, "latency": all_latency()})
+        if path == "/api/component/versions":
+            return self._send(200, {"ok": True, "components": component_versions()})
         if path == "/api/ai/config":
             c = _ai_config()
             return self._send(200, {"ok": True, "configured": bool(c.get("base_url") and c.get("key")),
@@ -1865,6 +1922,20 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/update-rules":
             ok, out = ctl("--update-rules", timeout=400)
+            return self._send(200 if ok else 500, {"ok": ok, "output": out})
+
+        if path == "/api/component/update":
+            component = str(b.get("component", "")).strip()
+            spec = COMPONENTS.get(component)
+            if not spec:
+                return self._send(400, {"ok": False, "error": "unknown component"})
+            version = str(b.get("version", "")).strip().lstrip("v")
+            args = [spec["flag"]]
+            if version:
+                if not COMPONENT_VERSION_RE.match(version):
+                    return self._send(400, {"ok": False, "error": "invalid version"})
+                args.append(version)
+            ok, out = ctl(*args, timeout=300)
             return self._send(200 if ok else 500, {"ok": ok, "output": out})
 
         if path == "/api/ai/config":

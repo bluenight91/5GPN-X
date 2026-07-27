@@ -40,8 +40,9 @@ assert bot.ops_menu() == [
      {"text": "🧭 向导", "callback_data": "wiz:start"}],
     [{"text": "🧦 私网 SOCKS5", "callback_data": "menu:socks"},
      {"text": "📡 私网 MTProto", "callback_data": "menu:mtproto"}],
-    [{"text": "♻️ 重启服务", "callback_data": "act:restart"},
-     {"text": "📜 日志", "callback_data": "menu:logs"}],
+    [{"text": "🧩 组件版本", "callback_data": "menu:components"},
+     {"text": "♻️ 重启服务", "callback_data": "act:restart"}],
+    [{"text": "📜 日志", "callback_data": "menu:logs"}],
     [{"text": "« 返回", "callback_data": "menu:main"}],
 ]
 assert bot.services_menu("logs", "menu:ops")[-1][0]["callback_data"] == "menu:ops"

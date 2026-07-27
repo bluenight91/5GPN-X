@@ -5,6 +5,9 @@
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 install_body="$(cat "${root}/install.sh")"
+api_body="$(cat "${root}/lib/api-server.py")"
+bot_body="$(cat "${root}/lib/tgbot.py")"
+ui_body="$(cat "${root}/webui/index.html")"
 fail() { echo "$1" >&2; exit 1; }
 
 # --- subcommands are dispatched ----------------------------------------------
@@ -35,5 +38,28 @@ fail() { echo "$1" >&2; exit 1; }
 # --- usage() documents both commands ------------------------------------------
 [[ "${install_body}" == *'--update-webui [version]'* ]] || fail "usage() must document --update-webui"
 [[ "${install_body}" == *'--update-mihomo [version]'* ]] || fail "usage() must document --update-mihomo"
+
+# --- API exposes version query + update endpoints ------------------------------
+[[ "${api_body}" == *'/api/component/versions'* ]] || fail "api must expose GET /api/component/versions"
+[[ "${api_body}" == *'/api/component/update'* ]] || fail "api must expose POST /api/component/update"
+[[ "${api_body}" == *'COMPONENT_VERSION_RE'* ]] || fail "api must validate component versions"
+[[ "${api_body}" == *'def github_latest('* ]] || fail "api must fetch upstream latest releases"
+[[ "${api_body}" == *'def component_versions('* ]] || fail "api must aggregate component versions"
+
+# --- TG bot exposes the same flow under ops -> components ----------------------
+[[ "${bot_body}" == *'"🧩 组件版本", "callback_data": "menu:components"'* ]] || fail "ops menu must link the components submenu"
+[[ "${bot_body}" == *'def components_menu()'* ]] || fail "bot must define components_menu()"
+[[ "${bot_body}" == *'def op_update_component('* ]] || fail "bot must define op_update_component()"
+[[ "${bot_body}" == *'def components_view('* ]] || fail "bot must define components_view()"
+[[ "${bot_body}" == *'comp:up:mihomo'* ]] || fail "bot must confirm before a mihomo engine upgrade"
+[[ "${bot_body}" == *'COMP_VERSION_RE'* ]] || fail "bot must validate manual versions"
+
+# --- WebUI settings card wires both endpoints ----------------------------------
+[[ "${ui_body}" == *'id="comp_webui"'* && "${ui_body}" == *'id="comp_mihomo"'* ]] \
+    || fail "webui must show both component versions"
+[[ "${ui_body}" == *'/api/component/versions'* ]] || fail "webui must query component versions"
+[[ "${ui_body}" == *'/api/component/update'* ]] || fail "webui must call the component update endpoint"
+[[ "${ui_body}" == *'function updateComponent('* ]] || fail "webui must define updateComponent()"
+[[ "${ui_body}" == *'loadComponents()'* ]] || fail "webui must load component versions on settings entry"
 
 echo "version update commands policy OK"

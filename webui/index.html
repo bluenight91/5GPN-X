@@ -662,6 +662,20 @@ iframe.mihomo{
           <h2>规则集</h2>
           <div class="row"><button onclick="updateRules()">更新 GFWList/ChinaList</button></div>
         </div>
+        <div class="card">
+          <h2>组件版本</h2>
+          <div class="row small"><span class="muted grow">metacubexd 面板</span><span class="mono" id="comp_webui">-</span></div>
+          <div class="row small"><span class="muted grow">mihomo 引擎</span><span class="mono" id="comp_mihomo">-</span></div>
+          <div class="row">
+            <button onclick="loadComponents(true)">检查更新</button>
+            <button onclick="updateComponent('metacubexd')">升级面板</button>
+            <button onclick="updateComponent('mihomo')">升级引擎</button>
+          </div>
+          <div class="row">
+            <button onclick="updateComponent('metacubexd', true)">指定面板版本</button>
+            <button onclick="updateComponent('mihomo', true)">指定引擎版本</button>
+          </div>
+        </div>
       </div>
 
       <div data-settings-panel="backup" hidden>
@@ -786,7 +800,7 @@ function onEnter(sec){
   else if(sec==="rules"){ loadStatus(); loadRules(); }
   else if(sec==="monitor"){ loadMihomoOverview(); loadXdFrame(); }
   else if(sec==="ai"){ aiLoadConfig(); }
-  else if(sec==="settings"){ fillSettings(); showSettingsPanel(localStorage.getItem("pgw_set_panel")||"network"); loadClientCidr(); loadClientSocks(); loadClientMtproto(); loadDirectDomains(); }
+  else if(sec==="settings"){ fillSettings(); showSettingsPanel(localStorage.getItem("pgw_set_panel")||"network"); loadClientCidr(); loadClientSocks(); loadClientMtproto(); loadDirectDomains(); loadComponents(); }
 }
 document.querySelectorAll('[data-section]').forEach(el=>el.addEventListener('click',()=>{
   showSection(el.dataset.section);
@@ -1311,6 +1325,34 @@ function delRule(i){ if(confirm("删除规则 #"+i+" ?")) mutate("/api/rules/del
 function saveRules(){ const rules=$("rules").value; if(!rules.trim()){log("规则为空");return;}
   if(confirm("保存并应用整份分流规则？")) mutate("/api/rules",{rules},"保存整份规则", refreshState); }
 function updateRules(){ mutate("/api/update-rules",{},"更新 GFWList/ChinaList", loadStatus); }
+function compText(x){
+  if(!x) return "-";
+  let s = "当前 "+(x.current||"未知")+(x.pinned?`（pin ${x.pinned}）`:"")+" → 最新 "+(x.latest||"检查失败");
+  if(x.latest && x.current && x.latest!==x.current) s += " ⬆️可升级";
+  return s;
+}
+async function loadComponents(manual){
+  try{
+    const j = await api("/api/component/versions");
+    const c = j.components||{};
+    $("comp_webui").textContent = compText(c.metacubexd);
+    $("comp_mihomo").textContent = compText(c.mihomo);
+    if(manual) log("✅ 组件版本检查完成");
+  }catch(e){ if(manual) log("❌ 组件版本检查失败："+e.message); }
+}
+function updateComponent(component, manual){
+  const label = component==="mihomo" ? "mihomo 引擎" : "metacubexd 面板";
+  const body = {component};
+  if(manual){
+    const v = prompt(`输入 ${label} 目标版本（如 1.270.5）：`);
+    if(!v) return;
+    const ver = v.trim().replace(/^v/,"");
+    if(!/^\d+\.\d+\.\d+$/.test(ver)){ log("❌ 版本号格式无效（应为 x.y.z）"); return; }
+    body.version = ver;
+  }
+  if(component==="mihomo" && !confirm("升级 mihomo 引擎会重启运行中的出口实例，代理流量短暂中断。继续？")) return;
+  mutate("/api/component/update", body, "升级 "+label, ()=>loadComponents());
+}
 
 /* ---- live dashboard (auto-refresh) ---- */
 let autoTimer=null, liveTimer=null;

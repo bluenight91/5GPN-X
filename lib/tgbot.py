@@ -44,6 +44,20 @@ ADMIN_IDS = {
     int(x) for x in re.split(r"[,\s]+", os.environ.get("TG_ADMIN_IDS", "").strip()) if x
 }
 MGMT = os.environ.get("MGMT", "/opt/5gpn/bin/5gpn-ctl")
+# Self-service component version bumps (mirrors install.sh pins; same files
+# the API reads). The bot talks to MGMT directly so it keeps working even
+# when the HTTP API is down.
+COMPONENTS = {
+    "metacubexd": {"label": "metacubexd 面板",
+                   "version_file": "/opt/5gpn/webui/mihomo/.metacubexd-version",
+                   "pin_file": "/opt/5gpn/etc/metacubexd.pin",
+                   "repo": "MetaCubeX/metacubexd", "flag": "--update-webui"},
+    "mihomo": {"label": "mihomo 引擎",
+               "version_file": "/opt/5gpn/bin/.mihomo-version",
+               "pin_file": "/opt/5gpn/etc/mihomo.pin",
+               "repo": "MetaCubeX/mihomo", "flag": "--update-mihomo"},
+}
+COMP_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
 DOCTOR = os.environ.get("DOCTOR", "/opt/5gpn/scripts/doctor.sh")
 SNAPSHOT = os.environ.get("SNAPSHOT", "/opt/5gpn/scripts/snapshot.sh")
 INSTALL_SH = "/opt/5gpn/install.sh"
@@ -1418,6 +1432,95 @@ def op_update_rules():
     return "\n".join(parts)
 
 
+# --- component versions (metacubexd dashboard / mihomo engine) ---------------
+_COMP_LATEST = {}    # repo -> (monotonic ts, version|None); 10-minute TTL
+_COMP_LATEST_TTL = 600
+
+
+def _comp_read_version(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read().strip()
+    except OSError:
+        return None
+    return text.splitlines()[0].strip() if text else None
+
+
+def _comp_github_latest(repo, refresh=False, timeout=8):
+    now = time.monotonic()
+    hit = _COMP_LATEST.get(repo)
+    if not refresh and hit and now - hit[0] < _COMP_LATEST_TTL:
+        return hit[1]
+    ver = None
+    try:
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{repo}/releases/latest",
+            headers={"Accept": "application/vnd.github+json", "User-Agent": "5gpn-tgbot"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            tag = str(json.load(resp).get("tag_name", ""))
+        m = re.search(r"\d+\.\d+\.\d+", tag)
+        ver = m.group(0) if m else None
+    except Exception:  # noqa: BLE001
+        ver = None
+    _COMP_LATEST[repo] = (now, ver)
+    return ver
+
+
+def components_view(refresh=False):
+    lines = ["🧩 <b>组件版本</b>"]
+    for spec in COMPONENTS.values():
+        cur = _comp_read_version(spec["version_file"]) or "未知"
+        pin = _comp_read_version(spec["pin_file"])
+        latest = _comp_github_latest(spec["repo"], refresh=refresh)
+        latest_txt = latest or "检查失败"
+        mark = " ⬆️可升级" if latest and cur != "未知" and latest != cur else ""
+        pin_txt = f"（pin <code>{html.escape(pin)}</code>）" if pin else ""
+        lines.append(f"• {spec['label']}：当前 <code>{html.escape(cur)}</code>{pin_txt}"
+                     f" → 最新 <code>{html.escape(latest_txt)}</code>{mark}")
+    lines.append("「升级」装上游最新版；「指定」装你填的版本（都会写入 pin，update 不降级）。")
+    return "\n".join(lines)
+
+
+def components_menu():
+    return [
+        [{"text": "🔄 检查更新", "callback_data": "comp:check"}],
+        [{"text": "⬆️ 升级面板", "callback_data": "comp:up:metacubexd"},
+         {"text": "⬆️ 升级引擎", "callback_data": "comp:up:mihomo"}],
+        [{"text": "✏️ 指定面板版本", "callback_data": "comp:manual:metacubexd"},
+         {"text": "✏️ 指定引擎版本", "callback_data": "comp:manual:mihomo"}],
+        [{"text": "« 返回", "callback_data": "menu:ops"}],
+    ]
+
+
+def op_update_component(component, version=""):
+    spec = COMPONENTS.get(component)
+    if not spec:
+        return "未知组件。"
+    args = ["bash", MGMT, spec["flag"]]
+    if version:
+        if not COMP_VERSION_RE.match(version):
+            return "版本号格式无效（应为 x.y.z）。"
+        args.append(version)
+    ok, out = run2(args, timeout=600)
+    body = html.escape(_strip_ansi(out)[-2000:])
+    if ok:
+        return f"✅ <b>{spec['label']}升级完成</b>\n<pre>{body}</pre>"
+    return f"❌ <b>{spec['label']}升级失败</b>\n<pre>{body}</pre>"
+
+
+def edit_components_async(cb, refresh=False):
+    key = _busy_key_from_cb(cb)
+
+    def go():
+        try:
+            edit(cb, components_view(refresh=refresh), components_menu())
+        finally:
+            BUSY.discard(key)
+
+    BUSY.add(key)
+    background(go)
+
+
 def op_renew_cert():
     ok, out = run2(["bash", MGMT, "--renew-cert"], timeout=600)
     if ok:
@@ -2445,8 +2548,9 @@ def ops_menu():
          {"text": "🧭 向导", "callback_data": "wiz:start"}],
         [{"text": "🧦 私网 SOCKS5", "callback_data": "menu:socks"},
          {"text": "📡 私网 MTProto", "callback_data": "menu:mtproto"}],
-        [{"text": "♻️ 重启服务", "callback_data": "act:restart"},
-         {"text": "📜 日志", "callback_data": "menu:logs"}],
+        [{"text": "🧩 组件版本", "callback_data": "menu:components"},
+         {"text": "♻️ 重启服务", "callback_data": "act:restart"}],
+        [{"text": "📜 日志", "callback_data": "menu:logs"}],
         [{"text": "« 返回", "callback_data": "menu:main"}],
     ]
 
@@ -2794,6 +2898,23 @@ def handle_message(msg):
         console_async(chat_id, lambda: op_rename_exit(old_name, new_name),
                       keyboard_fn=exits_menu, message_id=mid)
         return
+    if state and state.get("action") == "comp_manual":
+        comp = state.get("component") or ""
+        prompt_mid = state.get("prompt_mid")
+        version = text.strip().lstrip("v")
+        if comp not in COMPONENTS or not COMP_VERSION_RE.match(version):
+            state["prompt_mid"] = upsert_console(
+                chat_id, "版本号格式无效（应为 x.y.z），请重发；或点返回取消。",
+                back_kb("menu:components"), message_id=prompt_mid)
+            return
+        PENDING.pop(chat_id, None)
+        background(delete_message, chat_id, msg.get("message_id"))
+        mid = upsert_console(chat_id,
+                             f"⏳ 正在升级{COMPONENTS[comp]['label']}到 <code>{html.escape(version)}</code>…",
+                             message_id=prompt_mid)
+        console_async(chat_id, lambda: op_update_component(comp, version),
+                      components_menu(), message_id=mid)
+        return
     if state and state.get("action") == "rules_set":
         prompt_mid = state.get("prompt_mid")
         PENDING.pop(chat_id, None)
@@ -3029,6 +3150,33 @@ def handle_callback(cb):
         edit(cb, page, keyboard)
     elif data == "menu:ops":
         edit(cb, "🛠 <b>运维</b>\n选择一个操作：", ops_menu())
+    elif data == "menu:components":
+        PENDING.pop(chat_id, None)
+        edit(cb, "⏳ 正在读取组件版本…")
+        edit_components_async(cb)
+    elif data == "comp:check":
+        edit(cb, "⏳ 正在检查上游最新版本…")
+        edit_components_async(cb, refresh=True)
+    elif data == "comp:up:metacubexd":
+        edit(cb, "⏳ 正在升级 metacubexd 面板…")
+        edit_async(cb, lambda: op_update_component("metacubexd"), components_menu())
+    elif data == "comp:up:mihomo":
+        edit(cb, "⚠️ <b>升级 mihomo 引擎</b>\n将重启运行中的出口实例，代理流量会短暂中断。",
+             [[{"text": "✅ 确认升级", "callback_data": "comp:up!:mihomo"},
+               {"text": "« 取消", "callback_data": "menu:components"}]])
+    elif data == "comp:up!:mihomo":
+        edit(cb, "⏳ 正在升级 mihomo 引擎并重启出口实例…")
+        edit_async(cb, lambda: op_update_component("mihomo"), components_menu())
+    elif data.startswith("comp:manual:"):
+        comp = data[len("comp:manual:"):]
+        spec = COMPONENTS.get(comp)
+        if not spec:
+            edit(cb, "未知组件。", back_kb("menu:ops"))
+        else:
+            PENDING[chat_id] = {"action": "comp_manual", "component": comp, "prompt_mid": cb_mid}
+            edit(cb, f"✏️ <b>指定{spec['label']}版本</b>\n"
+                     "发送版本号（如 <code>1.270.5</code>），将写入 pin 并安装。",
+                 back_kb("menu:components"))
     elif data == "menu:socks":
         edit(cb, "⏳ 正在读取 SOCKS5 状态…")
         edit_async(cb, op_client_socks_status, client_socks_menu())

@@ -133,6 +133,8 @@ sudo 5gpn setup-tgbot        # 配置 Telegram Bot
 sudo 5gpn setup-api          # 启用 HTTP 控制 API + 网页控制台（可选）
 sudo 5gpn update-webui 1.270.5    # 升级 metacubexd 面板（写入 pin，后续 update 不降级）
 sudo 5gpn update-mihomo 1.19.29   # 升级 mihomo TUN 引擎并重启运行中的出口实例
+# 以上也可在网页控制台「设置 → 运维 → 组件版本」或 Bot「运维 → 组件版本」中完成，
+# 界面会显示当前版本、可一键检查上游最新版并升级（mihomo 升级前有断流确认）。
 sudo 5gpn uninstall          # 卸载
 ```
 
