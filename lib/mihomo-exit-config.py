@@ -55,7 +55,7 @@ def b64decode_any(value):
     for decoder in (base64.urlsafe_b64decode, base64.b64decode):
         try:
             return decoder(value + pad).decode("utf-8")
-        except Exception:
+        except Exception:  # noqa: BLE001, S110
             pass
     raise ValueError("not base64")
 
@@ -64,7 +64,7 @@ def parse_hostport(value):
     value = re.split(r"[/?#]", value.strip(), 1)[0].strip()
     match = re.match(r"^\[(.+)\]:(\d+)$", value) or re.match(r"^(.+):(\d+)$", value)
     if not match:
-        die("cannot parse host:port from %r" % value)
+        die(f"cannot parse host:port from {value!r}")
     return require_host(match.group(1)), valid_port(match.group(2))
 
 
@@ -80,7 +80,7 @@ def valid_port(value):
     except (TypeError, ValueError):
         die("proxy URI port must be an integer")
     if not 1 <= port <= 65535:
-        die("proxy URI port out of range: %s" % value)
+        die(f"proxy URI port out of range: {value}")
     return port
 
 
@@ -88,7 +88,7 @@ def parsed_port(parsed, default):
     try:
         return valid_port(parsed.port or default)
     except ValueError as exc:
-        die("invalid proxy URI port: %s" % exc)
+        die(f"invalid proxy URI port: {exc}")
 
 
 def query_map(parsed):
@@ -159,7 +159,7 @@ def parse_ss(uri):
 
 
 def parse_socks(uri):
-    rest = re.sub(r"^socks(?:5h|5)?://", "", uri, flags=re.I)
+    rest = re.sub(r"^socks(?:5h|5)?://", "", uri, flags=re.IGNORECASE)
     userinfo, hostport = rest.rsplit("@", 1) if "@" in rest else ("", rest)
     host, port = parse_hostport(hostport)
     proxy = {"name": "out", "type": "socks5", "server": host, "port": port, "udp": True}
@@ -174,8 +174,8 @@ def parse_socks(uri):
 def parse_vmess(uri):
     try:
         data = json.loads(b64decode_any(uri[8:]))
-    except Exception as exc:
-        die("invalid vmess:// payload: %s" % exc)
+    except Exception as exc:  # noqa: BLE001
+        die(f"invalid vmess:// payload: {exc}")
     host, port = require_host(data.get("add")), valid_port(data.get("port") or 443)
     proxy = {"name": "out", "type": "vmess", "server": host, "port": port,
              "uuid": data.get("id", ""), "alterId": int(data.get("aid", 0) or 0),

@@ -17,7 +17,7 @@ for invalid in ("91,0", "1,181", "not coordinates"):
     except ValueError:
         pass
     else:
-        raise AssertionError("invalid WLOC coordinates accepted: %s" % invalid)
+        raise AssertionError(f"invalid WLOC coordinates accepted: {invalid}")
 
 with tempfile.TemporaryDirectory() as root:
     wloc = Path(root) / "wloc"

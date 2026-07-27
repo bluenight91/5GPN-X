@@ -5,10 +5,9 @@ Telegram API and a fake MGMT backend, asserting every button and input flow
 responds in the console message without raising.
 """
 import importlib.util
-from pathlib import Path
 import tempfile
 import unittest
-
+from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("tgbot_rules_flows", root / "lib" / "tgbot.py")

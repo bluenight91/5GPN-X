@@ -74,12 +74,11 @@ class MihomoApiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.api = load_api()
-        cls.secret = tempfile.NamedTemporaryFile(delete=False)
-        cls.secret.write(b"s3cr3t-test-token")
-        cls.secret.close()
+        with tempfile.NamedTemporaryFile(delete=False) as cls.secret:
+            cls.secret.write(b"s3cr3t-test-token")
         cls.api.CLASH_SECRET_FILE = cls.secret.name
         cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), FakeClash)
-        cls.api.CLASH_ADDR = "127.0.0.1:%d" % cls.srv.server_address[1]
+        cls.api.CLASH_ADDR = f"127.0.0.1:{cls.srv.server_address[1]}"
         threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
 
     @classmethod
@@ -124,7 +123,7 @@ class MihomoApiTests(unittest.TestCase):
 
     def test_proxy_forwards_query_with_allowlist(self):
         # timeout 超界被夹紧、url 非 http(s) 被丢弃、level 合法值保留
-        status, _, data = self.api.clash_request("GET", "configs?timeout=99999&url=file:///etc/passwd&level=debug&bogus=1")
+        status, _, _ = self.api.clash_request("GET", "configs?timeout=99999&url=file:///etc/passwd&level=debug&bogus=1")
         self.assertEqual(status, 200)
 
     def test_normalize_sub(self):
@@ -229,7 +228,7 @@ class MihomoApiTests(unittest.TestCase):
 
         threading.Thread(target=serve, daemon=True).start()
         old_addr = self.api.CLASH_ADDR
-        self.api.CLASH_ADDR = "127.0.0.1:%d" % listener.getsockname()[1]
+        self.api.CLASH_ADDR = f"127.0.0.1:{listener.getsockname()[1]}"
         try:
             a, b = socket.socketpair()
             a.settimeout(10)
@@ -278,7 +277,7 @@ class MihomoApiTests(unittest.TestCase):
 
         threading.Thread(target=serve, daemon=True).start()
         old_addr = self.api.CLASH_ADDR
-        self.api.CLASH_ADDR = "127.0.0.1:%d" % listener.getsockname()[1]
+        self.api.CLASH_ADDR = f"127.0.0.1:{listener.getsockname()[1]}"
         try:
             a, b = socket.socketpair()
             a.settimeout(10)
@@ -349,15 +348,14 @@ class ProxyHandlerTests(unittest.TestCase):
         cls.old_static = cls.api.MIHOMO_STATIC_DIR
         cls.api.MIHOMO_STATIC_DIR = cls.static
         # Known Clash secret for the WS relay tests; dead port for HTTP proxy tests.
-        cls.secret = tempfile.NamedTemporaryFile(delete=False)
-        cls.secret.write(b"s3cr3t-test-token")
-        cls.secret.close()
+        with tempfile.NamedTemporaryFile(delete=False) as cls.secret:
+            cls.secret.write(b"s3cr3t-test-token")
         cls.old_secret_file = cls.api.CLASH_SECRET_FILE
         cls.api.CLASH_SECRET_FILE = cls.secret.name
         s = socket.socket()
         s.bind(("127.0.0.1", 0))
         cls.old_addr = cls.api.CLASH_ADDR
-        cls.api.CLASH_ADDR = "127.0.0.1:%d" % s.getsockname()[1]
+        cls.api.CLASH_ADDR = f"127.0.0.1:{s.getsockname()[1]}"
         s.close()
         cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), cls.api.Handler)
         threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
@@ -511,7 +509,7 @@ class ProxyHandlerTests(unittest.TestCase):
 
         threading.Thread(target=serve, daemon=True).start()
         old_addr = self.api.CLASH_ADDR
-        self.api.CLASH_ADDR = "127.0.0.1:%d" % listener.getsockname()[1]
+        self.api.CLASH_ADDR = f"127.0.0.1:{listener.getsockname()[1]}"
         try:
             conn = self._conn()
             conn.putrequest("GET", "/api/mihomo/proxy/traffic")
@@ -578,7 +576,7 @@ class ProxyHandlerTests(unittest.TestCase):
 
         threading.Thread(target=serve, daemon=True).start()
         old_addr = self.api.CLASH_ADDR
-        self.api.CLASH_ADDR = "127.0.0.1:%d" % listener.getsockname()[1]
+        self.api.CLASH_ADDR = f"127.0.0.1:{listener.getsockname()[1]}"
         try:
             conn = self._conn()
             conn.putrequest("GET", "/api/mihomo/proxy/traffic?token=" + self.api.TOKEN)
@@ -628,8 +626,8 @@ class ProxyHandlerTests(unittest.TestCase):
 
     def test_log_message_silent(self):
         # PII: the request log must never print anything (token, query, client addr).
-        import io
         import contextlib
+        import io
         buf = io.StringIO()
         with contextlib.redirect_stderr(buf):
             self.api.Handler.log_message(object(), "%s %s", "GET /api/x?token=abc", "200")

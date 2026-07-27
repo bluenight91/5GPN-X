@@ -12,11 +12,10 @@ and container structure are preserved.
 """
 from __future__ import annotations
 
-import struct
 import statistics
+import struct
 
 import gsloc_rewrite as gx
-
 
 REGION_FIELD = 3
 REGION_DEVICE_FIELD = 2
@@ -30,7 +29,7 @@ COORDINATE_SCALE = 10_000_000
 def _coordinate_bytes(degrees):
     scaled = gx.js_round(float(degrees) * COORDINATE_SCALE)
     if not -(1 << 31) <= scaled < (1 << 31):
-        raise ValueError("WifiTile coordinate outside sfixed32 range: %r" % degrees)
+        raise ValueError(f"WifiTile coordinate outside sfixed32 range: {degrees!r}")
     return struct.pack("<i", scaled)
 
 

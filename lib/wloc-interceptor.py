@@ -32,21 +32,21 @@ import time
 _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
-import wloc_rewrite as gx  # noqa: E402
-import wloc_wifitile as wx  # noqa: E402
+import wloc_rewrite as gx
+import wloc_wifitile as wx
 
 
 def _bounded_env_int(name, default, minimum, maximum):
     value = int(os.environ.get(name, str(default)))
     if not minimum <= value <= maximum:
-        raise ValueError("%s must be between %d and %d" % (name, minimum, maximum))
+        raise ValueError(f"{name} must be between {minimum} and {maximum}")
     return value
 
 
 def _bounded_env_float(name, default, minimum, maximum):
     value = float(os.environ.get(name, str(default)))
     if not minimum <= value <= maximum:
-        raise ValueError("%s must be between %s and %s" % (name, minimum, maximum))
+        raise ValueError(f"{name} must be between {minimum} and {maximum}")
     return value
 
 
@@ -138,7 +138,9 @@ _worker_slots = threading.BoundedSemaphore(MAX_WORKERS)
 
 
 def log(msg):
-    line = "%s %s" % (datetime.datetime.now().isoformat(timespec="seconds"), msg)
+    # Naive local time is deliberate: existing log consumers expect no offset.
+    stamp = datetime.datetime.now().isoformat(timespec="seconds")  # noqa: DTZ005
+    line = f"{stamp} {msg}"
     with _log_lock:
         sys.stdout.write(line + "\n")
         sys.stdout.flush()
@@ -308,7 +310,7 @@ def load_jitter_seed():
     try:
         stat_result = os.stat(JITTER_SEED)
     except OSError as exc:
-        raise RuntimeError("jitter seed unreadable: %r" % (exc,))
+        raise RuntimeError(f"jitter seed unreadable: {exc!r}")
     fingerprint = (stat_result.st_ino, stat_result.st_mtime_ns, stat_result.st_size)
     with _jitter_seed_lock:
         if _jitter_seed_cache["fingerprint"] != fingerprint:
@@ -316,7 +318,7 @@ def load_jitter_seed():
                 with open(JITTER_SEED, "rb") as handle:
                     seed = handle.read(65)
             except OSError as exc:
-                raise RuntimeError("jitter seed unreadable: %r" % (exc,))
+                raise RuntimeError(f"jitter seed unreadable: {exc!r}")
             if not 16 <= len(seed) <= 64:
                 raise RuntimeError("jitter seed must contain 16-64 bytes")
             _jitter_seed_cache["value"] = seed
@@ -330,7 +332,7 @@ def active_target(now=None):
         try:
             stat_result = os.stat(PRESETS)
         except OSError as exc:
-            raise RuntimeError("presets unreadable: %r" % (exc,))
+            raise RuntimeError(f"presets unreadable: {exc!r}")
         fingerprint = (stat_result.st_ino, stat_result.st_mtime_ns, stat_result.st_size)
         if _presets_cache["mtime"] != fingerprint:
             _presets_cache["value"] = gx.load_presets(PRESETS)
@@ -357,9 +359,9 @@ def modification_is_active():
     except FileNotFoundError:
         return True
     except OSError as exc:
-        raise RuntimeError("modifier state unreadable: %r" % (exc,)) from exc
+        raise RuntimeError(f"modifier state unreadable: {exc!r}") from exc
     if value not in {"active", "paused"}:
-        raise RuntimeError("invalid modifier state: %r" % value)
+        raise RuntimeError(f"invalid modifier state: {value!r}")
     return value == "active"
 
 
@@ -390,7 +392,7 @@ def normalize_location_host(value):
         host = value
     host = host.rstrip(".").lower()
     if not is_allowed_host(host):
-        raise ValueError("unexpected upstream host: %s" % host)
+        raise ValueError(f"unexpected upstream host: {host}")
     return host
 
 
@@ -406,9 +408,11 @@ def select_origin_host(requested_host, method, path):
     tile keys return 404 there while the identical key exists on ``gspe85``.
     This substitution is deliberately limited to the one location-assist path.
     """
-    if is_wifi_tile_request(requested_host, method, path):
-        if requested_host.lower() == "gspe85-cn-ssl.ls.apple.com":
-            return WIFI_TILE_GLOBAL_HOST
+    if (
+        is_wifi_tile_request(requested_host, method, path)
+        and requested_host.lower() == "gspe85-cn-ssl.ls.apple.com"
+    ):
+        return WIFI_TILE_GLOBAL_HOST
     return requested_host
 
 
@@ -436,7 +440,7 @@ def decode_wifi_tile_payload(body, content_encoding):
         if len(plain) > MAX_DECOMPRESSED_BODY:
             raise ValueError("WifiTile decompressed body too large")
     else:
-        raise ValueError("unsupported WifiTile content encoding: %s" % encoding)
+        raise ValueError(f"unsupported WifiTile content encoding: {encoding}")
     if len(plain) > MAX_DECOMPRESSED_BODY:
         raise ValueError("WifiTile decompressed body too large")
     return plain, encoding
@@ -513,7 +517,7 @@ def header_map(lines):
         ):
             raise ValueError("control character in HTTP header value")
         if key in SINGLETON_HEADERS and key in out:
-            raise ValueError("duplicate singleton HTTP header: %s" % key)
+            raise ValueError(f"duplicate singleton HTTP header: {key}")
         out[key] = value if key not in out else out[key] + ", " + value
     if "content-length" in out and "transfer-encoding" in out:
         raise ValueError("both Content-Length and Transfer-Encoding are present")
@@ -566,7 +570,7 @@ def _read_exact(reader, n):
     while len(buf) < n:
         chunk = reader.read(n - len(buf))
         if not chunk:
-            raise ConnectionError("EOF: wanted %d, got %d" % (n, len(buf)))
+            raise ConnectionError(f"EOF: wanted {n}, got {len(buf)}")
         buf += chunk
     return bytes(buf)
 
@@ -607,7 +611,7 @@ def build_upstream_request(host, request_line, header_lines, body):
     forwarded.append(("Accept-Encoding", "identity"))
     forwarded.append(("Content-Length", str(len(body))))
     forwarded.append(("Connection", "close"))
-    head = request_line + "\r\n" + "".join("%s: %s\r\n" % kv for kv in forwarded) + "\r\n"
+    head = request_line + "\r\n" + "".join(f"{k}: {v}\r\n" for k, v in forwarded) + "\r\n"
     return head.encode("latin1") + body
 
 
@@ -619,12 +623,12 @@ def replace_request_header(header_lines, name, value):
     for line in header_lines:
         if ":" in line and line.split(":", 1)[0].strip().lower() == wanted:
             if not replaced:
-                result.append("%s: %s" % (name, value))
+                result.append(f"{name}: {value}")
                 replaced = True
             continue
         result.append(line)
     if not replaced:
-        result.append("%s: %s" % (name, value))
+        result.append(f"{name}: {value}")
     return result
 
 
@@ -650,8 +654,8 @@ def fetch_upstream(host, request_line, header_lines, body):
         except (ConnectionError, OSError, ssl.SSLError) as exc:
             last_error = exc
             if attempt < UPSTREAM_ATTEMPTS:
-                log("UPSTREAM_RETRY host=%s attempt=%d/%d err=%r"
-                    % (host, attempt, UPSTREAM_ATTEMPTS, exc))
+                log(f"UPSTREAM_RETRY host={host} attempt={attempt}/{UPSTREAM_ATTEMPTS}"
+                    f" err={exc!r}")
                 if UPSTREAM_RETRY_DELAY:
                     time.sleep(UPSTREAM_RETRY_DELAY)
         finally:
@@ -737,7 +741,7 @@ def build_response(status_line, header_lines, headers, body, strip_content_encod
         if strip_content_encoding and name == "content-encoding":
             continue
         keep.append(line)
-    keep.append("Content-Length: %d" % len(body))
+    keep.append(f"Content-Length: {len(body)}")
     keep.append("Connection: close")
     head = status_line + "\r\n" + "\r\n".join(keep) + "\r\n\r\n"
     return head.encode("latin1") + body
@@ -760,7 +764,7 @@ def handle(conn, addr, ctx):
     except (ssl.SSLError, OSError) as exc:
         # A single leaf whose SAN covers both gs-loc hosts is presented, so a
         # TLS_FAIL here (with the CA trusted on the phone) means pinning, not SNI.
-        log("TLS_FAIL peer=%s:%d err=%r" % (addr[0], addr[1], exc))
+        log(f"TLS_FAIL peer={addr[0]}:{addr[1]} err={exc!r}")
         _safe_close(conn)
         return
 
@@ -779,8 +783,8 @@ def handle(conn, addr, ctx):
         modifier_active = modification_is_active()
         origin = effective_origin_host(upstream, method, path, modifier_active)
         if origin != upstream:
-            log("ORIGIN_SUBSTITUTE requested=%s origin=%s path=%s"
-                % (upstream, origin, operational_path(path)))
+            log(f"ORIGIN_SUBSTITUTE requested={upstream} origin={origin}"
+                f" path={operational_path(path)}")
         status_line, up_header_lines, up_headers, resp_body = fetch_upstream(
             origin, request_line, header_lines, body
         )
@@ -789,19 +793,19 @@ def handle(conn, addr, ctx):
             tls.sendall(build_response(
                 status_line, up_header_lines, up_headers, resp_body
             ))
-            log("MODIFIER_PAUSED_PASSTHRU host=%s path=%s code=%s bytes=%d"
-                % (upstream, operational_path(path),
-                   status_line.split(" ")[1:2], len(resp_body)))
+            log(f"MODIFIER_PAUSED_PASSTHRU host={upstream}"
+                f" path={operational_path(path)}"
+                f" code={status_line.split(' ')[1:2]} bytes={len(resp_body)}")
             return
         assist = is_assist_host(upstream)
         if assist:
             tile_state = "present" if req_headers.get("x-tilekey") else "none"
-            log("ASSIST host=%s method=%s path=%s code=%s tile=%s type=%s encoding=%s req=%d resp=%d"
-                % (upstream, method, operational_path(path), status_line.split(" ")[1:2],
-                   tile_state,
-                   up_headers.get("content-type", "-"),
-                   up_headers.get("content-encoding", "identity"),
-                   len(body), len(resp_body)))
+            log(f"ASSIST host={upstream} method={method}"
+                f" path={operational_path(path)}"
+                f" code={status_line.split(' ')[1:2]} tile={tile_state}"
+                f" type={up_headers.get('content-type', '-')}"
+                f" encoding={up_headers.get('content-encoding', 'identity')}"
+                f" req={len(body)} resp={len(resp_body)}")
         if is_wloc_request(upstream, method, path):
             remember_wloc_wifi(
                 request_body=body,
@@ -837,38 +841,41 @@ def handle(conn, addr, ctx):
                     anchor_state = "present" if anchor is not None else "none"
                     if anchor_source == gx.NO_FIX_SOURCE:
                         if nofix_prepared > nofix_original:
-                            log("TRANSLATE_NOFIX_STABILIZED host=%s path=%s original=%d locations=%d bytes=%d"
-                                % (upstream, operational_path(path), nofix_original,
-                                   count, len(new_body)))
+                            log(f"TRANSLATE_NOFIX_STABILIZED host={upstream}"
+                                f" path={operational_path(path)}"
+                                f" original={nofix_original} locations={count}"
+                                f" bytes={len(new_body)}")
                         else:
-                            log("TRANSLATE_NOFIX_CLUSTER host=%s path=%s locations=%d bytes=%d"
-                                % (upstream, operational_path(path), count,
-                                   len(new_body)))
+                            log(f"TRANSLATE_NOFIX_CLUSTER host={upstream}"
+                                f" path={operational_path(path)}"
+                                f" locations={count} bytes={len(new_body)}")
                     else:
-                        log("TRANSLATE host=%s path=%s locations=%d anchor=%s source=%s bytes=%d"
-                            % (upstream, operational_path(path), count, anchor_state,
-                               anchor_source, len(new_body)))
+                        log(f"TRANSLATE host={upstream} path={operational_path(path)}"
+                            f" locations={count} anchor={anchor_state}"
+                            f" source={anchor_source} bytes={len(new_body)}")
                 elif anchor_source == gx.NO_FIX_SOURCE:
                     # Non-empty sentinel batches are synthesized above and have
                     # count > 0. This branch is the proven empty no-fix response;
                     # unknown or malformed unanchored responses never reach it.
                     resp_body = new_body
-                    log("TRANSLATE_NOFIX_EMPTY host=%s path=%s bytes=%d"
-                        % (upstream, operational_path(path), len(new_body)))
+                    log(f"TRANSLATE_NOFIX_EMPTY host={upstream}"
+                        f" path={operational_path(path)} bytes={len(new_body)}")
                 else:
                     if FAIL_CLOSED and len(resp_body) > 10:
-                        log("TRANSLATE_EMPTY_FAIL_CLOSED host=%s bytes=%d"
-                            % (upstream, len(resp_body)))
+                        log(f"TRANSLATE_EMPTY_FAIL_CLOSED host={upstream}"
+                            f" bytes={len(resp_body)}")
                         tls.sendall(build_error_response())
                         return
-                    log("TRANSLATE_EMPTY host=%s path=%s bytes=%d (unchanged)"
-                        % (upstream, operational_path(path), len(resp_body)))
-            except Exception as exc:
+                    log(f"TRANSLATE_EMPTY host={upstream}"
+                        f" path={operational_path(path)}"
+                        f" bytes={len(resp_body)} (unchanged)")
+            except Exception as exc:  # noqa: BLE001
                 if FAIL_CLOSED:
-                    log("TRANSLATE_FAIL_CLOSED host=%s err=%r" % (upstream, exc))
+                    log(f"TRANSLATE_FAIL_CLOSED host={upstream} err={exc!r}")
                     tls.sendall(build_error_response())
                     return
-                log("TRANSLATE_SKIP host=%s err=%r (returned real response)" % (upstream, exc))
+                log(f"TRANSLATE_SKIP host={upstream} err={exc!r}"
+                    " (returned real response)")
 
         tile_request = is_wifi_tile_request(upstream, method, path)
         if tile_request and status_code == 404:
@@ -877,9 +884,9 @@ def handle(conn, addr, ctx):
             try:
                 lat, lon, _acc = active_target()
                 target = (lat, lon)
-            except Exception as exc:
-                log("WIFITILE_TARGET_SKIP host=%s err=%r (returned upstream 404)"
-                    % (upstream, exc))
+            except Exception as exc:  # noqa: BLE001
+                log(f"WIFITILE_TARGET_SKIP host={upstream} err={exc!r}"
+                    " (returned upstream 404)")
             try:
                 if target is None:
                     raise ValueError("active target unavailable")
@@ -895,11 +902,10 @@ def handle(conn, addr, ctx):
                     rewritten = True
                     strip_content_encoding = True
                     count += tile_count
-                    log("WIFITILE_TEMPLATE_404 host=%s source=cache devices=%d bytes=%d"
-                        % (upstream, tile_count, len(new_body)))
-            except Exception as exc:
-                log("WIFITILE_TEMPLATE_CACHE_SKIP host=%s err=%r"
-                    % (upstream, exc))
+                    log(f"WIFITILE_TEMPLATE_404 host={upstream} source=cache"
+                        f" devices={tile_count} bytes={len(new_body)}")
+            except Exception as exc:  # noqa: BLE001
+                log(f"WIFITILE_TEMPLATE_CACHE_SKIP host={upstream} err={exc!r}")
 
             if tile_count == 0 and target is not None:
                 try:
@@ -927,11 +933,10 @@ def handle(conn, addr, ctx):
                         rewritten = True
                         strip_content_encoding = False
                         count += tile_count
-                        log("WIFITILE_TEMPLATE_404 host=%s source=seed devices=%d bytes=%d"
-                            % (upstream, tile_count, len(new_body)))
-                except Exception as exc:
-                    log("WIFITILE_TEMPLATE_SEED_SKIP host=%s err=%r"
-                        % (upstream, exc))
+                        log(f"WIFITILE_TEMPLATE_404 host={upstream} source=seed"
+                            f" devices={tile_count} bytes={len(new_body)}")
+                except Exception as exc:  # noqa: BLE001
+                    log(f"WIFITILE_TEMPLATE_SEED_SKIP host={upstream} err={exc!r}")
 
             if tile_count == 0 and target is not None:
                 try:
@@ -947,16 +952,16 @@ def handle(conn, addr, ctx):
                         rewritten = True
                         strip_content_encoding = True
                         count += tile_count
-                        log("WIFITILE_SYNTHETIC_404 host=%s devices=%d bytes=%d"
-                            % (upstream, tile_count, len(new_body)))
+                        log(f"WIFITILE_SYNTHETIC_404 host={upstream}"
+                            f" devices={tile_count} bytes={len(new_body)}")
                     else:
-                        log("WIFITILE_SYNTHETIC_EMPTY host=%s (returned upstream 404)"
-                            % upstream)
-                except Exception as exc:
+                        log(f"WIFITILE_SYNTHETIC_EMPTY host={upstream}"
+                            " (returned upstream 404)")
+                except Exception as exc:  # noqa: BLE001
                     # Optional fallbacks must not turn an honest upstream 404
                     # into a broader location outage.
-                    log("WIFITILE_SYNTHETIC_SKIP host=%s err=%r (returned upstream 404)"
-                        % (upstream, exc))
+                    log(f"WIFITILE_SYNTHETIC_SKIP host={upstream} err={exc!r}"
+                        " (returned upstream 404)")
         elif tile_request and status_code == 200:
             try:
                 lat, lon, _acc = active_target()
@@ -978,37 +983,30 @@ def handle(conn, addr, ctx):
                     count += tile_count + injected
                     anchor_state = "present" if tile_anchor is not None else "none"
                     log(
-                        "WIFITILE_TRANSLATE host=%s devices=%d injected=%d "
-                        "anchor=%s bytes=%d"
-                        % (
-                            upstream,
-                            tile_count,
-                            injected,
-                            anchor_state,
-                            len(new_body),
-                        )
+                        f"WIFITILE_TRANSLATE host={upstream} devices={tile_count}"
+                        f" injected={injected} anchor={anchor_state}"
+                        f" bytes={len(new_body)}"
                     )
                 else:
-                    log("WIFITILE_EMPTY host=%s bytes=%d (unchanged)"
-                        % (upstream, len(resp_body)))
-            except Exception as exc:
+                    log(f"WIFITILE_EMPTY host={upstream}"
+                        f" bytes={len(resp_body)} (unchanged)")
+            except Exception as exc:  # noqa: BLE001
                 if FAIL_CLOSED:
-                    log("WIFITILE_FAIL_CLOSED host=%s err=%r" % (upstream, exc))
+                    log(f"WIFITILE_FAIL_CLOSED host={upstream} err={exc!r}")
                     tls.sendall(build_error_response())
                     return
-                log("WIFITILE_SKIP host=%s err=%r (returned real response)"
-                    % (upstream, exc))
+                log(f"WIFITILE_SKIP host={upstream} err={exc!r}"
+                    " (returned real response)")
 
         tls.sendall(build_response(
             status_line, up_header_lines, up_headers, resp_body,
             strip_content_encoding=strip_content_encoding,
         ))
         if not rewritten and not assist:
-            log("PASSTHRU host=%s %s %s code=%s bytes=%d"
-                % (upstream, method, operational_path(path),
-                   status_line.split(' ')[1:2], len(resp_body)))
-    except Exception as exc:
-        log("ERROR peer=%s:%d host=%s err=%r" % (addr[0], addr[1], upstream, exc))
+            log(f"PASSTHRU host={upstream} {method} {operational_path(path)}"
+                f" code={status_line.split(' ')[1:2]} bytes={len(resp_body)}")
+    except Exception as exc:  # noqa: BLE001
+        log(f"ERROR peer={addr[0]}:{addr[1]} host={upstream} err={exc!r}")
         try:
             tls.sendall(build_error_response())
         except (OSError, ssl.SSLError):
@@ -1035,11 +1033,11 @@ def _handle_with_slot(conn, addr, ctx):
 
 def main():
     if not (os.path.exists(LEAF_CRT) and os.path.exists(LEAF_KEY)):
-        sys.exit("missing leaf material: %s / %s" % (LEAF_CRT, LEAF_KEY))
+        sys.exit(f"missing leaf material: {LEAF_CRT} / {LEAF_KEY}")
     try:
         active_target()
-    except Exception as exc:
-        sys.exit("invalid location target configuration: %r" % (exc,))
+    except Exception as exc:  # noqa: BLE001
+        sys.exit(f"invalid location target configuration: {exc!r}")
     try:
         os.makedirs(os.path.dirname(LOG), exist_ok=True)
     except OSError:
@@ -1052,15 +1050,14 @@ def main():
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind((LISTEN_HOST, LISTEN_PORT))
     srv.listen(max(8, MAX_WORKERS * 2))
-    log("LISTENING %s:%d leaf=%s presets=%s insecure_upstream=%s attempts=%d "
-        "fail_closed=%s max_workers=%d"
-        % (LISTEN_HOST, LISTEN_PORT, LEAF_CRT, PRESETS, UPSTREAM_INSECURE,
-           UPSTREAM_ATTEMPTS, FAIL_CLOSED, MAX_WORKERS))
+    log(f"LISTENING {LISTEN_HOST}:{LISTEN_PORT} leaf={LEAF_CRT} presets={PRESETS}"
+        f" insecure_upstream={UPSTREAM_INSECURE} attempts={UPSTREAM_ATTEMPTS}"
+        f" fail_closed={FAIL_CLOSED} max_workers={MAX_WORKERS}")
     try:
         while True:
             conn, addr = srv.accept()
             if not _worker_slots.acquire(blocking=False):
-                log("BUSY peer=%s:%d workers=%d" % (addr[0], addr[1], MAX_WORKERS))
+                log(f"BUSY peer={addr[0]}:{addr[1]} workers={MAX_WORKERS}")
                 _safe_close(conn)
                 continue
             threading.Thread(

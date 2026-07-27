@@ -23,7 +23,7 @@ DROP = {"PROCESS-NAME", "SRC-IP", "SRC-PORT", "DEST-PORT", "IN-PORT",
         "MAC-ADDRESS", "DEVICE-NAME", "IP-ASN", "USER-AGENT", "SUBNET",
         "PROTOCOL", "CELLULAR-RADIO", "SSID"}
 MODIFIERS = re.compile(r"^(no-resolve|extended-matching|dns-failed|pre-matching"
-                       r"|update-interval=.*|interval=.*)$", re.I)
+                       r"|update-interval=.*|interval=.*)$", re.IGNORECASE)
 
 
 def csv_split(s):
@@ -109,7 +109,7 @@ def emit(typ, value, category, sink):
     typ = typ.upper()
     if typ == "IP-CIDR6":
         typ = "IP-CIDR"
-    sink.append("%s,%s,%s" % (typ, value, category_of(category)))
+    sink.append(f"{typ},{value},{category_of(category)}")
 
 
 def main():
@@ -121,53 +121,53 @@ def main():
     final = None
     dropped, flattened = 0, 0
 
-    for raw in open(sys.argv[1], encoding="utf-8"):
-        line = raw.strip()
-        if not line or line.startswith(("#", ";", "[")):
-            continue
-        typ = line.split(",", 1)[0].strip().upper()
-
-        if typ in ("OR", "AND"):
-            members, policy = parse_logical(line)
-            if not policy:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        for raw in handle:
+            line = raw.strip()
+            if not line or line.startswith(("#", ";", "[")):
                 continue
-            took = False
-            for m in members:
-                p = csv_split(m)
-                mt = p[0].upper()
-                if mt in KEEP and len(p) >= 2:
-                    emit(mt, p[1], policy, rules)
-                    cats[category_of(policy)] = True
-                    took = True
-            flattened += 1 if took else 0
-            dropped += 0 if took else 1
-            continue
+            typ = line.split(",", 1)[0].strip().upper()
 
-        parts = csv_split(line)
-        if typ == "FINAL":
-            final = category_of(parts[1]) if len(parts) > 1 else None
-            continue
-        if typ in DROP:
-            dropped += 1
-            continue
-        if typ not in KEEP or len(parts) < 3:
-            dropped += 1
-            continue
-        # value = parts[1]; policy = first non-modifier field after it
-        rest = [x for x in parts[2:] if not MODIFIERS.match(x.strip().strip('"'))]
-        if not rest:
-            dropped += 1
-            continue
-        emit(typ, parts[1], rest[0], rules)   # emit applies category_of once
-        cats[category_of(rest[0])] = True
+            if typ in ("OR", "AND"):
+                members, policy = parse_logical(line)
+                if not policy:
+                    continue
+                took = False
+                for m in members:
+                    p = csv_split(m)
+                    mt = p[0].upper()
+                    if mt in KEEP and len(p) >= 2:
+                        emit(mt, p[1], policy, rules)
+                        cats[category_of(policy)] = True
+                        took = True
+                flattened += 1 if took else 0
+                dropped += 0 if took else 1
+                continue
+
+            parts = csv_split(line)
+            if typ == "FINAL":
+                final = category_of(parts[1]) if len(parts) > 1 else None
+                continue
+            if typ in DROP:
+                dropped += 1
+                continue
+            if typ not in KEEP or len(parts) < 3:
+                dropped += 1
+                continue
+            # value = parts[1]; policy = first non-modifier field after it
+            rest = [x for x in parts[2:] if not MODIFIERS.match(x.strip().strip('"'))]
+            if not rest:
+                dropped += 1
+                continue
+            emit(typ, parts[1], rest[0], rules)   # emit applies category_of once
+            cats[category_of(rest[0])] = True
 
     if final:
-        rules.append("FINAL,%s" % final)
+        rules.append(f"FINAL,{final}")
         cats[final] = True
 
     sys.stdout.write("\n".join(rules) + "\n")
-    sys.stderr.write("converted=%d dropped=%d or_flattened=%d categories=%d\n"
-                     % (len(rules), dropped, flattened, len(cats)))
+    sys.stderr.write(f"converted={len(rules)} dropped={dropped} or_flattened={flattened} categories={len(cats)}\n")
     sys.stderr.write("CATEGORIES=" + "\t".join(sorted(cats)) + "\n")
 
 

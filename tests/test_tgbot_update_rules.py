@@ -1,7 +1,6 @@
 import importlib.util
-from pathlib import Path
 import unittest
-
+from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("tgbot", root / "lib" / "tgbot.py")
@@ -14,7 +13,7 @@ class UpdateRulesTextTest(unittest.TestCase):
         def fake_run2(argv, timeout=None, **kwargs):
             if argv[-1] == "--update-rules":
                 return True, "GFWList: 123\nChinaList: 456\n"
-            raise AssertionError("unexpected command: %r" % (argv,))
+            raise AssertionError(f"unexpected command: {argv!r}")
 
         tgbot.run2 = fake_run2
         tgbot._is_active = lambda unit: "inactive"

@@ -21,11 +21,11 @@ ROUTES = {
 
 def write(out, status, ctype, body):
     head = (
-        "HTTP/1.1 %s\r\n"
-        "Content-Type: %s\r\n"
-        "Content-Length: %d\r\n"
+        f"HTTP/1.1 {status}\r\n"
+        f"Content-Type: {ctype}\r\n"
+        f"Content-Length: {len(body)}\r\n"
         "Connection: close\r\n"
-        "\r\n" % (status, ctype, len(body))
+        "\r\n"
     ).encode("ascii")
     out.write(head)
     out.write(body)
@@ -66,5 +66,5 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except Exception:
+    except Exception:  # noqa: BLE001
         sys.exit(0)

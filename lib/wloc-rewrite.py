@@ -109,7 +109,7 @@ def tag(field_no, wire_type):
 class Field:
     """One parsed protobuf field with its original bytes for lossless passthrough."""
 
-    __slots__ = ("field_no", "wire_type", "value", "raw")
+    __slots__ = ("field_no", "raw", "value", "wire_type")
 
     def __init__(self, field_no, wire_type, value, raw):
         self.field_no = field_no      # int
@@ -151,7 +151,7 @@ def parse_fields(buf):
             value = bytes(buf[pos:pos + 4])
             pos += 4
         else:
-            raise ValueError("unsupported wire type %d" % wire)
+            raise ValueError(f"unsupported wire type {wire}")
         out.append(Field(field_no, wire, value, bytes(buf[start:pos])))
     return out
 
@@ -298,8 +298,8 @@ def rewrite_response(body, lat, lon, accuracy=None, fix_length=True):
         declared = header_block_length(header)
         if declared != len(block):
             raise ValueError(
-                "header block-length %d != actual %d; framing assumption violated"
-                % (declared, len(block))
+                f"header block-length {declared} != actual {len(block)};"
+                " framing assumption violated"
             )
         header = _with_block_length(header, len(new_block))
     return header + new_block, count
@@ -595,8 +595,8 @@ def supplement_sparse_no_fix_response(
     declared = header_block_length(header)
     if declared != len(block):
         raise ValueError(
-            "header block-length %d != actual %d; framing assumption violated"
-            % (declared, len(block))
+            f"header block-length {declared} != actual {len(block)};"
+            " framing assumption violated"
         )
     entries = decode_block(block)
     original_count = sum(1 for entry in entries if entry["has_location"])
@@ -863,8 +863,8 @@ def translate_response(body, target_lat, target_lon, request_body=None, accuracy
     declared = header_block_length(header)
     if declared != len(block):
         raise ValueError(
-            "header block-length %d != actual %d; framing assumption violated"
-            % (declared, len(block))
+            f"header block-length {declared} != actual {len(block)};"
+            " framing assumption violated"
         )
     context = None
     if request_body:
@@ -932,13 +932,15 @@ JITTER_PERIOD_MAX_S = 3600.0
 
 def _finite_number(value, name, low, high):
     if isinstance(value, bool):
-        raise ValueError("%s must be a number" % name)
+        # ValueError (not TypeError) is the validation contract of these
+        # helpers; callers and tests rely on it.
+        raise ValueError(f"{name} must be a number")  # noqa: TRY004
     try:
         number = float(value)
     except (TypeError, ValueError) as exc:
-        raise ValueError("%s must be a number" % name) from exc
+        raise ValueError(f"{name} must be a number") from exc
     if not math.isfinite(number) or not low <= number <= high:
-        raise ValueError("%s must be between %s and %s" % (name, low, high))
+        raise ValueError(f"{name} must be between {low} and {high}")
     return number
 
 
@@ -946,22 +948,23 @@ def _jitter_config(config, name, base):
     if config is None:
         return dict(base)
     if not isinstance(config, dict):
-        raise ValueError("%s must be an object" % name)
+        # Same validation contract as _finite_number: keep ValueError.
+        raise ValueError(f"{name} must be an object")  # noqa: TRY004
     unknown = set(config) - {"enabled", "radius_m", "period_s"}
     if unknown:
-        raise ValueError("%s has unknown keys: %s" % (name, ", ".join(sorted(unknown))))
+        raise ValueError(f"{name} has unknown keys: {', '.join(sorted(unknown))}")
     out = dict(base)
     if "enabled" in config:
         if not isinstance(config["enabled"], bool):
-            raise ValueError("%s.enabled must be a boolean" % name)
+            raise ValueError(f"{name}.enabled must be a boolean")
         out["enabled"] = config["enabled"]
     if "radius_m" in config:
         out["radius_m"] = _finite_number(
-            config["radius_m"], "%s.radius_m" % name, 0.0, JITTER_RADIUS_MAX_M
+            config["radius_m"], f"{name}.radius_m", 0.0, JITTER_RADIUS_MAX_M
         )
     if "period_s" in config:
         out["period_s"] = _finite_number(
-            config["period_s"], "%s.period_s" % name,
+            config["period_s"], f"{name}.period_s",
             JITTER_PERIOD_MIN_S, JITTER_PERIOD_MAX_S,
         )
     return out
@@ -979,15 +982,15 @@ def resolve_jitter(presets, key=None):
     base = {"enabled": False, "radius_m": 0.0, "period_s": 120.0}
     global_config = _jitter_config(presets.get("jitter"), "jitter", base)
     entry = presets["presets"][key]
-    resolved = _jitter_config(entry.get("jitter"), "%s.jitter" % key, global_config)
+    resolved = _jitter_config(entry.get("jitter"), f"{key}.jitter", global_config)
     radius = resolved["radius_m"] if resolved["enabled"] else 0.0
     return radius, resolved["period_s"]
 
 
 def _jitter_offset(seed, trajectory_key, bucket, radius_m):
     message = (
-        "home-location-endpoint-jitter-v1\0%s\0%d" % (trajectory_key, bucket)
-    ).encode("utf-8")
+        f"home-location-endpoint-jitter-v1\0{trajectory_key}\0{bucket}"
+    ).encode()
     digest = hmac.new(seed, message, hashlib.sha256).digest()
     scale = float(1 << 64)
     radial_u = (int.from_bytes(digest[:8], "big") + 0.5) / scale
@@ -1114,7 +1117,7 @@ def build_cell(location_payload=None, mcc=460, mnc=0, cid=1, lac=1):
 def build_cell_response(cells, marker=b"\x00\x01\x00\x00\x00\x01", entry_field=22):
     """Build a full cell response (cells at top-level field 22 or 24)."""
     if entry_field not in CELL_ENTRY_FIELDS:
-        raise ValueError("cell entry field must be one of %r" % (CELL_ENTRY_FIELDS,))
+        raise ValueError(f"cell entry field must be one of {CELL_ENTRY_FIELDS!r}")
     block = bytearray()
     for cell in cells:
         block += len_field(entry_field, cell)
@@ -1124,7 +1127,7 @@ def build_cell_response(cells, marker=b"\x00\x01\x00\x00\x00\x01", entry_field=2
 def build_response(wifis, marker=b"\x00\x01\x00\x00\x00\x01", unknown0=0, api_name=None):
     """Build a full wifi response with a live-shaped header (6-byte marker + BE length)."""
     if len(marker) != HEADER_LEN_LO:
-        raise ValueError("marker must be exactly %d bytes" % HEADER_LEN_LO)
+        raise ValueError(f"marker must be exactly {HEADER_LEN_LO} bytes")
     block = build_block(wifis, unknown0=unknown0, api_name=api_name)
     return bytes(marker) + len(block).to_bytes(4, "big") + block
 
@@ -1139,10 +1142,10 @@ def _main(argv):
     with open(argv[1], "rb") as handle:
         body = handle.read()
     header, block = split_response(body)
-    print("header(%d)=%s" % (len(header), header.hex()))
+    print(f"header({len(header)})={header.hex()}")
     for i, entry in enumerate(decode_block(block)):
-        print("wifi[%d] bssid=%s lat=%s lon=%s acc=%s"
-              % (i, entry["bssid"], entry["lat"], entry["lon"], entry["accuracy"]))
+        print(f"wifi[{i}] bssid={entry['bssid']} lat={entry['lat']}"
+              f" lon={entry['lon']} acc={entry['accuracy']}")
 
 
 if __name__ == "__main__":

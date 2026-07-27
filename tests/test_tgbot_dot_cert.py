@@ -1,9 +1,8 @@
 import importlib.util
-from pathlib import Path
 import subprocess
 import tempfile
 import unittest
-
+from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("tgbot_dot_cert", root / "lib" / "tgbot.py")
@@ -52,7 +51,7 @@ class DotCertStatusTest(unittest.TestCase):
                 ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
                  "-keyout", str(key), "-out", str(cert), "-days", "90",
                  "-subj", "/CN=dns.example.com"],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
             if gen.returncode != 0:
                 self.skipTest("openssl unavailable")
             days, date = bot._cert_expiry(str(cert))

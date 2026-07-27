@@ -19,10 +19,10 @@ Environment:
   MGMT           Path to the management script (default below)
 """
 
-import html
 import base64
 import grp
 import hashlib
+import html
 import http.client
 import ipaddress
 import json
@@ -34,10 +34,10 @@ import sys
 import tempfile
 import threading
 import time
-from datetime import datetime, timezone
-from concurrent.futures import ThreadPoolExecutor
-from urllib.parse import unquote, urlparse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
+from urllib.parse import unquote, urlparse
 
 TOKEN = os.environ.get("TG_BOT_TOKEN", "").strip()
 ADMIN_IDS = {
@@ -47,7 +47,7 @@ MGMT = os.environ.get("MGMT", "/opt/5gpn/bin/5gpn-ctl")
 DOCTOR = os.environ.get("DOCTOR", "/opt/5gpn/scripts/doctor.sh")
 SNAPSHOT = os.environ.get("SNAPSHOT", "/opt/5gpn/scripts/snapshot.sh")
 INSTALL_SH = "/opt/5gpn/install.sh"
-API = "https://api.telegram.org/bot%s/" % TOKEN
+API = f"https://api.telegram.org/bot{TOKEN}/"
 
 # Services the bot may tail. Order matters for display only.
 SERVICES = [
@@ -100,7 +100,7 @@ BUSY = set()
 # single bubble instead of sending a new message every time.
 CONSOLE = {}
 LAST_FAILED_DOT_DOMAIN = {}
-PROXY_URI_RE = re.compile(r"^(ss|vmess|trojan|vless|hysteria2|hy2|tuic|anytls|socks5h|socks5|socks|http|https)://", re.I)
+PROXY_URI_RE = re.compile(r"^(ss|vmess|trojan|vless|hysteria2|hy2|tuic|anytls|socks5h|socks5|socks|http|https)://", re.IGNORECASE)
 SUPPORTED_EXIT_LINKS = "ss:// vmess:// trojan:// vless:// hysteria2:// tuic:// anytls:// socks5:// http://"
 
 
@@ -125,7 +125,7 @@ def _close_tg_conn(slot):
     try:
         if conn:
             conn.close()
-    except Exception:
+    except Exception:  # noqa: BLE001, S110
         pass
     setattr(_TG_LOCAL, slot + "_conn", None)
     setattr(_TG_LOCAL, slot + "_last_used", 0.0)
@@ -150,7 +150,7 @@ def _configure_tg_socket(conn, timeout):
 
 def tg(method, **params):
     data = json.dumps(params).encode("utf-8")
-    path = "/bot%s/%s" % (TOKEN, method)
+    path = f"/bot{TOKEN}/{method}"
     headers = {"Content-Type": "application/json", "Connection": "keep-alive"}
     slot = _tg_slot(method)
     timeout = _TG_POLL_TIMEOUT if slot == "poll" else _TG_API_TIMEOUT
@@ -170,12 +170,12 @@ def tg(method, **params):
             raw = conn.getresponse().read()
             setattr(_TG_LOCAL, slot + "_last_used", time.monotonic())
             return json.loads(raw.decode("utf-8")) if raw else {}
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             try:
                 conn = getattr(_TG_LOCAL, slot + "_conn", None)
                 if conn:
                     conn.close()
-            except Exception:
+            except Exception:  # noqa: BLE001, S110
                 pass
             setattr(_TG_LOCAL, slot + "_conn", None)
             setattr(_TG_LOCAL, slot + "_last_used", 0.0)
@@ -187,8 +187,8 @@ def background(fn, *args):
     def go():
         try:
             fn(*args)
-        except Exception as e:
-            print("[err] background task: %s" % e, file=sys.stderr)
+        except Exception as e:  # noqa: BLE001
+            print(f"[err] background task: {e}", file=sys.stderr)
 
     _BG_EXECUTOR.submit(go)
 
@@ -231,13 +231,12 @@ def send(chat_id, text, keyboard=None, mono=False):
 
 def delete_message(chat_id, message_id):
     if message_id is None:
-        print("[warn] deleteMessage failed chat_id=%s message_id=None error_code=- description=missing message_id"
-              % chat_id, file=sys.stderr)
+        print(f"[warn] deleteMessage failed chat_id={chat_id} message_id=None error_code=- description=missing message_id", file=sys.stderr)
         return False
     try:
         response = tg("deleteMessage", chat_id=chat_id, message_id=message_id)
-    except Exception as e:
-        response = {"ok": False, "error": "exception:%s" % type(e).__name__}
+    except Exception as e:  # noqa: BLE001
+        response = {"ok": False, "error": f"exception:{type(e).__name__}"}
     if isinstance(response, dict) and response.get("ok"):
         return True
     if isinstance(response, dict):
@@ -247,8 +246,7 @@ def delete_message(chat_id, message_id):
         error_code = "-"
         description = "malformed response"
     description = " ".join(str(description).split())[:500]
-    print("[warn] deleteMessage failed chat_id=%s message_id=%s error_code=%s description=%s"
-          % (chat_id, message_id, error_code, description), file=sys.stderr)
+    print(f"[warn] deleteMessage failed chat_id={chat_id} message_id={message_id} error_code={error_code} description={description}", file=sys.stderr)
     return False
 
 
@@ -285,9 +283,8 @@ def edit_message(chat_id, message_id, text, keyboard=None, mono=False):
         params["reply_markup"] = {"inline_keyboard": keyboard}
     try:
         r = tg("editMessageText", **params)
-    except Exception as e:
-        print("[warn] editMessageText failed chat_id=%s message_id=%s error=%s"
-              % (chat_id, message_id, type(e).__name__), file=sys.stderr)
+    except Exception as e:  # noqa: BLE001
+        print(f"[warn] editMessageText failed chat_id={chat_id} message_id={message_id} error={type(e).__name__}", file=sys.stderr)
         return False
     if isinstance(r, dict) and r.get("ok"):
         return True
@@ -431,24 +428,22 @@ def send_document(chat_id, path, caption="", filename=None):
     boundary = "----pgwDocBoundary9c1e4d"
 
     def _field(field_name, val):
-        return ("--%s\r\nContent-Disposition: form-data; name=\"%s\"\r\n\r\n%s\r\n"
-                % (boundary, field_name, val)).encode("utf-8")
+        return (f"--{boundary}\r\nContent-Disposition: form-data; name=\"{field_name}\"\r\n\r\n{val}\r\n").encode()
 
     body = _field("chat_id", str(chat_id))
     if caption:
         body += _field("caption", caption) + _field("parse_mode", "HTML")
-    body += ("--%s\r\nContent-Disposition: form-data; name=\"document\"; "
-             "filename=\"%s\"\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n"
-             % (boundary, name)).encode("utf-8")
-    body += data + b"\r\n" + ("--%s--\r\n" % boundary).encode("utf-8")
+    body += (f"--{boundary}\r\nContent-Disposition: form-data; name=\"document\"; "
+             f"filename=\"{name}\"\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n").encode()
+    body += data + b"\r\n" + (f"--{boundary}--\r\n").encode()
     req = urllib.request.Request(
         API + "sendDocument", data=body,
-        headers={"Content-Type": "multipart/form-data; boundary=%s" % boundary})
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
     try:
         with urllib.request.urlopen(req, timeout=60) as resp:
             return json.loads(resp.read().decode("utf-8")).get("ok", False)
-    except Exception as e:
-        print("[warn] send_document failed: %s" % e, file=sys.stderr)
+    except Exception as e:  # noqa: BLE001
+        print(f"[warn] send_document failed: {e}", file=sys.stderr)
         return False
 
 
@@ -462,26 +457,25 @@ def send_photo(chat_id, path, caption=""):
     boundary = "----pgwQRboundary8f3a2b"
 
     def _field(name, val):
-        return ("--%s\r\nContent-Disposition: form-data; name=\"%s\"\r\n\r\n%s\r\n"
-                % (boundary, name, val)).encode("utf-8")
+        return (f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{val}\r\n").encode()
 
     body = _field("chat_id", str(chat_id))
     if caption:
         body += _field("caption", caption) + _field("parse_mode", "HTML")
-    body += ("--%s\r\nContent-Disposition: form-data; name=\"photo\"; "
-             "filename=\"qr.png\"\r\nContent-Type: image/png\r\n\r\n" % boundary).encode("utf-8")
-    body += data + b"\r\n" + ("--%s--\r\n" % boundary).encode("utf-8")
+    body += (f"--{boundary}\r\nContent-Disposition: form-data; name=\"photo\"; "
+             "filename=\"qr.png\"\r\nContent-Type: image/png\r\n\r\n").encode()
+    body += data + b"\r\n" + (f"--{boundary}--\r\n").encode()
     req = urllib.request.Request(
         API + "sendPhoto", data=body,
-        headers={"Content-Type": "multipart/form-data; boundary=%s" % boundary})
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             return json.loads(resp.read().decode("utf-8")).get("ok", False)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         # Rare: TG API rejects the photo upload (size, format, transient 5xx).
         # The caller falls back to a text-only URL reply, but without this
         # log we'd have zero forensic trail for "why did the QR disappear?".
-        print("[warn] send_photo failed: %s" % e, file=sys.stderr)
+        print(f"[warn] send_photo failed: {e}", file=sys.stderr)
         return False
 
 
@@ -502,8 +496,7 @@ def edit_message_media(cb, photo_path, caption="", keyboard=None):
     boundary = "----pgwEditMedia9c4e7d"
 
     def _field(name, val):
-        return ("--%s\r\nContent-Disposition: form-data; name=\"%s\"\r\n\r\n%s\r\n"
-                % (boundary, name, val)).encode("utf-8")
+        return (f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{val}\r\n").encode()
 
     media_obj = {"type": "photo", "media": "attach://photo"}
     if caption:
@@ -514,20 +507,20 @@ def edit_message_media(cb, photo_path, caption="", keyboard=None):
     body += _field("media", json.dumps(media_obj))
     if keyboard is not None:
         body += _field("reply_markup", json.dumps({"inline_keyboard": keyboard}))
-    body += ("--%s\r\nContent-Disposition: form-data; name=\"photo\"; "
-             "filename=\"qr.png\"\r\nContent-Type: image/png\r\n\r\n" % boundary).encode("utf-8")
-    body += photo_data + b"\r\n" + ("--%s--\r\n" % boundary).encode("utf-8")
+    body += (f"--{boundary}\r\nContent-Disposition: form-data; name=\"photo\"; "
+             "filename=\"qr.png\"\r\nContent-Type: image/png\r\n\r\n").encode()
+    body += photo_data + b"\r\n" + (f"--{boundary}--\r\n").encode()
     req = urllib.request.Request(
         API + "editMessageMedia", data=body,
-        headers={"Content-Type": "multipart/form-data; boundary=%s" % boundary})
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             r = json.loads(resp.read().decode("utf-8"))
             if r.get("ok"):
                 CONSOLE[chat_id] = mid
                 return True
-    except Exception as e:
-        print("[warn] editMessageMedia failed: %s" % e, file=sys.stderr)
+    except Exception as e:  # noqa: BLE001
+        print(f"[warn] editMessageMedia failed: {e}", file=sys.stderr)
     return False
 
 
@@ -546,6 +539,7 @@ def run(argv, timeout=120, inp=None):
     try:
         p = subprocess.run(
             argv,
+            check=False,
             input=inp,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -554,19 +548,19 @@ def run(argv, timeout=120, inp=None):
         )
         out = p.stdout or ""
         if p.returncode != 0:
-            out += "\n[exit code %d]" % p.returncode
+            out += f"\n[exit code {p.returncode}]"
         return out
     except subprocess.TimeoutExpired:
-        return "[timeout after %ds]" % timeout
+        return f"[timeout after {timeout}s]"
     except FileNotFoundError:
-        return "[command not found: %s]" % argv[0]
-    except Exception as e:  # pragma: no cover
-        return "[error: %s]" % e
+        return f"[command not found: {argv[0]}]"
+    except Exception as e:  # noqa: BLE001  # pragma: no cover
+        return f"[error: {e}]"
 
 
 def validate_mgmt_path():
     if not os.path.isabs(MGMT) or not os.path.isfile(MGMT):
-        print("MGMT must be an absolute path to the management script: %s" % MGMT,
+        print(f"MGMT must be an absolute path to the management script: {MGMT}",
               file=sys.stderr)
         sys.exit(1)
 
@@ -587,7 +581,7 @@ def heal_mgmt_ctl():
     if "bootstrap_from_repo_if_needed" not in head and "REPO_URL=" not in head:
         return
     if not os.path.isfile(INSTALL_SH):
-        print("[warn] legacy 5gpn-ctl detected but %s missing; skip heal" % INSTALL_SH,
+        print(f"[warn] legacy 5gpn-ctl detected but {INSTALL_SH} missing; skip heal",
               file=sys.stderr)
         return
     wrapper = (
@@ -601,10 +595,10 @@ def heal_mgmt_ctl():
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(wrapper)
         os.chmod(path, 0o755)
-        print("[info] healed legacy 5gpn-ctl into thin wrapper: %s" % path,
+        print(f"[info] healed legacy 5gpn-ctl into thin wrapper: {path}",
               file=sys.stderr)
     except OSError as exc:
-        print("[warn] could not heal 5gpn-ctl: %s" % exc, file=sys.stderr)
+        print(f"[warn] could not heal 5gpn-ctl: {exc}", file=sys.stderr)
 
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
@@ -617,28 +611,27 @@ def _strip_ansi(s):
 def run2(argv, timeout=120, inp=None, env=None, merge_stderr=True):
     """Run a command; return (ok, stripped_output)."""
     try:
-        kwargs = dict(input=inp, stdout=subprocess.PIPE, text=True,
-                      encoding="utf-8", errors="replace", timeout=timeout)
+        kwargs = {"input": inp, "stdout": subprocess.PIPE, "text": True,
+                  "encoding": "utf-8", "errors": "replace", "timeout": timeout}
         if env is not None:
             kwargs["env"] = env
         if merge_stderr:
             kwargs["stderr"] = subprocess.STDOUT
         else:
             kwargs["stderr"] = subprocess.PIPE
-        p = subprocess.run(argv, **kwargs)
+        p = subprocess.run(argv, check=False, **kwargs)
         out = p.stdout or ""
-        if not merge_stderr and p.stderr:
-            # Keep stderr available for callers that only want stdout parsed,
-            # but append a short marker when the command failed.
-            if p.returncode != 0 and not out.strip():
-                out = p.stderr
+        # Keep stderr available for callers that only want stdout parsed,
+        # but append a short marker when the command failed.
+        if not merge_stderr and p.stderr and p.returncode != 0 and not out.strip():
+            out = p.stderr
         return p.returncode == 0, _strip_ansi(out)
     except subprocess.TimeoutExpired:
-        return False, "执行超时（%ds）" % timeout
+        return False, f"执行超时（{timeout}s）"
     except FileNotFoundError:
-        return False, "命令不存在：%s" % argv[0]
-    except Exception as e:  # pragma: no cover
-        return False, "错误：%s" % e
+        return False, f"命令不存在：{argv[0]}"
+    except Exception as e:  # noqa: BLE001  # pragma: no cover
+        return False, f"错误：{e}"
 
 
 def _host_unit_active(unit):
@@ -646,12 +639,13 @@ def _host_unit_active(unit):
         try:
             p = subprocess.run(
                 [binary, "is-active", unit],
+                check=False,
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                 text=True, encoding="utf-8", errors="replace", timeout=5,
             )
             if (p.stdout or "").strip() in ("active", "activating"):
                 return True
-        except Exception:
+        except Exception:  # noqa: BLE001, S112
             continue
     return False
 
@@ -660,11 +654,12 @@ def _host_port_listen(port):
     try:
         p = subprocess.run(
             ["bash", "-lc",
-             "ss -H -tln 2>/dev/null | grep -qE ':%s( |$)'" % int(port)],
+             f"ss -H -tln 2>/dev/null | grep -qE ':{int(port)}( |$)'"],
+            check=False,
             timeout=5,
         )
         return p.returncode == 0
-    except Exception:
+    except Exception:  # noqa: BLE001
         return False
 
 
@@ -673,10 +668,11 @@ def _host_fwmark_ok():
         p = subprocess.run(
             ["bash", "-lc",
              "ip rule show 2>/dev/null | grep -q 'fwmark 0x1 lookup 100'"],
+            check=False,
             timeout=5,
         )
         return p.returncode == 0
-    except Exception:
+    except Exception:  # noqa: BLE001
         return False
 
 
@@ -684,10 +680,11 @@ def _host_pgw_exit_ok():
     try:
         p = subprocess.run(
             ["bash", "-lc", "nft list table inet pgw_exit >/dev/null 2>&1"],
+            check=False,
             timeout=5,
         )
         return p.returncode == 0
-    except Exception:
+    except Exception:  # noqa: BLE001
         return False
 
 
@@ -778,7 +775,7 @@ def op_doctor():
     if data is None:
         body = html.escape(_strip_ansi(out)[-2500:] or "无输出")
         head = "✅ <b>doctor 通过</b>" if ok else "❌ <b>doctor 发现问题</b>"
-        return "%s\n<pre>%s</pre>" % (head, body)
+        return f"{head}\n<pre>{body}</pre>"
 
     data, fixed = _reconcile_doctor_data(data)
 
@@ -796,36 +793,32 @@ def op_doctor():
         head = "❌ <b>doctor 发现问题</b>"
     lines = [
         head,
-        "失败 <code>%d</code> / 警告 <code>%d</code> / 通过 <code>%d</code>"
-        % (fail_n, warn_n, pass_n),
-        "客户端网段：<code>%s</code>" % html.escape(str(cidr)),
-        "出口：<code>%s</code>" % html.escape(str(data.get("current_exit") or "?")),
+        f"失败 <code>{fail_n}</code> / 警告 <code>{warn_n}</code> / 通过 <code>{pass_n}</code>",
+        f"客户端网段：<code>{html.escape(str(cidr))}</code>",
+        f"出口：<code>{html.escape(str(data.get('current_exit') or '?'))}</code>",
     ]
     if fails:
         lines.append("")
         lines.append("<b>失败</b>")
         for c in fails[:12]:
-            lines.append("• %s：%s" % (
-                html.escape(str(c.get("check") or "?")),
-                html.escape(str(c.get("detail") or ""))))
+            lines.append(
+                f"• {html.escape(str(c.get('check') or '?'))}：{html.escape(str(c.get('detail') or ''))}")
         if len(fails) > 12:
-            lines.append("… 另有 %d 项失败" % (len(fails) - 12))
+            lines.append(f"… 另有 {len(fails) - 12} 项失败")
     if warns:
         lines.append("")
         lines.append("<b>警告</b>")
         for c in warns[:8]:
-            lines.append("• %s：%s" % (
-                html.escape(str(c.get("check") or "?")),
-                html.escape(str(c.get("detail") or ""))))
+            lines.append(
+                f"• {html.escape(str(c.get('check') or '?'))}：{html.escape(str(c.get('detail') or ''))}")
         if len(warns) > 8:
-            lines.append("… 另有 %d 项警告" % (len(warns) - 8))
+            lines.append(f"… 另有 {len(warns) - 8} 项警告")
     if any("运行时一致性" in str(c.get("check") or "") for c in warns + fails):
         lines.append("")
         lines.append("💡 建议执行 <code>sudo 5gpn update</code> 完成运行时刷新")
     if fixed:
         lines.append("")
-        lines.append("ℹ️ 已自动纠正 Bot 进程存活误报：<code>%s</code>"
-                     % html.escape(", ".join(fixed)))
+        lines.append(f"ℹ️ 已自动纠正 Bot 进程存活误报：<code>{html.escape(', '.join(fixed))}</code>")
     lines.append("")
     lines.append("完整现场请用「诊断报告」下载文件。")
     return "\n".join(lines)
@@ -834,7 +827,7 @@ def op_doctor():
 def _reason(out, n=4):
     """A short, human-readable reason from command output (for failures)."""
     lines = [line.strip() for line in _strip_ansi(out).splitlines() if line.strip()]
-    errs = [line for line in lines if re.search(r"\[!\]|\[ERR\]|error|fail|invalid|拒绝|失败", line, re.I)]
+    errs = [line for line in lines if re.search(r"\[!\]|\[ERR\]|error|fail|invalid|拒绝|失败", line, re.IGNORECASE)]
     picked = (errs or lines)[-n:]
     text = "\n".join(picked)
     return (text[:600] + "…") if len(text) > 600 else text
@@ -892,10 +885,11 @@ def _parse_env(path):
 def _is_active(unit):
     try:
         p = subprocess.run(["systemctl", "is-active", unit],
+                           check=False,
                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                            text=True, timeout=10)
         return p.stdout.strip()
-    except Exception:
+    except Exception:  # noqa: BLE001
         return "unknown"
 
 
@@ -911,20 +905,22 @@ def _read_int(path, default=0):
 
 def _cpu_idle_total():
     try:
-        vals = list(map(int, open("/proc/stat").readline().split()[1:]))
+        with open("/proc/stat") as fh:
+            vals = list(map(int, fh.readline().split()[1:]))
         idle = vals[3] + (vals[4] if len(vals) > 4 else 0)  # idle + iowait
         return idle, sum(vals)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return 0, 0
 
 
 def _default_iface():
     try:
-        for line in open("/proc/net/route").readlines()[1:]:
-            p = line.split()
-            if p[1] == "00000000" and (int(p[3], 16) & 0x2):  # default + RTF_GATEWAY
-                return p[0]
-    except Exception:
+        with open("/proc/net/route") as fh:
+            for line in fh.readlines()[1:]:
+                p = line.split()
+                if p[1] == "00000000" and (int(p[3], 16) & 0x2):  # default + RTF_GATEWAY
+                    return p[0]
+    except Exception:  # noqa: BLE001, S110
         pass
     return None
 
@@ -933,13 +929,14 @@ def _iface_bytes(iface):
     if not iface:
         return 0, 0
     try:
-        for line in open("/proc/net/dev"):
-            if ":" in line:
-                name, rest = line.split(":", 1)
-                if name.strip() == iface:
-                    f = rest.split()
-                    return int(f[0]), int(f[8])  # rx, tx bytes
-    except Exception:
+        with open("/proc/net/dev") as fh:
+            for line in fh:
+                if ":" in line:
+                    name, rest = line.split(":", 1)
+                    if name.strip() == iface:
+                        f = rest.split()
+                        return int(f[0]), int(f[8])  # rx, tx bytes
+    except Exception:  # noqa: BLE001, S110
         pass
     return 0, 0
 
@@ -948,10 +945,11 @@ def _established():
     n = 0
     for p in ("/proc/net/tcp", "/proc/net/tcp6"):
         try:
-            for line in open(p).readlines()[1:]:
-                if line.split()[3] == "01":  # ESTABLISHED
-                    n += 1
-        except Exception:
+            with open(p) as fh:
+                for line in fh.readlines()[1:]:
+                    if line.split()[3] == "01":  # ESTABLISHED
+                        n += 1
+        except Exception:  # noqa: BLE001, S110
             pass
     return n
 
@@ -960,9 +958,9 @@ def _fmt_bytes(n):
     n = float(n)
     for unit in ("B", "K", "M", "G", "T"):
         if n < 1024:
-            return ("%d%s" % (n, unit)) if unit == "B" else ("%.1f%s" % (n, unit))
+            return (f"{int(n)}{unit}") if unit == "B" else (f"{n:.1f}{unit}")
         n /= 1024
-    return "%.1fP" % n
+    return f"{n:.1f}P"
 
 
 def system_metrics():
@@ -983,10 +981,11 @@ def system_metrics():
 
     mi = {}
     try:
-        for line in open("/proc/meminfo"):
-            k, v = line.split(":")
-            mi[k.strip()] = int(v.split()[0])  # kB
-    except Exception:
+        with open("/proc/meminfo") as fh:
+            for line in fh:
+                k, v = line.split(":")
+                mi[k.strip()] = int(v.split()[0])  # kB
+    except Exception:  # noqa: BLE001, S110
         pass
     mt, ma = mi.get("MemTotal", 0) // 1024, mi.get("MemAvailable", 0) // 1024
     mu = mt - ma
@@ -998,30 +997,29 @@ def system_metrics():
         sv = os.statvfs("/")
         dtotal = sv.f_blocks * sv.f_frsize
         dused = dtotal - sv.f_bavail * sv.f_frsize
-    except Exception:
+    except Exception:  # noqa: BLE001, S110
         pass
 
     conn = _read_int("/proc/sys/net/netfilter/nf_conntrack_count", -1)
     est = _established()
     try:
         up_h = int(float(_read_file("/proc/uptime").split()[0]) // 3600)
-    except Exception:
+    except Exception:  # noqa: BLE001
         up_h = 0
 
     def pct(u, t):
         return round(100 * u / t) if t else 0
 
     out = ["━━━━━━━━━━", "🖥 <b>服务器</b>"]
-    out.append("⏱ 运行 %d 小时" % up_h)
-    out.append("🧮 CPU %d%%（load %s · %d核）" % (cpu, load, cores))
-    swap = ("　Swap %d/%d MB" % (su, st)) if st else ""
-    out.append("🧠 内存 %d/%d MB（%d%%）%s" % (mu, mt, pct(mu, mt), swap))
+    out.append(f"⏱ 运行 {up_h} 小时")
+    out.append(f"🧮 CPU {cpu}%（load {load} · {cores}核）")
+    swap = (f"　Swap {su}/{st} MB") if st else ""
+    out.append(f"🧠 内存 {mu}/{mt} MB（{pct(mu, mt)}%）{swap}")
     if dtotal:
-        out.append("🗄 磁盘 %s/%s（%d%%）" % (_fmt_bytes(dused), _fmt_bytes(dtotal), pct(dused, dtotal)))
-    conn_s = ("%d" % conn) if conn >= 0 else "n/a"
-    out.append("🔌 连接 conntrack %s · 活跃 %d" % (conn_s, est))
-    out.append("🌐 流量 ↓%s/s ↑%s/s（累计 ↓%s ↑%s）"
-               % (_fmt_bytes(rx_rate), _fmt_bytes(tx_rate), _fmt_bytes(rx1), _fmt_bytes(tx1)))
+        out.append(f"🗄 磁盘 {_fmt_bytes(dused)}/{_fmt_bytes(dtotal)}（{pct(dused, dtotal)}%）")
+    conn_s = f"{conn}" if conn >= 0 else "n/a"
+    out.append(f"🔌 连接 conntrack {conn_s} · 活跃 {est}")
+    out.append(f"🌐 流量 ↓{_fmt_bytes(rx_rate)}/s ↑{_fmt_bytes(tx_rate)}/s（累计 ↓{_fmt_bytes(rx1)} ↑{_fmt_bytes(tx1)}）")
     return "\n".join(out)
 
 
@@ -1035,7 +1033,7 @@ def _status_items():
         items.append(("5gpn-client-mtproto", "MTProto front"))
     cur = _read_file("/opt/5gpn/etc/current-exit") or "local"
     if cur and cur not in ("local",):
-        items.append(("5gpn-mihomo@%s" % cur, "出口 %s" % cur))
+        items.append((f"5gpn-mihomo@{cur}", f"出口 {cur}"))
     return items
 
 
@@ -1059,25 +1057,25 @@ def op_status():
     if cur == "local":
         lines.append("🌐 出口：<b>local</b>（本机直出）")
     else:
-        t = _read_file("/etc/5gpn/exits/%s.type" % cur) or "?"
-        lines.append("🌐 出口：<b>%s</b>（%s）" % (html.escape(cur), html.escape(t)))
+        t = _read_file(f"/etc/5gpn/exits/{cur}.type") or "?"
+        lines.append(f"🌐 出口：<b>{html.escape(cur)}</b>（{html.escape(t)}）")
 
     domain = _read_file("/etc/mosdns/.domain") or _read_file("/opt/5gpn/etc/.domain")
     if domain:
-        lines.append("🔗 域名：<code>%s</code>" % html.escape(domain))
+        lines.append(f"🔗 域名：<code>{html.escape(domain)}</code>")
 
     cs = _read_file("/etc/mosdns/.cache_size")
     if cs.isdigit():
         prof = "低内存" if int(cs) <= 50000 else "标准"
-        lines.append("💾 内存档：%s" % prof)
+        lines.append(f"💾 内存档：{prof}")
 
     if down:
-        lines += ["", "⚠️ 异常：%s（用 📜 日志查看）" % html.escape("、".join(down))]
+        lines += ["", f"⚠️ 异常：{html.escape('、'.join(down))}（用 📜 日志查看）"]
 
     try:
         lines += ["", system_metrics()]
-    except Exception as e:  # metrics must never break the status card
-        lines += ["", "（服务器指标获取失败：%s）" % html.escape(str(e))]
+    except Exception as e:  # metrics must never break the status card  # noqa: BLE001
+        lines += ["", f"（服务器指标获取失败：{html.escape(str(e))}）"]
     return "\n".join(lines)
 
 
@@ -1090,8 +1088,8 @@ def op_rename_exit(old_name, new_name):
         return "新旧名称相同，无需重命名。"
     ok, out = run2(["bash", MGMT, "--rename-exit", old_name, new_name], timeout=180)
     if ok:
-        return "✅ 出口 <b>%s</b> 已重命名为 <b>%s</b>" % (html.escape(old_name), html.escape(new_name))
-    return "❌ <b>重命名失败</b>\n%s" % html.escape(_reason(out))
+        return f"✅ 出口 <b>{html.escape(old_name)}</b> 已重命名为 <b>{html.escape(new_name)}</b>"
+    return f"❌ <b>重命名失败</b>\n{html.escape(_reason(out))}"
 
 
 def op_set_exit(name):
@@ -1099,16 +1097,16 @@ def op_set_exit(name):
         return "出口名无效。"
     ok, out = run2(["bash", MGMT, "--set-exit", name], timeout=60)
     if not ok:
-        return "❌ <b>切换失败</b>\n%s" % html.escape(_reason(out))
+        return f"❌ <b>切换失败</b>\n{html.escape(_reason(out))}"
     if name == "local":
         return "✅ 已切回 <b>local</b>（本机直出）"
-    t = _read_file("/etc/5gpn/exits/%s.type" % name) or "?"
+    t = _read_file(f"/etc/5gpn/exits/{name}.type") or "?"
     ip = _exit_ip()
     if ip:
-        tail = "\n🌍 出口 IP：<code>%s</code>" % html.escape(ip)
+        tail = f"\n🌍 出口 IP：<code>{html.escape(ip)}</code>"
     else:
         tail = "\n⚠️ 出口 IP 探测未成功（仅探测失败，不一定代表不通）。如访问异常，用「🩺 检查出口连通性」确认节点。"
-    return "✅ 已切换到 <b>%s</b>（%s）%s" % (html.escape(name), html.escape(t), tail)
+    return f"✅ 已切换到 <b>{html.escape(name)}</b>（{html.escape(t)}）{tail}"
 
 
 def exits_overview_text():
@@ -1116,15 +1114,14 @@ def exits_overview_text():
     if cur == "local":
         desc = "本机直出"
     else:
-        desc = _read_file("/etc/5gpn/exits/%s.type" % cur) or "?"
+        desc = _read_file(f"/etc/5gpn/exits/{cur}.type") or "?"
     ip = _exit_ip()
     if ip:
-        ip_line = "🌍 出口 IP：<code>%s</code>" % html.escape(ip)
+        ip_line = f"🌍 出口 IP：<code>{html.escape(ip)}</code>"
     else:
         ip_line = "🌍 出口 IP：<i>探测失败</i>"
-    return ("🌐 当前出口：<b>%s</b>（%s）\n%s\n\n"
-            "选择要切换到的出口，或添加/删除："
-            % (html.escape(cur), html.escape(desc), ip_line))
+    return (f"🌐 当前出口：<b>{html.escape(cur)}</b>（{html.escape(desc)}）\n{ip_line}\n\n"
+            "选择要切换到的出口，或添加/删除：")
 
 
 def op_add_exit(name, payload):
@@ -1139,9 +1136,8 @@ def op_add_exit(name, payload):
     ok, out = run2(["bash", MGMT, "--add-exit", name], inp=payload, timeout=180)
     if ok:
         m = re.search(r"type:\s*(\w+)", out)
-        return ("✅ 出口 <b>%s</b> 已添加（%s）\n在「🌐 出口」里点它即可切换。"
-                % (html.escape(name), m.group(1) if m else "?"))
-    return "❌ <b>添加失败</b>\n%s" % html.escape(_reason(out))
+        return (f"✅ 出口 <b>{html.escape(name)}</b> 已添加（{m.group(1) if m else '?'}）\n在「🌐 出口」里点它即可切换。")
+    return f"❌ <b>添加失败</b>\n{html.escape(_reason(out))}"
 
 
 def mask_uri_secret(uri):
@@ -1155,12 +1151,12 @@ def mask_uri_secret(uri):
         if not parsed.scheme:
             return text[:24] + ("…" if len(text) > 24 else "")
         host = parsed.hostname or "?"
-        port = ":%s" % parsed.port if parsed.port else ""
-        label = "%s://%s%s" % (parsed.scheme, host, port)
+        port = f":{parsed.port}" if parsed.port else ""
+        label = f"{parsed.scheme}://{host}{port}"
         if parsed.fragment:
             label += "#" + parsed.fragment[:12]
         return label
-    except Exception:
+    except Exception:  # noqa: BLE001
         return text[:24] + ("…" if len(text) > 24 else "")
 
 
@@ -1183,14 +1179,14 @@ def parse_add_exit_inputs(payload):
     for index, line in enumerate(lines, 1):
         explicit_name, config_text, raw = _normalize_batch_add_line(line)
         if "[Interface]" in config_text and "[Peer]" in config_text:
-            return [], "第 %d 行是 WireGuard 配置。Bot 批量添加仅支持 URI；WireGuard 请改用命令行指定名称添加。" % index
+            return [], f"第 {index} 行是 WireGuard 配置。Bot 批量添加仅支持 URI；WireGuard 请改用命令行指定名称添加。"
         name, config, err = parse_add_exit_input(raw)
         if explicit_name:
             name = explicit_name
             config = config_text
             err = ""
         if err:
-            return [], "第 %d 行：%s" % (index, err)
+            return [], f"第 {index} 行：{err}"
         items.append({"index": index, "name": name, "payload": config.strip(), "masked": mask_uri_secret(config)})
     return items, ""
 
@@ -1212,13 +1208,13 @@ def op_add_exit_batch(items):
                     final = ""
                     if base:
                         for i in range(2, 100):
-                            suffix = "-%d" % i
+                            suffix = f"-{i}"
                             cand = (base[:16 - len(suffix)] + suffix).strip("-_")
                             if cand and cand not in reserved and cand not in assigned and EXIT_ADD_NAME_RE.match(cand):
                                 final = cand
                                 break
                     if not final:
-                        results.append("❌ %d. <b>%s</b>：无法生成不冲突的名称" % (item["index"], html.escape(requested)))
+                        results.append(f"❌ {item['index']}. <b>{html.escape(requested)}</b>：无法生成不冲突的名称")
                         continue
                 assigned.add(final)
                 item["final_name"] = final
@@ -1231,18 +1227,18 @@ def op_add_exit_batch(items):
                 item["payload"] = ""
                 if text.startswith("✅"):
                     if final != item["name"]:
-                        results.append("✅ %d. <b>%s</b>（由 %s 自动去重）" % (
-                            item["index"], html.escape(final), html.escape(item["name"])))
+                        results.append(
+                            f"✅ {item['index']}. <b>{html.escape(final)}</b>（由 {html.escape(item['name'])} 自动去重）")
                     else:
-                        results.append("✅ %d. <b>%s</b>" % (item["index"], html.escape(final)))
+                        results.append(f"✅ {item['index']}. <b>{html.escape(final)}</b>")
                     reserved.add(final)
                 else:
-                    results.append("❌ %d. <b>%s</b>：添加失败，请检查服务日志" % (
-                        item["index"], html.escape(final)))
+                    results.append(
+                        f"❌ {item['index']}. <b>{html.escape(final)}</b>：添加失败，请检查服务日志")
 
         ok_count = sum(1 for line in results if line.startswith("✅"))
         fail_count = sum(1 for line in results if line.startswith("❌"))
-        head = "批量添加完成：✅ %d，❌ %d" % (ok_count, fail_count)
+        head = f"批量添加完成：✅ {ok_count}，❌ {fail_count}"
         return head + "\n" + "\n".join(results)
     finally:
         for item in items:
@@ -1255,7 +1251,7 @@ def b64decode_text(s):
     for dec in (base64.urlsafe_b64decode, base64.b64decode):
         try:
             return dec(s + pad).decode("utf-8")
-        except Exception:
+        except Exception:  # noqa: BLE001, S112
             continue
     return ""
 
@@ -1277,7 +1273,7 @@ def unique_exit_name(name):
     if base not in existing:
         return base
     for i in range(2, 100):
-        suffix = "-%d" % i
+        suffix = f"-{i}"
         cand = (base[:16 - len(suffix)] + suffix).strip("-_")
         if cand and cand not in existing and EXIT_ADD_NAME_RE.match(cand):
             return cand
@@ -1288,12 +1284,12 @@ def exit_name_from_uri(uri):
     if uri.lower().startswith("vmess://"):
         try:
             data = json.loads(b64decode_text(uri[len("vmess://"):].strip()))
-        except Exception:
+        except Exception:  # noqa: BLE001
             data = {}
         return unique_exit_name(data.get("ps") or "")
     try:
         return unique_exit_name(urlparse(uri).fragment)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return ""
 
 
@@ -1308,7 +1304,7 @@ def parse_add_exit_input(payload):
     if "[Interface]" in config and "[Peer]" in config:
         return "", "", "WireGuard 配置本身没有节点名称。请改用命令行指定出口名添加。"
     if not PROXY_URI_RE.match(first):
-        return "", "", "无法识别。请直接粘贴支持的节点链接：<code>%s</code>，或整段 WireGuard 配置。" % SUPPORTED_EXIT_LINKS
+        return "", "", f"无法识别。请直接粘贴支持的节点链接：<code>{SUPPORTED_EXIT_LINKS}</code>，或整段 WireGuard 配置。"
     name = exit_name_from_uri(first)
     if not name:
         return "", "", "这条节点链接没有可用名称。请改用：<code>出口名 链接</code>。"
@@ -1338,7 +1334,7 @@ def rule_type_menu():
     rows = []
     for value in RULE_TYPES:
         rows.append([{"text": RULE_TYPE_LABELS.get(value, value),
-                      "callback_data": "raddt:%s" % value}])
+                      "callback_data": f"raddt:{value}"}])
     rows.append([{"text": "⌨️ 手工完整规则", "callback_data": "rules:add_manual"}])
     rows.append([{"text": "« 返回", "callback_data": "menu:rules"}])
     return rows
@@ -1347,14 +1343,14 @@ def rule_type_menu():
 def _rule_target_buttons(prefix, back_target="rules:add"):
     rows, row = [], []
     for target in _targets():
-        row.append({"text": target, "callback_data": "%s:%s" % (prefix, target)})
+        row.append({"text": target, "callback_data": f"{prefix}:{target}"})
         if len(row) == 3:
             rows.append(row)
             row = []
     if row:
         rows.append(row)
-    rows.append([{"text": "🌍 直连", "callback_data": "%s:direct" % prefix},
-                 {"text": "🚫 拒绝", "callback_data": "%s:block" % prefix}])
+    rows.append([{"text": "🌍 直连", "callback_data": f"{prefix}:direct"},
+                 {"text": "🚫 拒绝", "callback_data": f"{prefix}:block"}])
     rows.append([{"text": "« 返回", "callback_data": back_target}])
     return rows
 
@@ -1371,7 +1367,7 @@ def validate_rule_value(rule_type, value):
             return "DOMAIN-KEYWORD 不能包含逗号或换行。"
     elif rule_type in ("GEOSITE", "GEOIP"):
         if not re.match(r"^[A-Za-z0-9._:-]+$", value):
-            return "%s 名称无效。" % rule_type
+            return f"{rule_type} 名称无效。"
     elif rule_type == "IP-CIDR":
         try:
             ipaddress.ip_network(value, strict=False)
@@ -1390,8 +1386,8 @@ def rule_value_prompt(rule_type):
         "IP-CIDR": "匹配目标 IP 网段（CIDR 格式）。\n示例：<code>1.2.3.0/24</code>",
     }
     return ("➕ <b>添加规则</b>\n\n"
-            "已选择类型：<code>%s</code>\n"
-            "请发送匹配值。\n\n%s" % (html.escape(rule_type), hints.get(rule_type, "")))
+            f"已选择类型：<code>{html.escape(rule_type)}</code>\n"
+            f"请发送匹配值。\n\n{hints.get(rule_type, '')}")
 
 
 def op_del_exit(name):
@@ -1399,21 +1395,21 @@ def op_del_exit(name):
         return "出口名无效（不能删除 local/smart）。"
     ok, out = run2(["bash", MGMT, "--del-exit", name], timeout=30)
     if ok:
-        return "✅ 出口 <b>%s</b> 已删除" % html.escape(name)
-    return "❌ <b>删除失败</b>\n%s" % html.escape(_reason(out))
+        return f"✅ 出口 <b>{html.escape(name)}</b> 已删除"
+    return f"❌ <b>删除失败</b>\n{html.escape(_reason(out))}"
 
 
 def op_update_rules():
     ok, out = run2(["bash", MGMT, "--update-rules"], timeout=600)
     if not ok:
-        return "❌ <b>规则更新失败</b>\n%s" % html.escape(_reason(out))
+        return f"❌ <b>规则更新失败</b>\n{html.escape(_reason(out))}"
     parts = ["✅ <b>规则已更新</b>"]
     gfw = re.search(r"GFWList:\s*(\d+)", out)
     cn = re.search(r"ChinaList:\s*(\d+)", out)
     if gfw:
-        parts.append("• GFWList：%s 域名" % gfw.group(1))
+        parts.append(f"• GFWList：{gfw.group(1)} 域名")
     if cn:
-        parts.append("• ChinaList：%s 域名" % cn.group(1))
+        parts.append("• ChinaList：%s 域名" % cn.group(1))  # noqa: UP031  # pinned by tests/test_tgbot_policy.sh
     # Also refresh mihomo smart routing rule-sets (re-download remote rule-sets)
     smart_active = _is_active("5gpn-mihomo@smart.service") == "active"
     if smart_active:
@@ -1426,7 +1422,7 @@ def op_renew_cert():
     ok, out = run2(["bash", MGMT, "--renew-cert"], timeout=600)
     if ok:
         return "✅ <b>证书已续期</b>并重载 mosdns"
-    return "❌ <b>证书续期失败</b>\n<pre>%s</pre>" % html.escape(_tail_output(out))
+    return f"❌ <b>证书续期失败</b>\n<pre>{html.escape(_tail_output(out))}</pre>"
 
 
 DOT_CERT_PATH = "/etc/mosdns/certs/fullchain.pem"
@@ -1453,10 +1449,10 @@ def _cert_status_line():
     if days is None:
         return "证书剩余：<code>未知（未找到证书）</code>"
     if days < 0:
-        return "证书剩余：⚠️ <b>已过期 %d 天</b>（到期：%s）" % (-days, date)
+        return f"证书剩余：⚠️ <b>已过期 {-days} 天</b>（到期：{date}）"
     if days <= 14:
-        return "证书剩余：⚠️ <b>%d 天</b>（到期：%s，建议尽快续期）" % (days, date)
-    return "证书剩余：<code>%d 天</code>（到期：%s）" % (days, date)
+        return f"证书剩余：⚠️ <b>{days} 天</b>（到期：{date}，建议尽快续期）"
+    return f"证书剩余：<code>{days} 天</code>（到期：{date}）"
 
 
 def op_dot_status():
@@ -1470,13 +1466,13 @@ def op_dot_status():
             or "172.22.0.0/16").strip()
     lines = [
         "🔐 <b>DoT 管理</b>",
-        "当前域名：<code>%s</code>" % html.escape(domain),
+        "当前域名：<code>%s</code>" % html.escape(domain),  # noqa: UP031  # pinned by tests/test_tgbot_policy.sh
     ]
     lines.extend([
-        "国际 DNS：<code>%s</code>" % html.escape(remote_dns),
-        "国内 DNS：<code>%s</code>" % html.escape(local_dns),
-        "客户端网段：<code>%s</code>" % html.escape(cidr),
-        "DNS 直连名单：<code>%d</code> 个域名" % direct_n,
+        "国际 DNS：<code>%s</code>" % html.escape(remote_dns),  # noqa: UP031  # pinned by tests/test_tgbot_policy.sh
+        "国内 DNS：<code>%s</code>" % html.escape(local_dns),  # noqa: UP031  # pinned by tests/test_tgbot_policy.sh
+        f"客户端网段：<code>{html.escape(cidr)}</code>",
+        f"DNS 直连名单：<code>{direct_n}</code> 个域名",
         _cert_status_line(),
     ])
     return "\n".join(lines)
@@ -1489,12 +1485,11 @@ def op_set_dot_domain(domain):
     ok, out = run2(["bash", MGMT, "--set-dot-domain", domain], timeout=900)
     if ok:
         return (("✅ <b>DoT 域名已更新</b>\n"
-                 "当前域名：<code>%s</code>\n"
-                 "证书已签发并重载 mosdns。iOS 用户请重新生成二维码。" % html.escape(domain)), None)
-    text = ("❌ <b>DoT 域名更新失败</b>\n%s\n\n"
+                 f"当前域名：<code>{html.escape(domain)}</code>\n"
+                 "证书已签发并重载 mosdns。iOS 用户请重新生成二维码。"), None)
+    text = (f"❌ <b>DoT 域名更新失败</b>\n{html.escape(_reason(out))}\n\n"
             "如果你确认域名已经解析到本机，也可以强制更换域名。\n"
-            "注意：强制更换会跳过本次证书签发，DoT 客户端可能因为证书不匹配暂时无法连接；修好 80 端口/certbot 问题后请再点续期证书。" %
-            html.escape(_reason(out)))
+            "注意：强制更换会跳过本次证书签发，DoT 客户端可能因为证书不匹配暂时无法连接；修好 80 端口/certbot 问题后请再点续期证书。")
     return (text, domain)
 
 
@@ -1505,9 +1500,9 @@ def op_force_set_dot_domain(domain):
     ok, out = run2(["bash", MGMT, "--set-dot-domain-force", domain], timeout=600)
     if ok:
         return ("⚠️ <b>DoT 域名已强制更换</b>\n"
-                "当前域名：<code>%s</code>\n"
-                "本次没有签发新证书。请排查端口 80 / certbot 后，再点 <b>续期证书</b>。" % html.escape(domain))
-    return "❌ <b>强制更换域名失败</b>\n%s" % html.escape(_reason(out))
+                f"当前域名：<code>{html.escape(domain)}</code>\n"
+                "本次没有签发新证书。请排查端口 80 / certbot 后，再点 <b>续期证书</b>。")
+    return f"❌ <b>强制更换域名失败</b>\n{html.escape(_reason(out))}"
 
 
 def force_dot_domain_kb():
@@ -1573,8 +1568,8 @@ def op_set_dns(kind, text):
     ok, out = run2(cmd, timeout=600)
     if ok:
         label = "国际 DNS" if kind == "remote" else "国内 DNS"
-        return "✅ <b>%s 已更新</b>\n<code>%s</code>" % (label, html.escape(dns))
-    return "❌ <b>DNS 上游更新失败</b>\n%s" % html.escape(_reason(out))
+        return f"✅ <b>{label} 已更新</b>\n<code>{html.escape(dns)}</code>"
+    return f"❌ <b>DNS 上游更新失败</b>\n{html.escape(_reason(out))}"
 
 
 GFWLIST_PATH = "/etc/mosdns/gfwlist.txt"
@@ -1601,9 +1596,9 @@ def op_show_direct_domains():
         return ("🔓 <b>DNS 直连名单</b>（空）\n\n"
                 "私网客户端会把非 ChinaList 域名解析成网关 IP。"
                 "把 SSH 主机名加进来后返回真实 A 记录。")
-    body = "\n".join("%d. <code>%s</code>" % (i + 1, html.escape(d))
+    body = "\n".join(f"{i + 1}. <code>{html.escape(d)}</code>"
                      for i, d in enumerate(entries))
-    return "🔓 <b>DNS 直连名单</b>（%d）：\n%s" % (len(entries), body)
+    return f"🔓 <b>DNS 直连名单</b>（{len(entries)}）：\n{body}"
 
 
 def op_add_direct_domain(domain):
@@ -1612,9 +1607,9 @@ def op_add_direct_domain(domain):
         return "域名格式无效。请发送类似 <code>box2.example.com</code> 的完整域名。"
     ok, out = run2(["bash", MGMT, "--add-direct-domain", domain], timeout=120)
     if ok:
-        return ("✅ <b>已加入 DNS 直连名单</b>\n<code>%s</code>\n"
-                "私网客户端将对该域名（及其子域）返回真实解析。" % html.escape(domain))
-    return "❌ <b>添加失败</b>\n%s" % html.escape(_reason(out))
+        return (f"✅ <b>已加入 DNS 直连名单</b>\n<code>{html.escape(domain)}</code>\n"
+                "私网客户端将对该域名（及其子域）返回真实解析。")
+    return f"❌ <b>添加失败</b>\n{html.escape(_reason(out))}"
 
 
 def op_del_direct_domain(domain):
@@ -1623,8 +1618,8 @@ def op_del_direct_domain(domain):
         return "域名格式无效。"
     ok, out = run2(["bash", MGMT, "--del-direct-domain", domain], timeout=120)
     if ok:
-        return "✅ <b>已从 DNS 直连名单移除</b>\n<code>%s</code>" % html.escape(domain)
-    return "❌ <b>删除失败</b>\n%s" % html.escape(_reason(out))
+        return f"✅ <b>已从 DNS 直连名单移除</b>\n<code>{html.escape(domain)}</code>"
+    return f"❌ <b>删除失败</b>\n{html.escape(_reason(out))}"
 
 
 def op_set_direct_domains(text):
@@ -1634,7 +1629,7 @@ def op_set_direct_domains(text):
         if not d or d.startswith("#"):
             continue
         if not DOMAIN_RE.match(d):
-            return "域名格式无效：<code>%s</code>" % html.escape(d)
+            return f"域名格式无效：<code>{html.escape(d)}</code>"
         lines.append(d)
     # Deduplicate while preserving order.
     seen, uniq = set(), []
@@ -1645,8 +1640,8 @@ def op_set_direct_domains(text):
     payload = "\n".join(uniq) + ("\n" if uniq else "")
     ok, out = run2(["bash", MGMT, "--set-direct-domains"], inp=payload, timeout=120)
     if ok:
-        return "✅ <b>DNS 直连名单已替换</b>（%d 个域名）" % len(uniq)
-    return "❌ <b>保存失败</b>\n%s" % html.escape(_reason(out))
+        return f"✅ <b>DNS 直连名单已替换</b>（{len(uniq)} 个域名）"
+    return f"❌ <b>保存失败</b>\n{html.escape(_reason(out))}"
 
 
 def validate_ecs(value):
@@ -1673,9 +1668,8 @@ def op_set_ecs(value):
         return "ECS 格式无效。请发送 IPv4 地址或 IPv4/前缀，例如 <code>139.226.48.0/24</code>。"
     ok, out = run2(["bash", MGMT, "--set-ecs", ecs], timeout=180)
     if ok:
-        return "✅ <b>ECS 已更新</b>\n<code>%s</code>\n%s" % (
-            html.escape(ecs), html.escape(_strip_ansi(out)[-800:]))
-    return "❌ <b>ECS 设置失败</b>\n%s" % html.escape(_reason(out))
+        return f"✅ <b>ECS 已更新</b>\n<code>{html.escape(ecs)}</code>\n{html.escape(_strip_ansi(out)[-800:])}"
+    return f"❌ <b>ECS 设置失败</b>\n{html.escape(_reason(out))}"
 
 
 def _domain_suffix_set(path):
@@ -1720,9 +1714,7 @@ def route_test(domain):
             value = parts[1].lower().lstrip(".")
             if d == value or d.endswith("." + value):
                 matched = (s, parts[-1])
-        elif typ == "DOMAIN" and len(parts) >= 3 and d == parts[1].lower():
-            matched = (s, parts[-1])
-        elif typ == "DOMAIN-KEYWORD" and len(parts) >= 3 and parts[1].lower() in d:
+        elif typ == "DOMAIN" and len(parts) >= 3 and d == parts[1].lower() or typ == "DOMAIN-KEYWORD" and len(parts) >= 3 and parts[1].lower() in d:
             matched = (s, parts[-1])
     category = matched[1] if matched else (final or "Proxy")
     policy = dict(_policy_map())
@@ -1743,21 +1735,12 @@ def op_route_test(domain):
     if result.get("error"):
         return result["error"]
     return (
-        "🧪 <b>路由测试</b>：<code>%s</code>\n"
-        "DNS 劫持：<b>%s</b>（直连名单：%s / GFWList：%s）\n"
-        "命中规则：<code>%s</code>\n"
-        "分类：<code>%s</code> → mihomo 出口：<b>%s</b>\n\n"
+        f"🧪 <b>路由测试</b>：<code>{html.escape(result['domain'])}</code>\n"
+        f"DNS 劫持：<b>{'是' if result['hijacked'] else '否'}</b>（直连名单：{'是' if result['direct_bypass'] else '否'} / GFWList：{'是' if result['in_gfwlist'] else '否'}）\n"
+        f"命中规则：<code>{html.escape(result['matched'])}</code>\n"
+        f"分类：<code>{html.escape(result['category'])}</code> → mihomo 出口：<b>{html.escape(result['target'])}</b>\n\n"
         "说明：规则里的分组名先查 <code>policy-map.conf</code>，再映射到 mihomo 出口；"
         "RULE-SET / GEOSITE / GEOIP / ChinaList 不在此轻量测试中展开。"
-        % (
-            html.escape(result["domain"]),
-            "是" if result["hijacked"] else "否",
-            "是" if result["direct_bypass"] else "否",
-            "是" if result["in_gfwlist"] else "否",
-            html.escape(result["matched"]),
-            html.escape(result["category"]),
-            html.escape(result["target"]),
-        )
     )
 
 
@@ -1771,10 +1754,8 @@ def op_proxy_domain(domain, target):
     ok, out = run2(["bash", MGMT, "--proxy-domain", domain, target], timeout=600)
     if ok:
         return ("✅ <b>代理域名规则已应用</b>\n"
-                "<code>%s</code> → <b>%s</b>\n<pre>%s</pre>"
-                % (html.escape(domain), html.escape(target),
-                   html.escape(_strip_ansi(out)[-1200:])))
-    return "❌ <b>代理域名失败</b>\n%s" % html.escape(_reason(out))
+                f"<code>{html.escape(domain)}</code> → <b>{html.escape(target)}</b>\n<pre>{html.escape(_strip_ansi(out)[-1200:])}</pre>")
+    return f"❌ <b>代理域名失败</b>\n{html.escape(_reason(out))}"
 
 
 def direct_domains_menu():
@@ -1791,7 +1772,7 @@ def direct_domains_del_menu():
     rows = []
     for index, d in enumerate(_direct_domain_entries()):
         rows.append([{"text": "🗑 " + d,
-                      "callback_data": "ddel:%d:%s" % (index, _entry_token(d))}])
+                      "callback_data": f"ddel:{index}:{_entry_token(d)}"}])
     if not rows:
         rows.append([{"text": "(名单为空)", "callback_data": "menu:direct"}])
     rows.append([{"text": "« 返回", "callback_data": "menu:direct"}])
@@ -1813,8 +1794,8 @@ def op_restart_services():
         state = _is_active(svc)
         ok = state in ("active", "listening")
         failed = failed or not ok
-        label = svc[:-len(".socket")] if svc.endswith(".socket") else svc
-        results.append(("✅" if ok else "❌") + " " + html.escape(label) + "（%s）" % html.escape(state))
+        label = svc.removesuffix(".socket")
+        results.append(("✅" if ok else "❌") + " " + html.escape(label) + f"（{html.escape(state)}）")
     head = "❌ <b>部分服务重启异常</b>" if failed else "✅ <b>服务已重启</b>"
     return head + "\n" + "\n".join(results)
 
@@ -1838,7 +1819,7 @@ def deliver_report(cb, chat_id):
     """Send the redacted report as a Telegram document (no inline dump)."""
     ok, path_or_err = op_report()
     if not ok:
-        edit(cb, "❌ <b>报告生成失败</b>\n%s" % path_or_err, back_kb("menu:ops"))
+        edit(cb, f"❌ <b>报告生成失败</b>\n{path_or_err}", back_kb("menu:ops"))
         return
     path = path_or_err
     if send_document(chat_id, path,
@@ -1851,7 +1832,7 @@ def deliver_report(cb, chat_id):
         return
     edit(cb,
          ("❌ <b>报告文件发送失败</b>\n"
-          "服务器本地文件：<code>%s</code>" % html.escape(path)),
+          f"服务器本地文件：<code>{html.escape(path)}</code>"),
          back_kb("menu:ops"))
 
 
@@ -1877,10 +1858,9 @@ def _client_cidr():
 def op_show_client_cidr():
     cidr = _client_cidr()
     return ("🛡 <b>客户端网段</b>\n"
-            "当前：<code>%s</code>\n"
+            f"当前：<code>{html.escape(cidr)}</code>\n"
             "私网客户端来自此段时走劫持/透明代理策略；"
-            "改后会刷新 mosdns（managed 防火墙也会尝试同步）。"
-            % html.escape(cidr))
+            "改后会刷新 mosdns（managed 防火墙也会尝试同步）。")
 
 
 def client_cidr_menu():
@@ -1897,24 +1877,22 @@ def op_set_client_cidr(text):
         return "请发送 IPv4 CIDR，例如 <code>172.22.0.0/16</code>"
     ok, out = run2(["bash", MGMT, "--set-client-cidr", cidr], timeout=180)
     if ok:
-        return ("✅ <b>客户端网段已更新</b>\n<code>%s</code>\n%s"
-                % (html.escape(_client_cidr()), html.escape(_strip_ansi(out)[-800:])))
-    return "❌ <b>设置失败</b>\n%s" % html.escape(_reason(out))
+        return (f"✅ <b>客户端网段已更新</b>\n<code>{html.escape(_client_cidr())}</code>\n{html.escape(_strip_ansi(out)[-800:])}")
+    return f"❌ <b>设置失败</b>\n{html.escape(_reason(out))}"
 
 
 def op_detect_client_cidr():
     ok, out = run2(["bash", MGMT, "--detect-client-cidr"], timeout=180)
     if ok:
-        return ("✅ <b>已探测并应用客户端网段</b>\n当前：<code>%s</code>\n%s"
-                % (html.escape(_client_cidr()), html.escape(_strip_ansi(out)[-800:])))
-    return "❌ <b>探测失败</b>\n%s" % html.escape(_reason(out))
+        return (f"✅ <b>已探测并应用客户端网段</b>\n当前：<code>{html.escape(_client_cidr())}</code>\n{html.escape(_strip_ansi(out)[-800:])}")
+    return f"❌ <b>探测失败</b>\n{html.escape(_reason(out))}"
 
 
 def op_snapshot():
     ok, out = run2(["bash", MGMT, "--snapshot", "manual-bot"], timeout=120)
     if ok:
-        return "✅ <b>快照已保存</b>\n<pre>%s</pre>" % html.escape(_strip_ansi(out)[-1500:])
-    return "❌ <b>快照失败</b>\n%s" % html.escape(_reason(out))
+        return f"✅ <b>快照已保存</b>\n<pre>{html.escape(_strip_ansi(out)[-1500:])}</pre>"
+    return f"❌ <b>快照失败</b>\n{html.escape(_reason(out))}"
 
 
 def _snapshot_script():
@@ -1941,8 +1919,8 @@ def op_snapshot_list():
     ok, out = _snapshot_list_raw()
     body = html.escape(_strip_ansi(out)[-2500:] or "（没有快照）")
     if ok:
-        return "📜 <b>快照列表</b>\n<pre>%s</pre>" % body
-    return "❌ <b>读取快照失败</b>\n<pre>%s</pre>" % body
+        return f"📜 <b>快照列表</b>\n<pre>{body}</pre>"
+    return f"❌ <b>读取快照失败</b>\n<pre>{body}</pre>"
 
 
 def op_delete_snapshot(snap_id):
@@ -1950,9 +1928,8 @@ def op_delete_snapshot(snap_id):
         return "快照 ID 无效。"
     ok, out = run2(["bash", _snapshot_script(), "delete", snap_id], timeout=120)
     if ok:
-        return ("✅ <b>已删除快照</b> <code>%s</code>\n<pre>%s</pre>"
-                % (html.escape(snap_id), html.escape(_strip_ansi(out)[-1200:])))
-    return "❌ <b>删除失败</b>\n%s" % html.escape(_reason(out))
+        return (f"✅ <b>已删除快照</b> <code>{html.escape(snap_id)}</code>\n<pre>{html.escape(_strip_ansi(out)[-1200:])}</pre>")
+    return f"❌ <b>删除失败</b>\n{html.escape(_reason(out))}"
 
 
 def snapshot_list_view():
@@ -1968,7 +1945,7 @@ def snapshot_list_view():
             ])
     rows.append([{"text": "⏪ 回滚最新", "callback_data": "act:rollback"}])
     rows.append([{"text": "« 返回", "callback_data": "menu:ops"}])
-    return "%s\n<pre>%s</pre>\n点 ⏪ 回滚，点 🗑 删除。" % (head, body), rows
+    return f"{head}\n<pre>{body}</pre>\n点 ⏪ 回滚，点 🗑 删除。", rows
 
 
 def edit_snapshot_list_async(cb):
@@ -1994,10 +1971,9 @@ def op_rollback(snap_id="latest"):
         argv.append(snap_id)
     ok, out = run2(argv, timeout=300)
     if ok:
-        label = "最近快照" if snap_id == "latest" else "快照 %s" % snap_id
-        return ("✅ <b>已回滚到%s</b>\n<pre>%s</pre>"
-                % (html.escape(label), html.escape(_strip_ansi(out)[-1500:])))
-    return "❌ <b>回滚失败</b>\n%s" % html.escape(_reason(out))
+        label = "最近快照" if snap_id == "latest" else f"快照 {snap_id}"
+        return (f"✅ <b>已回滚到{html.escape(label)}</b>\n<pre>{html.escape(_strip_ansi(out)[-1500:])}</pre>")
+    return f"❌ <b>回滚失败</b>\n{html.escape(_reason(out))}"
 
 
 def op_logs(svc):
@@ -2029,8 +2005,8 @@ def op_show_rules():
     _, entries = _rule_entries()
     if not entries:
         return "（还没有分流规则）\n用「✏️ 规则设置」粘贴一份，或「➕ 添加规则」逐条添加。"
-    body = "\n".join("%d. %s" % (i + 1, e[1].strip()) for i, e in enumerate(entries))
-    return "📋 <b>当前分流规则</b>（%d 条）：\n<pre>%s</pre>" % (len(entries), html.escape(body))
+    body = "\n".join(f"{i + 1}. {e[1].strip()}" for i, e in enumerate(entries))
+    return f"📋 <b>当前分流规则</b>（{len(entries)} 条）：\n<pre>{html.escape(body)}</pre>"
 
 
 def _ruleset_entries():
@@ -2061,10 +2037,11 @@ def op_show_rulesets():
             target = parts[2].strip()
             # shorten long URLs for display
             short_url = url if len(url) <= 50 else url[:47] + "…"
-            body.append("%d. %s → <b>%s</b>" % (i + 1, html.escape(short_url), html.escape(target)))
+            body.append(f"{i + 1}. {html.escape(short_url)} → <b>{html.escape(target)}</b>")
         else:
-            body.append("%d. %s" % (i + 1, html.escape(line.strip())))
-    return "📚 <b>当前规则集</b>（%d 个）：\n%s" % (len(entries), "\n".join(body))
+            body.append(f"{i + 1}. {html.escape(line.strip())}")
+    joined = "\n".join(body)
+    return f"📚 <b>当前规则集</b>（{len(entries)} 个）：\n{joined}"
 
 
 def _entry_token(text):
@@ -2092,9 +2069,8 @@ def op_set_rules(text):
     if ok:
         m = re.search(r"\((\d+) rules\)", out)
         count = m.group(1) if m else "0"
-        return ("✅ <b>分流规则已更新</b>（%s 条）\n用「⚡ 启用分流」或在 🌐 出口 选 smart 生效。"
-                % count)
-    return "❌ <b>规则设置失败</b>\n%s" % html.escape(_reason(out))
+        return (f"✅ <b>分流规则已更新</b>（{count} 条）\n用「⚡ 启用分流」或在 🌐 出口 选 smart 生效。")
+    return f"❌ <b>规则设置失败</b>\n{html.escape(_reason(out))}"
 
 
 def op_add_rule(line):
@@ -2117,9 +2093,8 @@ def op_add_ruleset(text):
         return "规则集目标无效。"
     ok, out = run2(["bash", MGMT, "--add-ruleset", source, target.strip()], timeout=600)
     if ok:
-        return "✅ <b>规则集已添加</b>\n<code>%s</code> → <b>%s</b>" % (
-            html.escape(source), html.escape(target.strip()))
-    return "❌ <b>规则集添加失败</b>\n%s" % html.escape(_reason(out))
+        return f"✅ <b>规则集已添加</b>\n<code>{html.escape(source)}</code> → <b>{html.escape(target.strip())}</b>"
+    return f"❌ <b>规则集添加失败</b>\n{html.escape(_reason(out))}"
 
 
 def validate_ruleset_url(url):
@@ -2156,8 +2131,8 @@ def op_set_policy(cat, target):
     # Rebuilds the router (may fetch/compile rule-sets) — give it room.
     ok, out = run2(["bash", MGMT, "--set-policy", cat, target], timeout=600)
     if ok:
-        return "✅ <b>%s</b> → <b>%s</b>，分流已重建。" % (html.escape(cat), html.escape(target))
-    return "❌ <b>映射失败</b>\n%s" % html.escape(_reason(out))
+        return f"✅ <b>{html.escape(cat)}</b> → <b>{html.escape(target)}</b>，分流已重建。"
+    return f"❌ <b>映射失败</b>\n{html.escape(_reason(out))}"
 
 
 def _targets():
@@ -2167,8 +2142,8 @@ def _targets():
 def _format_check_exit_row(name, endpoint, state):
     mapping = {"UP": "✅", "DOWN": "❌", "N/A": "➖", "N/A?": "➖", "n/a": "➖", "UDP": "🔌"}
     mark = mapping.get(state.upper() if state else "", "➖")
-    detail = "<code>%s</code>" % html.escape(endpoint) if endpoint and endpoint != "-" else "<i>n/a</i>"
-    return "%s <b>%s</b>  %s" % (mark, html.escape(name), detail)
+    detail = f"<code>{html.escape(endpoint)}</code>" if endpoint and endpoint != "-" else "<i>n/a</i>"
+    return f"{mark} <b>{html.escape(name)}</b>  {detail}"
 
 
 def parse_check_exits_output(out):
@@ -2202,7 +2177,7 @@ def op_check_exits():
     if not items:
         if ok:
             return "（没有可检查的出口）"
-        return "❌ <b>出口检查失败</b>\n%s" % html.escape(_reason(out))
+        return f"❌ <b>出口检查失败</b>\n{html.escape(_reason(out))}"
     bad = any(state.upper() == "DOWN" for _, _, state in items)
     lines = ["🩺 <b>出口节点连通性</b>%s" % ("　⚠️ 有节点不可达！" if bad else "")]
     lines.extend(_format_check_exit_row(name, endpoint, state) for name, endpoint, state in items)
@@ -2234,12 +2209,12 @@ def op_ios_send(chat_id):
     """Send the iOS profile QR as an image (with the URL as caption)."""
     domain = _read_file("/etc/mosdns/.domain") or _read_file("/opt/5gpn/etc/.domain")
     if domain:
-        url = "http://%s:8111/ios-dot.mobileconfig" % domain
+        url = "http://%s:8111/ios-dot.mobileconfig" % domain  # noqa: UP031  # pinned by tests/test_tgbot_policy.sh
     else:
         url = _read_file(os.path.join(WWW_DIR, "ios-profile-url.txt"))
     if not url:
         return "未找到 iOS 描述文件地址,先在服务器上 `--ios` 生成。"
-    cap = ("📱 <b>iOS DoT 描述文件</b>\n扫码安装(仅蜂窝网启用):\n<code>%s</code>" % html.escape(url))
+    cap = (f"📱 <b>iOS DoT 描述文件</b>\n扫码安装(仅蜂窝网启用):\n<code>{html.escape(url)}</code>")
     fd, png = tempfile.mkstemp(prefix="pgw-ios-qr-", suffix=".png")
     os.close(fd)
     try:
@@ -2260,12 +2235,12 @@ def op_ios_send_inline(cb):
     Returns an error string on failure, or None on success."""
     domain = _read_file("/etc/mosdns/.domain") or _read_file("/opt/5gpn/etc/.domain")
     if domain:
-        url = "http://%s:8111/ios-dot.mobileconfig" % domain
+        url = "http://%s:8111/ios-dot.mobileconfig" % domain  # noqa: UP031  # pinned by tests/test_tgbot_policy.sh
     else:
         url = _read_file(os.path.join(WWW_DIR, "ios-profile-url.txt"))
     if not url:
         return "未找到 iOS 描述文件地址,先在服务器上 `--ios` 生成。"
-    cap = ("📱 <b>iOS DoT 描述文件</b>\n扫码安装(仅蜂窝网启用):\n<code>%s</code>" % html.escape(url))
+    cap = (f"📱 <b>iOS DoT 描述文件</b>\n扫码安装(仅蜂窝网启用):\n<code>{html.escape(url)}</code>")
     fd, png = tempfile.mkstemp(prefix="pgw-ios-qr-", suffix=".png")
     os.close(fd)
     try:
@@ -2349,20 +2324,20 @@ def _wloc_page():
     enabled, entry = _wloc_load()
     service = _is_active(WLOC_SERVICE) == "active"
     if entry:
-        target = "<code>%.6f, %.6f</code> (±%sm)" % (
-            entry.get("lat", 0), entry.get("lon", 0), entry.get("accuracy_m", 25))
+        target = (f"<code>{entry.get('lat', 0):.6f}, {entry.get('lon', 0):.6f}</code>"
+                  f" (±{entry.get('accuracy_m', 25)}m)")
     else:
         target = "未设置"
     text = (
         "📍 <b>WLOC 虚拟定位</b>\n\n"
         "仅劫持 <code>gs-loc.apple.com</code> 与 <code>gs-loc-cn.apple.com</code> 的定位响应，"
         "不会扩大到其他 Apple 或普通流量。\n\n"
-        "状态：<b>%s</b>\n"
-        "拦截器：%s\n"
-        "目标：%s\n\n"
+        f"状态：<b>{'已开启' if enabled else '已关闭'}</b>\n"
+        f"拦截器：{'🟢 运行中' if service else '⚪ 未运行'}\n"
+        f"目标：{target}\n\n"
         "首次使用请安装 WLOC CA，并在 iOS 的「证书信任设置」中开启完全信任。"
         "切换后 locationd 可能有缓存，必要时重启设备。"
-    ) % ("已开启" if enabled else "已关闭", "🟢 运行中" if service else "⚪ 未运行", target)
+    )
     rows = [[{"text": "📜 下载 WLOC CA", "callback_data": "wloc:ca"}]]
     preset_row = []
     for key, (label, _lat, _lon) in WLOC_PRESETS.items():
@@ -2397,17 +2372,17 @@ def _wloc_apply(lat, lon, label=None, accuracy=25):
         ok, out = run2(["systemctl", "enable", "--now", WLOC_SERVICE], timeout=30)
         if not ok:
             _wloc_atomic_write(WLOC_MODIFIER, "paused\n")
-            return "❌ WLOC 拦截器启动失败：%s" % html.escape(_reason(out))
-        _wloc_atomic_write(WLOC_DOMAINS, "".join("full:%s\n" % host for host in WLOC_HOSTS), 0o644)
+            return f"❌ WLOC 拦截器启动失败：{html.escape(_reason(out))}"
+        _wloc_atomic_write(WLOC_DOMAINS, "".join(f"full:{host}\n" for host in WLOC_HOSTS), 0o644)
         ok, out = run2(["systemctl", "restart", "mosdns"], timeout=30)
         if not ok:
             _wloc_atomic_write(WLOC_DOMAINS, "", 0o644)
             _wloc_atomic_write(WLOC_MODIFIER, "paused\n")
-            return "❌ DNS 劫持未生效，已回滚：%s" % html.escape(_reason(out))
+            return f"❌ DNS 劫持未生效，已回滚：{html.escape(_reason(out))}"
     except OSError as exc:
-        return "❌ WLOC 状态写入失败：%s" % html.escape(str(exc))
+        return f"❌ WLOC 状态写入失败：{html.escape(str(exc))}"
     name = (label + " ") if label else ""
-    return "✅ <b>WLOC 已开启</b>\n%s<code>%.6f, %.6f</code> (±%dm)" % (html.escape(name), lat, lon, accuracy)
+    return f"✅ <b>WLOC 已开启</b>\n{html.escape(name)}<code>{lat:.6f}, {lon:.6f}</code> (±{accuracy}m)"
 
 
 def _wloc_disable():
@@ -2416,31 +2391,32 @@ def _wloc_disable():
         _wloc_atomic_write(WLOC_DOMAINS, "", 0o644)
         ok, out = run2(["systemctl", "restart", "mosdns"], timeout=30)
         if not ok:
-            return "❌ DNS 恢复失败：%s" % html.escape(_reason(out))
+            return f"❌ DNS 恢复失败：{html.escape(_reason(out))}"
         run2(["systemctl", "disable", "--now", WLOC_SERVICE], timeout=30)
     except OSError as exc:
-        return "❌ WLOC 状态写入失败：%s" % html.escape(str(exc))
+        return f"❌ WLOC 状态写入失败：{html.escape(str(exc))}"
     return "✅ <b>WLOC 已关闭</b>\nApple 网络定位已恢复原始直连。"
 
 
 def _send_wloc_ca(chat_id):
     try:
-        cert = open(WLOC_CA, "rb").read()
+        with open(WLOC_CA, "rb") as fh:
+            cert = fh.read()
     except OSError:
         return "未找到 WLOC CA。请先运行最新版 <code>install.sh</code>。"
     boundary = "----pgwWlocCA"
-    body = ("--%s\r\nContent-Disposition: form-data; name=\"chat_id\"\r\n\r\n%s\r\n" % (boundary, chat_id)).encode()
-    body += ("--%s\r\nContent-Disposition: form-data; name=\"caption\"\r\n\r\n"
-             "WLOC CA：安装后请在 iOS「设置 -> 通用 -> 关于本机 -> 证书信任设置」开启完全信任。\r\n" % boundary).encode("utf-8")
-    body += ("--%s\r\nContent-Disposition: form-data; name=\"document\"; filename=\"5GPN-WLOC-CA.cer\"\r\n"
-             "Content-Type: application/pkix-cert\r\n\r\n" % boundary).encode() + cert
-    body += ("\r\n--%s--\r\n" % boundary).encode()
+    body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"chat_id\"\r\n\r\n{chat_id}\r\n").encode()
+    body += (f"--{boundary}\r\nContent-Disposition: form-data; name=\"caption\"\r\n\r\n"
+             "WLOC CA：安装后请在 iOS「设置 -> 通用 -> 关于本机 -> 证书信任设置」开启完全信任。\r\n").encode()
+    body += (f"--{boundary}\r\nContent-Disposition: form-data; name=\"document\"; filename=\"5GPN-WLOC-CA.cer\"\r\n"
+             "Content-Type: application/pkix-cert\r\n\r\n").encode() + cert
+    body += (f"\r\n--{boundary}--\r\n").encode()
     try:
         req = urllib.request.Request(API + "sendDocument", data=body,
                                      headers={"Content-Type": "multipart/form-data; boundary=" + boundary})
         with urllib.request.urlopen(req, timeout=30) as resp:
             return None if json.loads(resp.read().decode()).get("ok") else "CA 文件发送失败。"
-    except Exception:
+    except Exception:  # noqa: BLE001
         return "CA 文件发送失败。"
 
 
@@ -2497,65 +2473,65 @@ def client_mtproto_menu():
 
 
 def op_client_socks_status():
-    ok, out = run2(["bash", MGMT, "--client-socks-status"], timeout=60)
+    _, out = run2(["bash", MGMT, "--client-socks-status"], timeout=60)
     body = html.escape(_strip_ansi(out)[-2000:] or "无输出")
-    return ("🧦 <b>私网 SOCKS5</b>\n<pre>%s</pre>\n"
-            "仅客户端网段可访问；出站跟随当前出口。" % body)
+    return (f"🧦 <b>私网 SOCKS5</b>\n<pre>{body}</pre>\n"
+            "仅客户端网段可访问；出站跟随当前出口。")
 
 
 def op_enable_client_socks():
     ok, out = run2(["bash", MGMT, "--enable-client-socks"], timeout=180)
     body = html.escape(_strip_ansi(out)[-2500:])
     if ok:
-        return ("✅ <b>SOCKS5 已开启</b>\n<pre>%s</pre>\n"
-                "请立即保存用户名/密码；之后状态页会隐藏密码。" % body)
-    return "❌ <b>开启失败</b>\n%s" % html.escape(_reason(out))
+        return (f"✅ <b>SOCKS5 已开启</b>\n<pre>{body}</pre>\n"
+                "请立即保存用户名/密码；之后状态页会隐藏密码。")
+    return f"❌ <b>开启失败</b>\n{html.escape(_reason(out))}"
 
 
 def op_disable_client_socks():
     ok, out = run2(["bash", MGMT, "--disable-client-socks"], timeout=120)
     if ok:
-        return "✅ <b>SOCKS5 已关闭</b>\n%s" % html.escape(_strip_ansi(out)[-800:])
-    return "❌ <b>关闭失败</b>\n%s" % html.escape(_reason(out))
+        return f"✅ <b>SOCKS5 已关闭</b>\n{html.escape(_strip_ansi(out)[-800:])}"
+    return f"❌ <b>关闭失败</b>\n{html.escape(_reason(out))}"
 
 
 def op_reset_client_socks_creds():
     ok, out = run2(["bash", MGMT, "--reset-client-socks-creds"], timeout=120)
     body = html.escape(_strip_ansi(out)[-2000:])
     if ok:
-        return ("✅ <b>凭据已轮换</b>\n<pre>%s</pre>\n请立即保存新密码。" % body)
-    return "❌ <b>轮换失败</b>\n%s" % html.escape(_reason(out))
+        return (f"✅ <b>凭据已轮换</b>\n<pre>{body}</pre>\n请立即保存新密码。")
+    return f"❌ <b>轮换失败</b>\n{html.escape(_reason(out))}"
 
 
 def op_client_mtproto_status():
-    ok, out = run2(["bash", MGMT, "--client-mtproto-status"], timeout=60)
+    _, out = run2(["bash", MGMT, "--client-mtproto-status"], timeout=60)
     body = html.escape(_strip_ansi(out)[-2000:] or "无输出")
-    return ("📡 <b>私网 MTProto</b>\n<pre>%s</pre>\n"
-            "仅客户端网段可访问；端口 5753；Telegram 直接填 32 位 hex 密钥。" % body)
+    return (f"📡 <b>私网 MTProto</b>\n<pre>{body}</pre>\n"
+            "仅客户端网段可访问；端口 5753；Telegram 直接填 32 位 hex 密钥。")
 
 
 def op_enable_client_mtproto():
     ok, out = run2(["bash", MGMT, "--enable-client-mtproto"], timeout=240)
     body = html.escape(_strip_ansi(out)[-2500:])
     if ok:
-        return ("✅ <b>MTProto 已开启</b>\n<pre>%s</pre>\n"
-                "请立即保存密钥/链接；之后状态页会隐藏密钥。" % body)
-    return "❌ <b>开启失败</b>\n%s" % html.escape(_reason(out))
+        return (f"✅ <b>MTProto 已开启</b>\n<pre>{body}</pre>\n"
+                "请立即保存密钥/链接；之后状态页会隐藏密钥。")
+    return f"❌ <b>开启失败</b>\n{html.escape(_reason(out))}"
 
 
 def op_disable_client_mtproto():
     ok, out = run2(["bash", MGMT, "--disable-client-mtproto"], timeout=120)
     if ok:
-        return "✅ <b>MTProto 已关闭</b>\n%s" % html.escape(_strip_ansi(out)[-800:])
-    return "❌ <b>关闭失败</b>\n%s" % html.escape(_reason(out))
+        return f"✅ <b>MTProto 已关闭</b>\n{html.escape(_strip_ansi(out)[-800:])}"
+    return f"❌ <b>关闭失败</b>\n{html.escape(_reason(out))}"
 
 
 def op_generate_client_mtproto_secret():
     ok, out = run2(["bash", MGMT, "--generate-client-mtproto-secret"], timeout=180)
     body = html.escape(_strip_ansi(out)[-2500:])
     if ok:
-        return ("✅ <b>密钥已生成</b>\n<pre>%s</pre>\n请立即保存；若已开启服务会自动重载。" % body)
-    return "❌ <b>生成失败</b>\n%s" % html.escape(_reason(out))
+        return (f"✅ <b>密钥已生成</b>\n<pre>{body}</pre>\n请立即保存；若已开启服务会自动重载。")
+    return f"❌ <b>生成失败</b>\n{html.escape(_reason(out))}"
 
 
 def op_set_client_mtproto_secret(secret):
@@ -2565,8 +2541,8 @@ def op_set_client_mtproto_secret(secret):
     ok, out = run2(["bash", MGMT, "--set-client-mtproto-secret", secret], timeout=180)
     body = html.escape(_strip_ansi(out)[-2500:])
     if ok:
-        return ("✅ <b>密钥已更新</b>\n<pre>%s</pre>\n请立即保存链接。" % body)
-    return "❌ <b>设置失败</b>\n%s" % html.escape(_reason(out))
+        return (f"✅ <b>密钥已更新</b>\n<pre>{body}</pre>\n请立即保存链接。")
+    return f"❌ <b>设置失败</b>\n{html.escape(_reason(out))}"
 
 
 def rules_menu():
@@ -2597,7 +2573,7 @@ def rules_del_menu():
     _, entries = _plain_rule_entries()
     for index, (_, line) in enumerate(entries):
         label = _short_button_text(line.strip())
-        data = "ruledel:%d:%s" % (index, _entry_token(line))
+        data = f"ruledel:{index}:{_entry_token(line)}"
         rows.append([{"text": "🗑 " + label, "callback_data": data}])
     if not rows:
         rows.append([{"text": "（没有可删除的规则）", "callback_data": "menu:rules"}])
@@ -2615,10 +2591,10 @@ def rulesets_del_menu():
             target = parts[2].strip()
             parsed = urlparse(source)
             name = os.path.basename(parsed.path.rstrip("/")) or parsed.netloc or source
-            label = "%s → %s" % (name, target)
+            label = f"{name} → {target}"
         else:
             label = line.strip()
-        data = "rulesetdel:%d:%s" % (index, _entry_token(line))
+        data = f"rulesetdel:{index}:{_entry_token(line)}"
         rows.append([{"text": "🗑 " + _short_button_text(label), "callback_data": data}])
     if not rows:
         rows.append([{"text": "（没有可删除的规则集）", "callback_data": "menu:rules"}])
@@ -2633,7 +2609,7 @@ def policy_menu():
         rows.append([{"text": "（还没有分类：用「分类→出口映射」添加，或 CLI: 5gpn set-policy / import-rules）",
                       "callback_data": "menu:rules"}])
     for i, (cat, tgt) in enumerate(pm):
-        rows.append([{"text": "%s → %s" % (cat, tgt), "callback_data": "pol:%d" % i}])
+        rows.append([{"text": f"{cat} → {tgt}", "callback_data": f"pol:{i}"}])
     rows.append([{"text": "« 返回", "callback_data": "menu:rules"}])
     return rows
 
@@ -2641,14 +2617,14 @@ def policy_menu():
 def policy_targets_menu(idx):
     rows, row = [], []
     for e in _targets():
-        row.append({"text": e, "callback_data": "ps:%d:%s" % (idx, e)})
+        row.append({"text": e, "callback_data": f"ps:{idx}:{e}"})
         if len(row) == 3:
             rows.append(row)
             row = []
     if row:
         rows.append(row)
-    rows.append([{"text": "🌍 直连", "callback_data": "ps:%d:direct" % idx},
-                 {"text": "🚫 拒绝", "callback_data": "ps:%d:block" % idx}])
+    rows.append([{"text": "🌍 直连", "callback_data": f"ps:{idx}:direct"},
+                 {"text": "🚫 拒绝", "callback_data": f"ps:{idx}:block"}])
     rows.append([{"text": "« 返回", "callback_data": "menu:policy"}])
     return rows
 
@@ -2712,7 +2688,7 @@ def wizard_menu():
 
 
 def services_menu(prefix, back_target="menu:main"):
-    rows = [[{"text": s, "callback_data": "%s:%s" % (prefix, s)}] for s in SERVICES]
+    rows = [[{"text": s, "callback_data": f"{prefix}:{s}"}] for s in SERVICES]
     rows.append([{"text": "« 返回", "callback_data": back_target}])
     return rows
 
@@ -2737,19 +2713,17 @@ def process_add_exit_message(chat_id, message_id, payload, prompt_mid=None):
                            message_id=prompt_mid)
             return
         prompt_mid = upsert_console(
-            chat_id, "⏳ 正在后台添加 %d 个出口…%s" % (len(items), delete_warning),
+            chat_id, f"⏳ 正在后台添加 {len(items)} 个出口…{delete_warning}",
             message_id=prompt_mid)
         result = op_add_exit_batch(items)
         upsert_console(chat_id, result, exits_menu(), message_id=prompt_mid)
-    except Exception:
-        print("[err] add-exit background task failed chat_id=%s message_id=%s"
-              % (chat_id, message_id), file=sys.stderr)
+    except Exception:  # noqa: BLE001
+        print(f"[err] add-exit background task failed chat_id={chat_id} message_id={message_id}", file=sys.stderr)
         try:
             upsert_console(chat_id, "❌ 添加出口时发生内部错误，请重新进入添加流程。",
                            add_exit_retry_kb(), message_id=prompt_mid)
-        except Exception:
-            print("[err] add-exit failure notification failed chat_id=%s message_id=%s"
-                  % (chat_id, message_id), file=sys.stderr)
+        except Exception:  # noqa: BLE001
+            print(f"[err] add-exit failure notification failed chat_id={chat_id} message_id={message_id}", file=sys.stderr)
     finally:
         payload = ""
         for item in items:
@@ -2766,7 +2740,7 @@ def handle_message(msg):
     # /id is always allowed: it only reveals the caller's own numeric id,
     # which is needed to bootstrap TG_ADMIN_IDS.
     if text.startswith("/id"):
-        send(chat_id, "你的 Telegram 数字 ID: <code>%d</code>" % uid)
+        send(chat_id, f"你的 Telegram 数字 ID: <code>{uid}</code>")
         return
 
     if not authorized(uid):
@@ -2815,7 +2789,7 @@ def handle_message(msg):
         prompt_mid = state.get("prompt_mid")
         PENDING.pop(chat_id, None)
         background(delete_message, chat_id, msg.get("message_id"))
-        mid = upsert_console(chat_id, "⏳ 正在重命名出口 <b>%s</b>…" % html.escape(old_name),
+        mid = upsert_console(chat_id, f"⏳ 正在重命名出口 <b>{html.escape(old_name)}</b>…",
                              message_id=prompt_mid)
         console_async(chat_id, lambda: op_rename_exit(old_name, new_name),
                       keyboard_fn=exits_menu, message_id=mid)
@@ -2839,7 +2813,7 @@ def handle_message(msg):
             return
         mid = upsert_console(
             chat_id,
-            "请选择目标：<code>%s,%s,?</code>" % (html.escape(rule_type), html.escape(text.strip())),
+            f"请选择目标：<code>{html.escape(rule_type)},{html.escape(text.strip())},?</code>",
             _rule_target_buttons("raddo"), message_id=prompt_mid)
         PENDING[chat_id] = {"action": "rules_add_target", "rule_type": rule_type,
                             "rule_value": text.strip(), "prompt_mid": mid}
@@ -2863,7 +2837,7 @@ def handle_message(msg):
             return
         mid = upsert_console(
             chat_id,
-            "请选择目标：<code>%s</code>" % html.escape(ruleset_url),
+            f"请选择目标：<code>{html.escape(ruleset_url)}</code>",
             _rule_target_buttons("rsadd"), message_id=prompt_mid)
         PENDING[chat_id] = {"action": "rules_addset_target",
                             "ruleset_url": ruleset_url, "prompt_mid": mid}
@@ -2880,7 +2854,7 @@ def handle_message(msg):
             return
         mid = upsert_console(
             chat_id,
-            "请选择 <code>%s</code> 的目标出口 / 直连 / 拒绝：" % html.escape(domain_text),
+            f"请选择 <code>{html.escape(domain_text)}</code> 的目标出口 / 直连 / 拒绝：",
             _rule_target_buttons("pdomt", "menu:rules"), message_id=prompt_mid)
         PENDING[chat_id] = {"action": "proxy_domain_target",
                             "domain": domain_text, "prompt_mid": mid}
@@ -3122,8 +3096,8 @@ def handle_callback(cb):
             edit(cb, "目标已变化，请重新选择。", _rule_target_buttons("raddo"))
         else:
             PENDING.pop(chat_id, None)
-            line = "%s,%s,%s" % (rule_type, value, target)
-            edit(cb, "⏳ 正在添加规则 <code>%s</code>…" % html.escape(line))
+            line = f"{rule_type},{value},{target}"
+            edit(cb, f"⏳ 正在添加规则 <code>{html.escape(line)}</code>…")
             edit_async(cb, lambda: op_add_rule(line), back_kb("menu:rules"))
     elif data == "rules:addset":
         PENDING[chat_id] = {"action": "rules_addset", "prompt_mid": cb_mid}
@@ -3162,9 +3136,8 @@ def handle_callback(cb):
             edit(cb, "目标已变化，请重新选择。", _rule_target_buttons("rsadd"))
         else:
             PENDING.pop(chat_id, None)
-            edit(cb, "⏳ 正在添加规则集 <code>%s</code> → <b>%s</b>…"
-                 % (html.escape(ruleset_url), html.escape(target)))
-            edit_async(cb, lambda: op_add_ruleset("%s %s" % (ruleset_url, target)),
+            edit(cb, f"⏳ 正在添加规则集 <code>{html.escape(ruleset_url)}</code> → <b>{html.escape(target)}</b>…")
+            edit_async(cb, lambda: op_add_ruleset(f"{ruleset_url} {target}"),
                        back_kb("menu:rules"))
     elif data.startswith("pdomt:"):
         state = PENDING.get(chat_id) or {}
@@ -3178,28 +3151,26 @@ def handle_callback(cb):
             edit(cb, "目标已变化，请重新选择。", _rule_target_buttons("pdomt", "menu:rules"))
         else:
             PENDING.pop(chat_id, None)
-            edit(cb, "⏳ 正在设置 <code>%s</code> → <b>%s</b>…"
-                 % (html.escape(domain), html.escape(target)))
+            edit(cb, f"⏳ 正在设置 <code>{html.escape(domain)}</code> → <b>{html.escape(target)}</b>…")
             edit_async(cb, lambda: op_proxy_domain(domain, target), back_kb("menu:rules"))
     elif data == "exit_add":
         PENDING[chat_id] = {"action": "add_exit_link", "prompt_mid": cb_mid}
         edit(cb,
              "➕ <b>添加出口</b>\n\n"
              "直接发送一条或多条节点链接，每行一条；我会优先使用链接里的节点名称作为出口名。\n\n"
-             "支持：<code>%s</code>\n\n"
+             f"支持：<code>{SUPPORTED_EXIT_LINKS}</code>\n\n"
              "链接没有名称时，也可以发 <code>出口名 链接</code> 指定名称；同名会自动去重。\n\n"
              "🔐 为避免凭据留在聊天记录中，进入此步骤后，你发送的下一条消息会在读取后尝试自动删除；"
-             "即使解析失败也会删除。删除失败时会提醒你手动处理。" % SUPPORTED_EXIT_LINKS,
+             "即使解析失败也会删除。删除失败时会提醒你手动处理。",
              cancel_kb("exits"))
     elif data == "wiz:add_exit":
         PENDING[chat_id] = {"action": "add_exit_link", "prompt_mid": cb_mid}
         edit(cb,
              "2️⃣ <b>添加出口</b>\n\n"
              "直接发送一条或多条节点链接，每行一条；我会优先使用链接里的节点名称作为出口名。\n\n"
-             "支持：<code>%s</code>\n\n"
+             f"支持：<code>{SUPPORTED_EXIT_LINKS}</code>\n\n"
              "链接没有名称时，也可以发 <code>出口名 链接</code> 指定名称；同名会自动去重。\n\n"
-             "🔐 为避免凭据留在聊天记录中，进入此步骤后，你发送的下一条消息会在读取后尝试自动删除。"
-             % SUPPORTED_EXIT_LINKS,
+             "🔐 为避免凭据留在聊天记录中，进入此步骤后，你发送的下一条消息会在读取后尝试自动删除。",
              cancel_kb("ops"))
     elif data.startswith("exitren:"):
         name = data[len("exitren:"):]
@@ -3209,8 +3180,8 @@ def handle_callback(cb):
             PENDING[chat_id] = {"action": "rename_exit", "old": name, "prompt_mid": cb_mid}
             edit(cb,
                  "✏️ <b>重命名出口</b>\n\n"
-                 "当前出口：<b>%s</b>\n"
-                 "请发送新的名称。" % html.escape(name),
+                 f"当前出口：<b>{html.escape(name)}</b>\n"
+                 "请发送新的名称。",
                  cancel_kb("exits"))
     elif data == "dot:domain":
         PENDING[chat_id] = {"action": "dot_domain", "prompt_mid": cb_mid}
@@ -3246,7 +3217,7 @@ def handle_callback(cb):
         if not domain:
             edit(cb, "没有可强制更换的域名，请重新点更改域名。", dot_menu())
         else:
-            edit(cb, "⏳ 正在强制更换 DoT 域名为 <code>%s</code>…" % html.escape(domain))
+            edit(cb, f"⏳ 正在强制更换 DoT 域名为 <code>{html.escape(domain)}</code>…")
             def do_force_domain():
                 result = op_force_set_dot_domain(domain)
                 if "已强制更换" in result:
@@ -3262,9 +3233,8 @@ def handle_callback(cb):
         edit(cb,
              ("✏️ <b>设置客户端网段</b>\n\n"
               "发送一个 IPv4 CIDR（前缀 /8–/30）。\n\n"
-              "当前：<code>%s</code>\n"
-              "示例：<code>172.22.0.0/16</code> 或 <code>10.10.0.0/16</code>"
-              % html.escape(_client_cidr())),
+              f"当前：<code>{html.escape(_client_cidr())}</code>\n"
+              "示例：<code>172.22.0.0/16</code> 或 <code>10.10.0.0/16</code>"),
              cancel_kb("dot"))
     elif data == "cidr:detect":
         edit(cb, "⏳ 正在从本机网卡探测客户端网段…")
@@ -3312,7 +3282,7 @@ def handle_callback(cb):
             edit(cb, "地点列表已变化，请重新选择。", keyboard)
         else:
             label, lat, lon = preset
-            edit(cb, "⏳ 正在把 WLOC 切换到 <b>%s</b>…" % html.escape(label))
+            edit(cb, f"⏳ 正在把 WLOC 切换到 <b>{html.escape(label)}</b>…")
             edit_async(cb, lambda: _wloc_apply(lat, lon, label), _wloc_page()[1])
     elif data == "wloc:off":
         edit(cb, "⏳ 正在关闭 WLOC 并恢复原始定位…")
@@ -3321,7 +3291,7 @@ def handle_callback(cb):
         result = _send_wloc_ca(chat_id)
         page, keyboard = _wloc_page()
         if result:
-            edit(cb, "❌ %s\n\n%s" % (html.escape(result), page), keyboard)
+            edit(cb, f"❌ {html.escape(result)}\n\n{page}", keyboard)
         else:
             edit(cb, "✅ WLOC CA 已作为文件发送。\n\n" + page, keyboard)
 
@@ -3338,7 +3308,7 @@ def handle_callback(cb):
         edit_async(cb, op_status, status_kb())
     elif data.startswith("logs:"):
         svc = data[len("logs:"):]
-        edit(cb, "📜 正在取 <b>%s</b> 日志…" % html.escape(svc))
+        edit(cb, f"📜 正在取 <b>{html.escape(svc)}</b> 日志…")
         edit_async(cb, lambda: op_logs(svc), back_kb("menu:logs"), mono=True)
     elif data == "exits:check":
         edit(cb, "⏳ 正在检查出口连通性…")
@@ -3421,14 +3391,14 @@ def handle_callback(cb):
         if not SNAP_ID_RE.match(snap_id):
             edit(cb, "快照 ID 无效，请重新打开列表。", back_kb("menu:ops"))
         else:
-            edit(cb, "⏳ 正在回滚到快照 <code>%s</code>…" % html.escape(snap_id))
+            edit(cb, f"⏳ 正在回滚到快照 <code>{html.escape(snap_id)}</code>…")
             edit_async(cb, lambda: op_rollback(snap_id), back_kb("menu:ops"))
     elif data.startswith("snapdel:"):
         snap_id = data[len("snapdel:"):]
         if not SNAP_ID_RE.match(snap_id):
             edit(cb, "快照 ID 无效，请重新打开列表。", back_kb("menu:ops"))
         else:
-            edit(cb, "⏳ 正在删除快照 <code>%s</code>…" % html.escape(snap_id))
+            edit(cb, f"⏳ 正在删除快照 <code>{html.escape(snap_id)}</code>…")
             edit_async(cb, lambda: op_delete_snapshot(snap_id), back_kb("menu:ops"))
     elif data == "act:restart":
         edit(cb, "⏳ 正在重启服务…")
@@ -3444,11 +3414,11 @@ def handle_callback(cb):
         edit_async(cb, lambda: op_set_exit("smart"), back_kb("menu:rules"))
     elif data.startswith("exit:"):
         name = data[len("exit:"):]
-        edit(cb, "⏳ 正在切换出口到 <b>%s</b>…" % html.escape(name))
+        edit(cb, f"⏳ 正在切换出口到 <b>{html.escape(name)}</b>…")
         edit_async(cb, lambda: op_set_exit(name), back_kb("menu:exits"))
     elif data.startswith("exitdel:"):
         name = data[len("exitdel:"):]
-        edit(cb, "⏳ 正在删除出口 <b>%s</b>…" % html.escape(name))
+        edit(cb, f"⏳ 正在删除出口 <b>{html.escape(name)}</b>…")
         edit_async(cb, lambda: op_del_exit(name), back_kb("menu:exits"))
     elif data == "act:ios":
         edit(cb, "⏳ 正在生成 iOS 二维码…")
@@ -3460,8 +3430,7 @@ def handle_callback(cb):
             idx = -1
         pm = _policy_map()
         if 0 <= idx < len(pm):
-            edit(cb, "把分类 <b>%s</b>（现为 %s）路由到哪里？"
-                 % (html.escape(pm[idx][0]), html.escape(pm[idx][1])), policy_targets_menu(idx))
+            edit(cb, f"把分类 <b>{html.escape(pm[idx][0])}</b>（现为 {html.escape(pm[idx][1])}）路由到哪里？", policy_targets_menu(idx))
         else:
             edit(cb, "分类已变化，请重新打开。", policy_menu())
     elif data.startswith("ps:"):
@@ -3473,8 +3442,7 @@ def handle_callback(cb):
             idx, target = -1, ""
         if 0 <= idx < len(pm):
             cat = pm[idx][0]
-            edit(cb, "⏳ 正在设置 <b>%s</b> → <b>%s</b> 并重建分流（可能较久）…"
-                 % (html.escape(cat), html.escape(target)))
+            edit(cb, f"⏳ 正在设置 <b>{html.escape(cat)}</b> → <b>{html.escape(target)}</b> 并重建分流（可能较久）…")
             edit_async(cb, lambda: op_set_policy(cat, target), back_kb("menu:policy"))
         else:
             edit(cb, "分类已变化，请重新打开。", policy_menu())
@@ -3513,7 +3481,7 @@ def set_commands():
             params["scope"] = scope
         r = tg("deleteMyCommands", **params)
         if not r.get("ok"):
-            print("[warn] deleteMyCommands failed for %s: %s" % (scope or "default", r), file=sys.stderr)
+            print(f"[warn] deleteMyCommands failed for {scope or 'default'}: {r}", file=sys.stderr)
 
     for scope in (
         None,
@@ -3524,7 +3492,7 @@ def set_commands():
             params["scope"] = scope
         r = tg("setMyCommands", **params)
         if not r.get("ok"):
-            print("[warn] setMyCommands failed for %s: %s" % (scope or "default", r), file=sys.stderr)
+            print(f"[warn] setMyCommands failed for {scope or 'default'}: {r}", file=sys.stderr)
 
     # Make the input-box button show the command menu.
     tg("setChatMenuButton", menu_button={"type": "commands"})
@@ -3544,7 +3512,7 @@ def main():
               file=sys.stderr)
 
     set_commands()
-    print("5gpn tgbot started; admins=%s" % sorted(ADMIN_IDS), file=sys.stderr)
+    print(f"5gpn tgbot started; admins={sorted(ADMIN_IDS)}", file=sys.stderr)
     offset = None
     while True:
         # Stay below common 30s idle TCP timeouts so the next update does not
@@ -3563,8 +3531,8 @@ def main():
                     handle_message(upd["message"])
                 elif "callback_query" in upd:
                     handle_callback(upd["callback_query"])
-            except Exception as e:  # never let one bad update kill the loop
-                print("[err] handling update: %s" % e, file=sys.stderr)
+            except Exception as e:  # never let one bad update kill the loop  # noqa: BLE001
+                print(f"[err] handling update: {e}", file=sys.stderr)
 
 
 if __name__ == "__main__":

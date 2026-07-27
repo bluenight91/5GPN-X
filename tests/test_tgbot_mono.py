@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """mono <pre> formatting must stay closed and within Telegram's 4096 limit."""
 import importlib.util
-from pathlib import Path
 import unittest
+from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("tgbot_mono", root / "lib" / "tgbot.py")
@@ -14,7 +14,7 @@ class MonoTextTests(unittest.TestCase):
     def test_quote_heavy_log_stays_closed_under_limit(self):
         log = "\n".join(
             '2026-07-19T16:55:27Z kfc mosdns[1]: WARN fwd upstream error '
-            '{"uqid": %d, "qname": "user.jpush.cn.", "error": "context deadline exceeded"}' % i
+            f'{{"uqid": {i}, "qname": "user.jpush.cn.", "error": "context deadline exceeded"}}'
             for i in range(30)
         )
         out = bot.mono_text(log)

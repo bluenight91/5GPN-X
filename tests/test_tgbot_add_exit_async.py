@@ -1,10 +1,9 @@
 import contextlib
 import importlib.util
 import io
-from pathlib import Path
 import threading
 import unittest
-
+from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("tgbot_add_exit_async", root / "lib" / "tgbot.py")
@@ -18,7 +17,7 @@ REAL_OP_ADD_EXIT = bot.op_add_exit
 
 CHAT_ID = 10
 SECRET = "SECRET_SENTINEL"
-URI = "socks5://user:%s@198.51.100.23:1080#AsyncNode" % SECRET
+URI = f"socks5://user:{SECRET}@198.51.100.23:1080#AsyncNode"
 WARNING = "未能自动删除含凭据的消息，请手动删除上一条节点消息"
 
 
@@ -36,7 +35,7 @@ class AddExitAsyncTest(unittest.TestCase):
         bot.PENDING.clear()
         bot.authorized = lambda uid: True
         bot.exits_menu = lambda: [[{"text": "back", "callback_data": "menu:exits"}]]
-        bot.parse_exit_names = lambda: []
+        bot.parse_exit_names = list
         bot.delete_message = REAL_DELETE_MESSAGE
         bot.parse_add_exit_inputs = REAL_PARSE_ADD_EXIT_INPUTS
         bot.op_add_exit_batch = REAL_OP_ADD_EXIT_BATCH
@@ -142,10 +141,10 @@ class AddExitAsyncTest(unittest.TestCase):
             with self.subTest(deleted=deleted):
                 calls = []
                 replies = []
-                bot.delete_message = lambda chat_id, message_id: calls.append("delete") or deleted
-                bot.parse_add_exit_inputs = lambda payload: (calls.append("parse") or ([], "无法识别节点。"))
+                bot.delete_message = lambda chat_id, message_id, calls=calls, deleted=deleted: calls.append("delete") or deleted
+                bot.parse_add_exit_inputs = lambda payload, calls=calls: (calls.append("parse") or ([], "无法识别节点。"))
                 bot.op_add_exit_batch = lambda items: self.fail("batch add must not run")
-                bot.send = lambda chat_id, text, keyboard=None, mono=False: replies.append((text, keyboard))
+                bot.send = lambda chat_id, text, keyboard=None, mono=False, replies=replies: replies.append((text, keyboard))
 
                 bot.process_add_exit_message(CHAT_ID, 40, "invalid-" + SECRET)
 

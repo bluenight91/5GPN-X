@@ -9,7 +9,6 @@ import shutil
 import sys
 from urllib.parse import urldefrag
 
-
 EXITS_DIR = os.environ.get("EXITS_DIR", "/etc/5gpn/exits")
 WG_DIR = os.environ.get("WG_DIR", "/etc/wireguard")
 CACHE_DIR = os.environ.get("PGW_RULESET_CACHE", "/etc/5gpn/rulesets")
@@ -97,11 +96,11 @@ def wg_to_proxy(name, path):
     host, port = parse_endpoint(peer.get("endpoint", ""))
     addresses = [item.strip() for item in interface.get("address", "").split(",") if item.strip()]
     if not host or not addresses:
-        die("invalid WireGuard exit '%s'" % name)
+        die(f"invalid WireGuard exit '{name}'")
     ipv4 = next((item for item in addresses if ":" not in item), "")
     ipv6 = next((item for item in addresses if ":" in item), "")
     if not ipv4:
-        die("WireGuard exit '%s' needs an IPv4 Interface Address" % name)
+        die(f"WireGuard exit '{name}' needs an IPv4 Interface Address")
     proxy = {"name": name, "type": "wireguard", "server": host, "port": port,
              "ip": ipv4, "private-key": interface.get("privatekey", ""),
              "public-key": peer.get("publickey", ""), "udp": True,
@@ -123,14 +122,14 @@ def build_exit_proxy(name):
         try:
             with open(config_path, encoding="utf-8") as handle:
                 proxy = dict(json.load(handle)["proxies"][0])
-        except Exception as exc:
-            die("cannot read exit '%s' config: %s" % (name, exc))
+        except Exception as exc:  # noqa: BLE001
+            die(f"cannot read exit '{name}' config: {exc}")
         proxy["name"] = name
         return proxy
-    wg_path = os.path.join(WG_DIR, "pgw-%s.conf" % name)
+    wg_path = os.path.join(WG_DIR, f"pgw-{name}.conf")
     if os.path.exists(wg_path):
         return wg_to_proxy(name, wg_path)
-    die("rule references unknown exit: '%s' (add it first)" % name)
+    die(f"rule references unknown exit: '{name}' (add it first)")
 
 
 def iter_configured_exits():
@@ -168,17 +167,17 @@ def parse_classical_rules(text):
             kind = parts[0].upper().replace("_", "-")
             if kind in ("DOMAIN", "HOST", "DOMAIN-SUFFIX", "HOST-SUFFIX", "DOMAIN-KEYWORD", "HOST-KEYWORD") and len(parts) >= 2:
                 normalized = {"HOST": "DOMAIN", "HOST-SUFFIX": "DOMAIN-SUFFIX", "HOST-KEYWORD": "DOMAIN-KEYWORD"}.get(kind, kind)
-                payload.append("%s,%s" % (normalized, parts[1]))
+                payload.append(f"{normalized},{parts[1]}")
             elif kind in ("IP-CIDR", "IP-CIDR6") and len(parts) >= 2:
                 try:
                     ipaddress.ip_network(parts[1], strict=False)
-                    payload.append("%s,%s" % (kind, parts[1]))
+                    payload.append(f"{kind},{parts[1]}")
                 except ValueError:
                     pass
         else:
             domain = re.sub(r"^[*+]?\.", "", line).rstrip(".")
             if DOMAIN_RE.match(domain):
-                payload.append("DOMAIN-SUFFIX,%s" % domain)
+                payload.append(f"DOMAIN-SUFFIX,{domain}")
     return list(dict.fromkeys(payload))
 
 
@@ -206,7 +205,7 @@ def main():
             proxy_names.add(name)
         except SystemExit:
             # Preload must not abort smart rebuild if one exit file is corrupt.
-            sys.stderr.write("warning: skipping unloadable exit '%s'\n" % name)
+            sys.stderr.write(f"warning: skipping unloadable exit '{name}'\n")
             continue
 
     def target(policy):
@@ -222,19 +221,19 @@ def main():
         if resolved.lower() in ("block", "reject"):
             return "REJECT"
         if not (os.path.exists(os.path.join(EXITS_DIR, resolved + ".yaml")) or
-                os.path.exists(os.path.join(WG_DIR, "pgw-%s.conf" % resolved))):
-            die("policy '%s' references unknown exit or category '%s'" % (raw, resolved))
+                os.path.exists(os.path.join(WG_DIR, f"pgw-{resolved}.conf"))):
+            die(f"policy '{raw}' references unknown exit or category '{resolved}'")
         if resolved not in proxy_names:
             proxies.append(build_exit_proxy(resolved))
             proxy_names.add(resolved)
         return resolved
 
     def provider_tag(source, prefix="rs"):
-        return "%s_%s" % (prefix, hashlib.sha256(source.encode()).hexdigest()[:12])
+        return f"{prefix}_{hashlib.sha256(source.encode()).hexdigest()[:12]}"
 
     def add_mrs(tag, url, behavior):
         providers.setdefault(tag, {"type": "http", "behavior": behavior, "format": "mrs",
-                                   "url": url, "path": "./providers/%s.mrs" % tag,
+                                   "url": url, "path": f"./providers/{tag}.mrs",
                                    "interval": INTERVAL, "proxy": "DIRECT"})
 
     def add_ruleset(source, policy):
@@ -269,13 +268,13 @@ def main():
                                                  else "ipcidr" if any(word in suffix for word in ip_words)
                                                  else "classical")
                 providers[tag] = {"type": "http", "behavior": behavior, "format": fmt,
-                                  "url": source, "path": "./providers/%s.%s" % (tag, "txt" if fmt == "text" else "yaml"),
+                                  "url": source, "path": f"./providers/{tag}.{'txt' if fmt == 'text' else 'yaml'}",
                                   "interval": INTERVAL, "proxy": "DIRECT"}
         else:
             if not os.path.isabs(source):
-                die("local rule-set path must be absolute: %s" % source)
+                die(f"local rule-set path must be absolute: {source}")
             if not os.path.exists(source):
-                die("local rule-set not found: %s" % source)
+                die(f"local rule-set not found: {source}")
             os.makedirs(CACHE_DIR, exist_ok=True)
             if source.lower().endswith(".mrs"):
                 cached = os.path.join(CACHE_DIR, tag + ".mrs")
@@ -288,12 +287,12 @@ def main():
                 with open(source, encoding="utf-8") as handle:
                     payload = parse_classical_rules(handle.read())
                 if not payload:
-                    die("local rule-set produced no supported rules: %s" % source)
+                    die(f"local rule-set produced no supported rules: {source}")
                 cached = os.path.join(CACHE_DIR, tag + ".json")
                 with open(cached, "w", encoding="utf-8") as handle:
                     json.dump({"payload": payload}, handle, ensure_ascii=False, indent=2)
                 providers[tag] = {"type": "file", "behavior": "classical", "format": "yaml", "path": cached}
-        rules.append("RULE-SET,%s,%s" % (tag, policy))
+        rules.append(f"RULE-SET,{tag},{policy}")
 
     with open(rules_path, encoding="utf-8") as handle:
         for line_number, raw in enumerate(handle, 1):
@@ -304,27 +303,27 @@ def main():
             kind = parts[0].upper().replace("_", "-")
             if kind == "FINAL":
                 if len(parts) < 2:
-                    die("line %d: FINAL needs a policy" % line_number)
+                    die(f"line {line_number}: FINAL needs a policy")
                 final = target(parts[1])
                 continue
             if len(parts) < 3:
-                die("line %d: rule needs <type>,<value>,<policy>" % line_number)
+                die(f"line {line_number}: rule needs <type>,<value>,<policy>")
             value, policy = parts[1], target(parts[2])
             if kind in ("DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD", "IP-CIDR", "IP-CIDR6"):
-                rules.append("%s,%s,%s" % (kind, value, policy))
+                rules.append(f"{kind},{value},{policy}")
             elif kind == "GEOSITE":
                 tag = "geosite_" + re.sub(r"[^a-z0-9_-]", "", value.lower())
                 add_mrs(tag, GEOSITE_MRS % value.lower(), "domain")
-                rules.append("RULE-SET,%s,%s" % (tag, policy))
+                rules.append(f"RULE-SET,{tag},{policy}")
             elif kind == "GEOIP":
                 tag = "geoip_" + re.sub(r"[^a-z0-9_-]", "", value.lower())
                 add_mrs(tag, GEOIP_MRS % value.lower(), "ipcidr")
-                rules.append("RULE-SET,%s,%s" % (tag, policy))
+                rules.append(f"RULE-SET,{tag},{policy}")
             elif kind in ("RULE-SET", "RULESET"):
                 add_ruleset(value, policy)
             else:
-                die("line %d: unsupported rule type '%s'" % (line_number, parts[0]))
-    rules.append("MATCH,%s" % final)
+                die(f"line {line_number}: unsupported rule type '{parts[0]}'")
+    rules.append(f"MATCH,{final}")
     # metacubexd's Proxy tab primarily lists proxy-groups; without one, exits that
     # only appear as bare rule targets are easy to miss. This select group is not
     # referenced by rules — routing still uses exit names directly.
