@@ -1045,6 +1045,8 @@ def _status_items():
     if os.path.isfile("/opt/5gpn/etc/client-mtproto.enabled"):
         items.append(("5gpn-mtproxy", "MTProto core"))
         items.append(("5gpn-client-mtproto", "MTProto front"))
+    if os.path.isfile("/opt/5gpn/etc/clash-remote.enabled"):
+        items.append(("5gpn-clash-remote", "远程 Clash API"))
     cur = _read_file("/opt/5gpn/etc/current-exit") or "local"
     if cur and cur not in ("local",):
         items.append((f"5gpn-mihomo@{cur}", f"出口 {cur}"))
@@ -2548,6 +2550,7 @@ def ops_menu():
          {"text": "🧭 向导", "callback_data": "wiz:start"}],
         [{"text": "🧦 私网 SOCKS5", "callback_data": "menu:socks"},
          {"text": "📡 私网 MTProto", "callback_data": "menu:mtproto"}],
+        [{"text": "🖥 远程 Clash API", "callback_data": "menu:clash_remote"}],
         [{"text": "🧩 组件版本", "callback_data": "menu:components"},
          {"text": "♻️ 重启服务", "callback_data": "act:restart"}],
         [{"text": "📜 日志", "callback_data": "menu:logs"}],
@@ -2572,6 +2575,17 @@ def client_mtproto_menu():
         [{"text": "🔑 填写密钥", "callback_data": "mtproto:set_secret"},
          {"text": "🎲 生成密钥", "callback_data": "mtproto:generate"}],
         [{"text": "🔄 刷新状态", "callback_data": "mtproto:status"}],
+        [{"text": "« 返回", "callback_data": "menu:ops"}],
+    ]
+
+
+def clash_remote_menu():
+    return [
+        [{"text": "▶️ 开启", "callback_data": "clashr:enable"},
+         {"text": "⏹ 关闭", "callback_data": "clashr:disable"}],
+        [{"text": "🔑 重置密钥", "callback_data": "clashr:reset"},
+         {"text": "🛡 额外网段", "callback_data": "clashr:extra"}],
+        [{"text": "🔄 刷新状态", "callback_data": "clashr:status"}],
         [{"text": "« 返回", "callback_data": "menu:ops"}],
     ]
 
@@ -2646,6 +2660,46 @@ def op_set_client_mtproto_secret(secret):
     body = html.escape(_strip_ansi(out)[-2500:])
     if ok:
         return (f"✅ <b>密钥已更新</b>\n<pre>{body}</pre>\n请立即保存链接。")
+    return f"❌ <b>设置失败</b>\n{html.escape(_reason(out))}"
+
+
+def op_clash_remote_status():
+    _, out = run2(["bash", MGMT, "--clash-remote-status"], timeout=60)
+    body = html.escape(_strip_ansi(out)[-2000:] or "无输出")
+    return (f"🖥 <b>远程 Clash 面板 API</b>\n<pre>{body}</pre>\n"
+            "HTTPS 专用端口；客户端网段 + 额外 CIDR；第三方面板填 URL + 远程密钥，路径留空。")
+
+
+def op_enable_clash_remote():
+    ok, out = run2(["bash", MGMT, "--enable-clash-remote"], timeout=180)
+    body = html.escape(_strip_ansi(out)[-2500:])
+    if ok:
+        return (f"✅ <b>远程 Clash API 已开启</b>\n<pre>{body}</pre>\n"
+                "请立即保存密钥；之后状态页会隐藏。")
+    return f"❌ <b>开启失败</b>\n{html.escape(_reason(out))}"
+
+
+def op_disable_clash_remote():
+    ok, out = run2(["bash", MGMT, "--disable-clash-remote"], timeout=120)
+    if ok:
+        return f"✅ <b>远程 Clash API 已关闭</b>\n{html.escape(_strip_ansi(out)[-800:])}"
+    return f"❌ <b>关闭失败</b>\n{html.escape(_reason(out))}"
+
+
+def op_reset_clash_remote_secret():
+    ok, out = run2(["bash", MGMT, "--reset-clash-remote-secret"], timeout=120)
+    body = html.escape(_strip_ansi(out)[-2000:])
+    if ok:
+        return (f"✅ <b>密钥已轮换</b>\n<pre>{body}</pre>\n请立即保存新密钥。")
+    return f"❌ <b>轮换失败</b>\n{html.escape(_reason(out))}"
+
+
+def op_set_clash_remote_extra_cidr(cidr):
+    cidr = (cidr or "").strip()
+    ok, out = run2(["bash", MGMT, "--set-clash-remote-extra-cidr", cidr], timeout=120)
+    body = html.escape(_strip_ansi(out)[-2000:])
+    if ok:
+        return f"✅ <b>额外网段已更新</b>\n<pre>{body}</pre>"
     return f"❌ <b>设置失败</b>\n{html.escape(_reason(out))}"
 
 
@@ -3074,6 +3128,15 @@ def handle_message(msg):
         console_async(chat_id, lambda: op_set_client_mtproto_secret(secret_text),
                       client_mtproto_menu(), message_id=mid)
         return
+    if state and state.get("action") == "clashr_extra_cidr":
+        prompt_mid = state.get("prompt_mid")
+        PENDING.pop(chat_id, None)
+        cidr_text = text
+        background(delete_message, chat_id, msg.get("message_id"))
+        mid = upsert_console(chat_id, "⏳ 正在设置额外允许网段…", message_id=prompt_mid)
+        console_async(chat_id, lambda: op_set_clash_remote_extra_cidr(cidr_text),
+                      clash_remote_menu(), message_id=mid)
+        return
 
     send(chat_id, "未知命令。发送 /menu 打开操作面板。")
 
@@ -3184,6 +3247,10 @@ def handle_callback(cb):
         PENDING.pop(chat_id, None)
         edit(cb, "⏳ 正在读取 MTProto 状态…")
         edit_async(cb, op_client_mtproto_status, client_mtproto_menu())
+    elif data == "menu:clash_remote":
+        PENDING.pop(chat_id, None)
+        edit(cb, "⏳ 正在读取远程 Clash API 状态…")
+        edit_async(cb, op_clash_remote_status, clash_remote_menu())
     elif data == "menu:logs":
         edit(cb, "选择要查看日志的服务：", services_menu("logs", "menu:ops"))
     elif data == "wiz:start":
@@ -3522,6 +3589,25 @@ def handle_callback(cb):
              "也可用 <code>dd</code>+32hex；旧 ee… FakeTLS 会提取其中的 key。\n"
              "端口固定 <code>5753</code>；仅客户端网段可连。",
              back_kb("menu:mtproto"))
+    elif data == "clashr:status":
+        edit(cb, "⏳ 正在读取远程 Clash API 状态…")
+        edit_async(cb, op_clash_remote_status, clash_remote_menu())
+    elif data == "clashr:enable":
+        edit(cb, "⏳ 正在开启远程 Clash API…")
+        edit_async(cb, op_enable_clash_remote, clash_remote_menu())
+    elif data == "clashr:disable":
+        edit(cb, "⏳ 正在关闭远程 Clash API…")
+        edit_async(cb, op_disable_clash_remote, clash_remote_menu())
+    elif data == "clashr:reset":
+        edit(cb, "⏳ 正在轮换远程密钥…")
+        edit_async(cb, op_reset_clash_remote_secret, clash_remote_menu())
+    elif data == "clashr:extra":
+        PENDING[chat_id] = {"action": "clashr_extra_cidr", "prompt_mid": cb_mid}
+        edit(cb,
+             "🛡 <b>额外允许网段</b>\n"
+             "发送一行 IPv4 CIDR（可多段逗号分隔），例如 <code>203.0.113.10/32</code>。\n"
+             "会叠加在客户端网段之上。发送 <code>-</code> 或空行可清空额外网段。",
+             back_kb("menu:clash_remote"))
     elif data == "act:report":
         edit(cb, "⏳ 正在生成脱敏诊断报告…")
         edit_report_async(cb, chat_id)

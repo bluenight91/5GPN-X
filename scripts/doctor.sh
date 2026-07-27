@@ -151,6 +151,15 @@ if [[ -f "${CONF_DIR}/client-mtproto.enabled" ]]; then
 else
     note "私网 MTProto" "disabled"
 fi
+if [[ -f "${CONF_DIR}/clash-remote.enabled" ]]; then
+    if svc_active 5gpn-clash-remote; then
+        ok "服务 clash-remote" "running"
+    else
+        bad "服务 clash-remote" "enabled but not running"
+    fi
+else
+    note "远程 Clash API" "disabled"
+fi
 if [[ "$CURRENT" == "smart" ]]; then
     if svc_active 5gpn-mihomo@smart; then
         ok "服务 smart" "running"
@@ -187,6 +196,10 @@ fi
 if [[ -f "${CONF_DIR}/client-mtproto.enabled" ]]; then
     mtproto_port="$(cat "${CONF_DIR}/client-mtproto.port" 2>/dev/null || echo 5753)"
     check_listen tcp "$mtproto_port" "私网 MTProto"
+fi
+if [[ -f "${CONF_DIR}/clash-remote.enabled" ]]; then
+    clash_remote_port="$(cat "${CONF_DIR}/clash-remote.port" 2>/dev/null || echo 9443)"
+    check_listen tcp "$clash_remote_port" "远程 Clash API"
 fi
 if [[ "$CURRENT" == "smart" ]]; then
     if ss -H -tln 2>/dev/null | grep -q "127.0.0.1:9090"; then

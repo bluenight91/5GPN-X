@@ -22,3 +22,10 @@ chmod 600 /etc/mosdns/certs/*.pem
 if systemctl is-active --quiet mosdns; then
     systemctl restart mosdns
 fi
+# api-server and clash-remote load the PEM chain at process start.
+if systemctl is-active --quiet 5gpn-api; then
+    systemctl restart 5gpn-api
+fi
+if systemctl is-active --quiet 5gpn-clash-remote; then
+    systemctl restart 5gpn-clash-remote
+fi

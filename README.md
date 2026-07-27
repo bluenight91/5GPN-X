@@ -220,9 +220,23 @@ sudo 5gpn setup-api   # 生成令牌并启用 HTTP 控制 API（默认端口 844
 
 **mihomo 监控**：`--setup-api` 会安装 metacubexd（默认锁定 **1.270.5**；可用 `sudo 5gpn update-webui <版本>` 自助升级，也可用 `METACUBEXD_VERSION=…` 覆盖，两者都会写入 `/opt/5gpn/etc/metacubexd.pin`，之后 `update` 不会静默降级），并在 smart 实例上启用仅回环的 Clash API（`127.0.0.1:9090`，不对公网开放，经 api-server 8444 反代访问）。控制台「监控」页上半为概览摘要，下半为完整 metacubexd 面板：**控制台与 API 同源时面板内嵌显示；控制台跨站托管（Cloudflare Pages、本地 file:// 等）时改为「新标签页打开」**——顶层导航下认证 cookie 属第一方，iOS Safari 可靠。首次打开完整面板时，在其设置里把后端地址填 `https://<你的域名>:8444/api/mihomo/proxy`，**secret 留空**。
 
-**安全模型**：唯一公网入口是 8444（TLS + Bearer 令牌）。mihomo Clash API 仅回环，真实 Clash secret 由 api-server 在服务端注入，浏览器永不接触。mihomo 静态资源经一次性 `?token=` 完成首次鉴权后种下 `pgw_mihomo` 会话 cookie（`Path=/; HttpOnly; Secure; SameSite=Strict`），后续子资源与 `/api/mihomo/*` 调用（含写方法与 WS 白名单流）走该 cookie；其他 `/api/*` 仍仅认 Bearer。所有响应带安全响应头（HSTS / X-Frame-Options / nosniff / CSP），`/api/*` 另有每源 IP 令牌桶限流（超限 429），请求日志静默不落盘。令牌等同控制台全部权限：不要分享给他人，泄露后立即在 `/opt/5gpn/etc/api.env` 更换并 `systemctl restart 5gpn-api`。
+**安全模型**：公网控制入口是 8444（TLS + Bearer 令牌）。mihomo Clash API 仅回环，真实 Clash secret 由 api-server 在服务端注入，浏览器永不接触。可选的 **远程 Clash 面板 API**（默认 `9443`，HTTPS，专用远程密钥）另开端口供 Sphere / Neko Dash 等第三方面板使用，仍不暴露 `9090`，并按客户端网段 + 可选额外 CIDR 限制来源。mihomo 静态资源经一次性 `?token=` 完成首次鉴权后种下 `pgw_mihomo` 会话 cookie（`Path=/; HttpOnly; Secure; SameSite=Strict`），后续子资源与 `/api/mihomo/*` 调用（含写方法与 WS 白名单流）走该 cookie；其他 `/api/*` 仍仅认 Bearer。所有响应带安全响应头（HSTS / X-Frame-Options / nosniff / CSP），`/api/*` 另有每源 IP 令牌桶限流（超限 429），请求日志静默不落盘。令牌等同控制台全部权限：不要分享给他人，泄露后立即在 `/opt/5gpn/etc/api.env` 更换并 `systemctl restart 5gpn-api`。
 
 令牌保存在 `/opt/5gpn/etc/api.env`（权限 600）。注意：默认 `FIREWALL_MODE=preserve` 不接管防火墙，需自行放行 TCP 8444；8443 已被回环 sniproxy 占用，故 API 默认用 8444。
+
+### 远程 Clash 面板（第三方面板）
+
+可选开启 HTTPS Clash API，供 Sphere、Neko Dash、Sparxie 等连接（根路径，非 `/api/mihomo/proxy`）：
+
+```bash
+sudo 5gpn enable-clash-remote          # 打印一次 URL + 远程密钥
+sudo 5gpn set-clash-remote-extra-cidr 203.0.113.10/32   # 公网管理 IP（可选）
+sudo 5gpn clash-remote-status
+sudo 5gpn reset-clash-remote-secret
+sudo 5gpn disable-clash-remote
+```
+
+面板填写：`https://<你的域名>:9443`，Secret 填开启时打印的**远程密钥**（不是 `/etc/5gpn/mihomo-api-secret`），路径留空。WebUI「设置 → 网络」与 Telegram Bot「运维 → 远程 Clash API」可开关与重置。
 
 ## Telegram Bot
 
@@ -322,6 +336,7 @@ CHANGELOG.md      # 变更记录
 | 853 | TCP | 公网 | DNS over TLS |
 | 8111 | TCP | 公网 | iOS 描述文件下载 |
 | 8444 | TCP | 公网 | HTTP 控制 API（可选，`--setup-api` 后） |
+| 9443 | TCP | 客户端网段 + 可选额外 CIDR | 远程 Clash 面板 API（可选，`enable-clash-remote`；HTTPS） |
 | 9090 | TCP | 仅 127.0.0.1 | mihomo Clash API（smart 实例回环；经 api-server 8444 反代访问） |
 
 ### 环境变量

@@ -626,6 +626,22 @@ iframe.mihomo{
           <div id="mtproto_creds" class="mono small" style="margin-top:8px;white-space:pre-wrap"></div>
         </div>
         <div class="card">
+          <h2>远程 Clash 面板 API</h2>
+          <p class="lede">可选：HTTPS 专用端口（默认 <span class="mono">9443</span>）供 Sphere / Neko Dash / Sparxie 等第三方面板连接。复用网关 TLS 证书；专用远程密钥（与 loopback Clash secret 隔离）；默认允许客户端网段，可额外添加公网管理 IP。</p>
+          <div id="clash_remote_state" class="mono small" style="margin-bottom:8px">（加载中…）</div>
+          <div class="row">
+            <input id="clash_remote_extra" type="text" placeholder="额外允许 CIDR，如 203.0.113.10/32（可空）" autocomplete="off" style="flex:1" class="mono">
+            <button onclick="clashRemoteSetExtra()">保存额外网段</button>
+          </div>
+          <div class="row">
+            <button class="primary" onclick="clashRemoteAction('enable')">开启</button>
+            <button class="danger" onclick="clashRemoteAction('disable')">关闭</button>
+            <button onclick="clashRemoteAction('reset-secret')">重置密钥</button>
+            <button onclick="loadClashRemote()">刷新</button>
+          </div>
+          <div id="clash_remote_creds" class="mono small" style="margin-top:8px;white-space:pre-wrap"></div>
+        </div>
+        <div class="card">
           <h2>DNS 直连域名</h2>
           <p class="lede">私网客户端默认把非 ChinaList 域名解析成网关 IP。把 SSH 等主机名加入此名单后返回真实 A 记录。公网 DoT 本身不劫持。</p>
           <div class="row"><input id="dd_add" type="text" placeholder="例如 box2.example.com 或 servers.example.com" autocomplete="off" style="flex:1"></div>
@@ -800,7 +816,7 @@ function onEnter(sec){
   else if(sec==="rules"){ loadStatus(); loadRules(); }
   else if(sec==="monitor"){ loadMihomoOverview(); loadXdFrame(); }
   else if(sec==="ai"){ aiLoadConfig(); }
-  else if(sec==="settings"){ fillSettings(); showSettingsPanel(localStorage.getItem("pgw_set_panel")||"network"); loadClientCidr(); loadClientSocks(); loadClientMtproto(); loadDirectDomains(); loadComponents(); }
+  else if(sec==="settings"){ fillSettings(); showSettingsPanel(localStorage.getItem("pgw_set_panel")||"network"); loadClientCidr(); loadClientSocks(); loadClientMtproto(); loadClashRemote(); loadDirectDomains(); loadComponents(); }
 }
 document.querySelectorAll('[data-section]').forEach(el=>el.addEventListener('click',()=>{
   showSection(el.dataset.section);
@@ -1670,6 +1686,56 @@ async function mtprotoAction(action){
     }
     await loadClientMtproto();
   }catch(e){ log("❌ MTProto："+e.message); }
+  finally{ busy(false); }
+}
+
+/* ---- remote Clash API HTTPS for third-party panels ---- */
+async function loadClashRemote(){
+  const box=$("clash_remote_state"), cred=$("clash_remote_creds"), extra=$("clash_remote_extra");
+  if(!box) return;
+  try{
+    const r=await api("/api/clash-remote");
+    const st = r.enabled ? (r.running ? "已开启 · 运行中" : "已开启 · 未运行") : "已关闭";
+    box.textContent = st+"\n"+
+      "url="+(r.url||((r.host||"?")+":"+(r.port||"9443")))+
+      "\nsecret="+(r.secret||"(未设置)")+
+      "\nallow="+(r.allow_cidr||"?")+
+      "\nextra="+(r.extra_cidr||"(无)");
+    if(extra && document.activeElement!==extra) extra.value=r.extra_cidr||"";
+    if(cred && !cred.dataset.keep) cred.textContent="";
+  }catch(e){ box.textContent="加载失败："+e.message; }
+}
+async function clashRemoteAction(action){
+  const cred=$("clash_remote_creds");
+  if(action==="disable" && !confirm("关闭远程 Clash 面板 API？")) return;
+  if(action==="reset-secret" && !confirm("轮换远程密钥？旧密钥立即失效。")) return;
+  busy(true);
+  try{
+    const r=await api("/api/clash-remote","POST",{action});
+    log((r.ok?"✅ ":"❌ ")+(action)+" clash-remote");
+    if(cred){
+      if(r.ok && (r.secret||"").length>3){
+        cred.dataset.keep="1";
+        cred.textContent = "请立即保存（仅显示一次）：\n"+
+          "URL "+(r.url||"")+"\nsecret "+r.secret+
+          "\n第三方面板：填 URL，secret 填此密钥，路径留空";
+      } else if(action==="disable"){
+        delete cred.dataset.keep;
+        cred.textContent="";
+      }
+    }
+    await loadClashRemote();
+  }catch(e){ log("❌ clash-remote："+e.message); }
+  finally{ busy(false); }
+}
+async function clashRemoteSetExtra(){
+  const extra=($("clash_remote_extra")&&$("clash_remote_extra").value||"").trim();
+  busy(true);
+  try{
+    const r=await api("/api/clash-remote","POST",{action:"set-extra-cidr",extra_cidr:extra});
+    log((r.ok?"✅ ":"❌ ")+"额外网段 "+(extra||"(清空)"));
+    await loadClashRemote();
+  }catch(e){ log("❌ clash-remote 额外网段："+e.message); }
   finally{ busy(false); }
 }
 

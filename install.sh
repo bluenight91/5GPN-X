@@ -13,6 +13,8 @@ CLIENT_SOCKS_PORT_DEFAULT=38443
 CLIENT_SOCKS_USER_DEFAULT=5gpn
 CLIENT_MTPROTO_PORT_DEFAULT=5753
 CLIENT_MTPROTO_BACKEND_DEFAULT=127.0.0.1:15753
+CLASH_REMOTE_PORT_DEFAULT=9443
+CLASH_REMOTE_BACKEND_DEFAULT=127.0.0.1:9090
 # Classic MTProto (bare 32-hex secrets Telegram can paste directly).
 # mtg v2 FakeTLS cannot accept bare hex client secrets.
 MTPROTOPROXY_VERSION_DEFAULT="v1.1.2"
@@ -43,7 +45,7 @@ bootstrap_from_repo_if_needed() {
     local required=(
         install.sh
         lib/renew-hook.sh lib/sniproxy.conf lib/quic-proxy.go lib/client-socks.go
-        lib/client-mtproto.go
+        lib/client-mtproto.go lib/clash-remote.go
         lib/mosdns.yaml.template lib/update-rules.sh lib/ios-http.py lib/tgbot.py
         lib/wa-shim.py lib/rules-import.py lib/mihomo-exit-config.py
         lib/mihomo-router-config.py lib/rules-default.conf lib/host-setup.sh
@@ -462,6 +464,17 @@ Options:
                  Set classic 32-hex secret (Telegram pastes this as-is; optional dd prefix OK)
   --generate-client-mtproto-secret
                  Generate a new random 32-hex secret
+  --enable-clash-remote
+                 Enable HTTPS Clash API for third-party panels (default TCP 9443;
+                 client CIDR + optional extra CIDR; dedicated remote secret)
+  --disable-clash-remote
+                 Disable the remote Clash API endpoint
+  --clash-remote-status
+                 Show remote Clash API status (secret omitted)
+  --reset-clash-remote-secret
+                 Rotate the remote panel secret (prints once)
+  --set-clash-remote-extra-cidr <cidr[,cidr…]>
+                 Extra source CIDRs allowed beyond client CIDR (empty to clear)
   --setup-whatsapp
                  Install/repair the iOS WhatsApp no-SNI TCP/443 shim.
   --uninstall    Remove all installed components
@@ -1781,6 +1794,315 @@ generate_client_mtproto_secret() {
     local secret
     secret="$(openssl rand -hex 16 2>/dev/null || head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
     set_client_mtproto_secret "$secret"
+}
+
+# ----- remote Clash API HTTPS (third-party panels; CIDR ACL + dedicated secret) -----
+CLASH_REMOTE_BIN="${BASE_DIR}/bin/clash-remote"
+CLASH_REMOTE_ENV="${CONF_DIR}/clash-remote.env"
+CLASH_REMOTE_ENABLED="${CONF_DIR}/clash-remote.enabled"
+CLASH_REMOTE_PORT_FILE="${CONF_DIR}/clash-remote.port"
+
+clash_remote_normalize_extra_cidr() {
+    # Allow /8../32 (incl. /32 single hosts for public admin IPs). Empty → empty.
+    local raw="${1:-}" out
+    raw="$(echo "$raw" | tr -d '[:space:]')"
+    [[ -z "$raw" ]] && { echo ""; return 0; }
+    out="$(FORCE_WIDE_CIDR=1 python3 - "$raw" <<'PY'
+import ipaddress, sys
+raw = sys.argv[1].strip()
+out = []
+for item in raw.split(","):
+    item = item.strip()
+    if not item:
+        continue
+    net = ipaddress.ip_network(item, strict=False)
+    if net.version != 4 or not (8 <= net.prefixlen <= 32):
+        raise SystemExit(1)
+    out.append(str(net))
+print(",".join(dict.fromkeys(out)))
+PY
+)" || return 1
+    printf '%s\n' "$out"
+}
+
+clash_remote_merge_allow_cidr() {
+    local client extra merged
+    client="$(cat /etc/mosdns/.client_cidr 2>/dev/null || echo '172.22.0.0/16')"
+    extra="${1:-}"
+    merged="$(python3 - "$client" "$extra" <<'PY'
+import ipaddress, sys
+parts = []
+for raw in sys.argv[1:]:
+    for item in (raw or "").split(","):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            parts.append(str(ipaddress.ip_network(item, strict=False)))
+        except Exception:
+            pass
+print(",".join(dict.fromkeys(parts)))
+PY
+)"
+    [[ -n "$merged" ]] || merged="$client"
+    printf '%s\n' "$merged"
+}
+
+install_clash_remote_binary() {
+    ensure_proxy_user
+    mkdir -p "${BASE_DIR}/bin" "${SRC_DIR}" "${CONF_DIR}"
+    [[ -f "${LIB_DIR}/clash-remote.go" ]] || { err "clash-remote.go missing"; return 1; }
+    if ! cmp -s "${LIB_DIR}/clash-remote.go" "${SRC_DIR}/clash-remote.go" 2>/dev/null \
+        || [[ ! -x "${CLASH_REMOTE_BIN}" ]]; then
+        info "Compiling clash-remote (HTTPS Clash API for third-party panels)..."
+        cp "${LIB_DIR}/clash-remote.go" "${SRC_DIR}/clash-remote.go"
+        (
+            cd "${SRC_DIR}"
+            export PATH=$PATH:/usr/local/go/bin
+            go build -ldflags="-s -w" -o "${CLASH_REMOTE_BIN}" clash-remote.go
+        ) || { err "clash-remote 编译失败"; return 1; }
+    fi
+    [[ -x "${CLASH_REMOTE_BIN}" ]] || { err "clash-remote 二进制不存在: ${CLASH_REMOTE_BIN}"; return 1; }
+    chmod 755 "${CLASH_REMOTE_BIN}" 2>/dev/null || true
+    cat > /etc/systemd/system/5gpn-clash-remote.service <<EOF
+[Unit]
+Description=5GPN-X remote Clash API HTTPS (CIDR ACL + dedicated secret)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-${CLASH_REMOTE_ENV}
+ExecStart=${CLASH_REMOTE_BIN} -l 0.0.0.0:\${CLASH_REMOTE_PORT} -b \${CLASH_REMOTE_BACKEND} -s \${CLASH_REMOTE_SECRET} -f \${CLASH_REMOTE_CLASH_SECRET_FILE} -a \${CLASH_REMOTE_ALLOW_CIDR} -cert \${CLASH_REMOTE_TLS_CERT} -key \${CLASH_REMOTE_TLS_KEY} -q
+Restart=on-failure
+RestartSec=3
+User=root
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+}
+
+clash_remote_ensure_creds() {
+    mkdir -p "${CONF_DIR}"
+    ensure_mihomo_api_secret
+    local port secret extra allow cert key backend
+    port="$(cat "${CLASH_REMOTE_PORT_FILE}" 2>/dev/null || echo "${CLASH_REMOTE_PORT_DEFAULT}")"
+    [[ "$port" =~ ^[0-9]+$ ]] || port="${CLASH_REMOTE_PORT_DEFAULT}"
+    echo "$port" > "${CLASH_REMOTE_PORT_FILE}"
+    if [[ -f "${CLASH_REMOTE_ENV}" ]]; then
+        # shellcheck disable=SC1090
+        set -a; source "${CLASH_REMOTE_ENV}"; set +a
+    fi
+    secret="${CLASH_REMOTE_SECRET:-}"
+    if [[ -z "$secret" ]]; then
+        secret="$(openssl rand -hex 24 2>/dev/null || head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+    fi
+    extra="$(clash_remote_normalize_extra_cidr "${CLASH_REMOTE_EXTRA_CIDR:-}" 2>/dev/null || echo "")"
+    allow="$(clash_remote_merge_allow_cidr "$extra")"
+    cert="${CLASH_REMOTE_TLS_CERT:-/etc/mosdns/certs/fullchain.pem}"
+    key="${CLASH_REMOTE_TLS_KEY:-/etc/mosdns/certs/privkey.pem}"
+    backend="${CLASH_REMOTE_BACKEND:-${CLASH_REMOTE_BACKEND_DEFAULT}}"
+    umask 077
+    cat > "${CLASH_REMOTE_ENV}" <<EOF
+CLASH_REMOTE_PORT=${port}
+CLASH_REMOTE_SECRET=${secret}
+CLASH_REMOTE_EXTRA_CIDR=${extra}
+CLASH_REMOTE_ALLOW_CIDR=${allow}
+CLASH_REMOTE_BACKEND=${backend}
+CLASH_REMOTE_TLS_CERT=${cert}
+CLASH_REMOTE_TLS_KEY=${key}
+CLASH_REMOTE_CLASH_SECRET_FILE=${MIHOMO_API_SECRET_FILE}
+EOF
+    chmod 600 "${CLASH_REMOTE_ENV}"
+}
+
+clash_remote_host_ip() {
+    client_socks_host_ip
+}
+
+clash_remote_domain() {
+    cat "${CONF_DIR}/.domain" 2>/dev/null || cat /etc/mosdns/.domain 2>/dev/null || echo ""
+}
+
+enable_clash_remote() {
+    check_root
+    install_clash_remote_binary || return 1
+    clash_remote_ensure_creds
+    local cert key
+    # shellcheck disable=SC1090
+    set -a; source "${CLASH_REMOTE_ENV}"; set +a
+    cert="${CLASH_REMOTE_TLS_CERT}"
+    key="${CLASH_REMOTE_TLS_KEY}"
+    [[ -f "$cert" && -f "$key" ]] || {
+        err "缺少 TLS 证书（${cert}）；请先完成安装或 --renew-cert"
+        return 1
+    }
+    [[ -s "${MIHOMO_API_SECRET_FILE}" ]] || {
+        err "缺少 mihomo API secret；请先 --setup-api"
+        return 1
+    }
+    : > "${CLASH_REMOTE_ENABLED}"
+    chmod 644 "${CLASH_REMOTE_ENABLED}"
+    if declare -F firewall_clash_remote_sync >/dev/null 2>&1; then
+        firewall_clash_remote_sync || {
+            rm -f "${CLASH_REMOTE_ENABLED}"
+            err "Clash remote firewall sync failed; not enabled"
+            return 1
+        }
+    fi
+    systemctl enable --now 5gpn-clash-remote.service
+    systemctl restart 5gpn-clash-remote.service
+    if ! systemctl is-active --quiet 5gpn-clash-remote.service; then
+        rm -f "${CLASH_REMOTE_ENABLED}"
+        declare -F firewall_clash_remote_sync >/dev/null 2>&1 && firewall_clash_remote_sync || true
+        err "clash-remote 未启动；journalctl -u 5gpn-clash-remote -n 40"
+        return 1
+    fi
+    local host domain
+    host="$(clash_remote_host_ip)"
+    domain="$(clash_remote_domain)"
+    ok "远程 Clash API（HTTPS）已开启"
+    echo "  地址:   ${host}:${CLASH_REMOTE_PORT}"
+    if [[ -n "$domain" ]]; then
+        echo "  URL:    https://${domain}:${CLASH_REMOTE_PORT}"
+    else
+        echo "  URL:    https://${host}:${CLASH_REMOTE_PORT}"
+    fi
+    echo "  密钥:   ${CLASH_REMOTE_SECRET}"
+    echo "  允许源: ${CLASH_REMOTE_ALLOW_CIDR}"
+    echo "  说明:   第三方面板填上述 URL，secret 填远程密钥；路径留空（根路径）"
+    warn "密钥仅此时完整显示；之后 status 会隐藏。需要时可 --reset-clash-remote-secret"
+}
+
+disable_clash_remote() {
+    check_root
+    systemctl disable --now 5gpn-clash-remote.service 2>/dev/null || true
+    rm -f "${CLASH_REMOTE_ENABLED}"
+    declare -F firewall_clash_remote_sync >/dev/null 2>&1 && firewall_clash_remote_sync || true
+    ok "远程 Clash API 已关闭"
+}
+
+clash_remote_status() {
+    local on=0 host port domain extra allow
+    [[ -f "${CLASH_REMOTE_ENABLED}" ]] && on=1
+    port="$(cat "${CLASH_REMOTE_PORT_FILE}" 2>/dev/null || echo "${CLASH_REMOTE_PORT_DEFAULT}")"
+    host="$(clash_remote_host_ip)"
+    domain="$(clash_remote_domain)"
+    extra=""
+    allow="$(cat /etc/mosdns/.client_cidr 2>/dev/null || echo '172.22.0.0/16')"
+    if [[ -f "${CLASH_REMOTE_ENV}" ]]; then
+        extra="$(sed -n 's/^CLASH_REMOTE_EXTRA_CIDR=//p' "${CLASH_REMOTE_ENV}" | head -1)"
+        allow="$(sed -n 's/^CLASH_REMOTE_ALLOW_CIDR=//p' "${CLASH_REMOTE_ENV}" | head -1)"
+        [[ -n "$allow" ]] || allow="$(clash_remote_merge_allow_cidr "$extra")"
+    fi
+    echo "clash-remote: $([[ $on -eq 1 ]] && echo enabled || echo disabled)"
+    echo "listen: ${host}:${port}"
+    if [[ -n "$domain" ]]; then
+        echo "url: https://${domain}:${port}"
+    else
+        echo "url: https://${host}:${port}"
+    fi
+    echo "secret: ***"
+    echo "extra_cidr: ${extra:-"(none)"}"
+    echo "allow: ${allow}"
+    if [[ $on -eq 1 ]]; then
+        systemctl is-active --quiet 5gpn-clash-remote.service \
+            && echo "service: running" || echo "service: not running"
+    fi
+}
+
+reset_clash_remote_secret() {
+    check_root
+    install_clash_remote_binary || return 1
+    local port extra allow cert key backend secret
+    port="$(cat "${CLASH_REMOTE_PORT_FILE}" 2>/dev/null || echo "${CLASH_REMOTE_PORT_DEFAULT}")"
+    [[ "$port" =~ ^[0-9]+$ ]] || port="${CLASH_REMOTE_PORT_DEFAULT}"
+    echo "$port" > "${CLASH_REMOTE_PORT_FILE}"
+    extra=""
+    if [[ -f "${CLASH_REMOTE_ENV}" ]]; then
+        # shellcheck disable=SC1090
+        set -a; source "${CLASH_REMOTE_ENV}"; set +a
+        extra="${CLASH_REMOTE_EXTRA_CIDR:-}"
+    fi
+    extra="$(clash_remote_normalize_extra_cidr "$extra" 2>/dev/null || echo "")"
+    allow="$(clash_remote_merge_allow_cidr "$extra")"
+    cert="${CLASH_REMOTE_TLS_CERT:-/etc/mosdns/certs/fullchain.pem}"
+    key="${CLASH_REMOTE_TLS_KEY:-/etc/mosdns/certs/privkey.pem}"
+    backend="${CLASH_REMOTE_BACKEND:-${CLASH_REMOTE_BACKEND_DEFAULT}}"
+    secret="$(openssl rand -hex 24 2>/dev/null || head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+    ensure_mihomo_api_secret
+    umask 077
+    cat > "${CLASH_REMOTE_ENV}" <<EOF
+CLASH_REMOTE_PORT=${port}
+CLASH_REMOTE_SECRET=${secret}
+CLASH_REMOTE_EXTRA_CIDR=${extra}
+CLASH_REMOTE_ALLOW_CIDR=${allow}
+CLASH_REMOTE_BACKEND=${backend}
+CLASH_REMOTE_TLS_CERT=${cert}
+CLASH_REMOTE_TLS_KEY=${key}
+CLASH_REMOTE_CLASH_SECRET_FILE=${MIHOMO_API_SECRET_FILE}
+EOF
+    chmod 600 "${CLASH_REMOTE_ENV}"
+    if [[ -f "${CLASH_REMOTE_ENABLED}" ]]; then
+        systemctl restart 5gpn-clash-remote.service 2>/dev/null || true
+    fi
+    local host domain
+    host="$(clash_remote_host_ip)"
+    domain="$(clash_remote_domain)"
+    ok "远程 Clash API 密钥已轮换"
+    echo "  地址: ${host}:${port}"
+    if [[ -n "$domain" ]]; then
+        echo "  URL:  https://${domain}:${port}"
+    fi
+    echo "  密钥: ${secret}"
+}
+
+set_clash_remote_extra_cidr() {
+    check_root
+    local raw="${1:-}" extra
+    if [[ -z "$raw" || "$raw" == "-" ]]; then
+        extra=""
+    else
+        extra="$(clash_remote_normalize_extra_cidr "$raw")" || {
+            err "无效额外 CIDR（IPv4 /8../32，多段用逗号）"
+            return 1
+        }
+    fi
+    install_clash_remote_binary || return 1
+    clash_remote_ensure_creds
+    # shellcheck disable=SC1090
+    set -a; source "${CLASH_REMOTE_ENV}"; set +a
+    local allow port secret cert key backend
+    allow="$(clash_remote_merge_allow_cidr "$extra")"
+    port="${CLASH_REMOTE_PORT}"
+    secret="${CLASH_REMOTE_SECRET}"
+    cert="${CLASH_REMOTE_TLS_CERT}"
+    key="${CLASH_REMOTE_TLS_KEY}"
+    backend="${CLASH_REMOTE_BACKEND}"
+    umask 077
+    cat > "${CLASH_REMOTE_ENV}" <<EOF
+CLASH_REMOTE_PORT=${port}
+CLASH_REMOTE_SECRET=${secret}
+CLASH_REMOTE_EXTRA_CIDR=${extra}
+CLASH_REMOTE_ALLOW_CIDR=${allow}
+CLASH_REMOTE_BACKEND=${backend}
+CLASH_REMOTE_TLS_CERT=${cert}
+CLASH_REMOTE_TLS_KEY=${key}
+CLASH_REMOTE_CLASH_SECRET_FILE=${MIHOMO_API_SECRET_FILE}
+EOF
+    chmod 600 "${CLASH_REMOTE_ENV}"
+    if [[ -f "${CLASH_REMOTE_ENABLED}" ]]; then
+        systemctl restart 5gpn-clash-remote.service 2>/dev/null || true
+        declare -F firewall_clash_remote_sync >/dev/null 2>&1 && firewall_clash_remote_sync || true
+    fi
+    ok "额外允许网段已设置为 ${extra:-"(清空)"}；有效 ACL=${allow}"
 }
 
 install_mosdns() {
@@ -3941,6 +4263,13 @@ do_update() {
         systemctl restart 5gpn-mtproxy.service 5gpn-client-mtproto.service 2>/dev/null || true
         declare -F firewall_mtproto_sync >/dev/null 2>&1 && firewall_mtproto_sync || true
     fi
+    cmp -s "${LIB_DIR}/clash-remote.go" "${SRC_DIR}/clash-remote.go" 2>/dev/null || rm -f "${BASE_DIR}/bin/clash-remote"
+    install_clash_remote_binary || warn "clash-remote 二进制安装失败（可稍后手动 enable-clash-remote）"
+    if [[ -f "${CLASH_REMOTE_ENABLED}" ]]; then
+        clash_remote_ensure_creds || warn "clash-remote 凭据同步失败"
+        systemctl restart 5gpn-clash-remote.service 2>/dev/null || true
+        declare -F firewall_clash_remote_sync >/dev/null 2>&1 && firewall_clash_remote_sync || true
+    fi
     install_mosdns_binary
     cp "${LIB_DIR}/mosdns.yaml.template" /etc/mosdns/config.yaml.template
     install -m 0755 "${LIB_DIR}/update-rules.sh" /usr/local/bin/update-mosdns-rules.sh
@@ -4002,16 +4331,18 @@ do_uninstall() {
         systemctl stop "5gpn-singbox@$(basename "$f" .type).service" 2>/dev/null || true
     done
     shopt -u nullglob
-    systemctl stop mosdns dnsdist sniproxy wa-shim quic-proxy china-dns-race-proxy 5gpn-ios-profile.socket 5gpn-ios-profile 5gpn-exit 5gpn-tgbot 5gpn-api 5gpn-wloc 5gpn-health.timer 5gpn-health.service 5gpn-client-socks 5gpn-client-mtproto 5gpn-mtproxy 5gpn-mtg 2>/dev/null || true
-    systemctl disable mosdns dnsdist sniproxy wa-shim quic-proxy china-dns-race-proxy 5gpn-ios-profile.socket 5gpn-ios-profile 5gpn-exit 5gpn-tgbot 5gpn-api 5gpn-wloc 5gpn-health.timer 5gpn-health.service 5gpn-client-socks 5gpn-client-mtproto 5gpn-mtproxy 5gpn-mtg 2>/dev/null || true
+    systemctl stop mosdns dnsdist sniproxy wa-shim quic-proxy china-dns-race-proxy 5gpn-ios-profile.socket 5gpn-ios-profile 5gpn-exit 5gpn-tgbot 5gpn-api 5gpn-wloc 5gpn-health.timer 5gpn-health.service 5gpn-client-socks 5gpn-client-mtproto 5gpn-mtproxy 5gpn-mtg 5gpn-clash-remote 2>/dev/null || true
+    systemctl disable mosdns dnsdist sniproxy wa-shim quic-proxy china-dns-race-proxy 5gpn-ios-profile.socket 5gpn-ios-profile 5gpn-exit 5gpn-tgbot 5gpn-api 5gpn-wloc 5gpn-health.timer 5gpn-health.service 5gpn-client-socks 5gpn-client-mtproto 5gpn-mtproxy 5gpn-mtg 5gpn-clash-remote 2>/dev/null || true
     rm -f /etc/systemd/system/{mosdns,sniproxy,wa-shim,quic-proxy,china-dns-race-proxy,5gpn-ios-profile,update-mosdns-rules,5gpn-exit,5gpn-tgbot}.*
     rm -f /etc/systemd/system/5gpn-api.*
     rm -f /etc/systemd/system/5gpn-wloc.*
     rm -f /etc/systemd/system/5gpn-health.service /etc/systemd/system/5gpn-health.timer
     rm -f /etc/systemd/system/5gpn-client-socks.service
     rm -f /etc/systemd/system/5gpn-client-mtproto.service /etc/systemd/system/5gpn-mtproxy.service /etc/systemd/system/5gpn-mtg.service
+    rm -f /etc/systemd/system/5gpn-clash-remote.service
     declare -F firewall_socks_remove_rules >/dev/null 2>&1 && firewall_socks_remove_rules || true
     declare -F firewall_mtproto_remove_rules >/dev/null 2>&1 && firewall_mtproto_remove_rules || true
+    declare -F firewall_clash_remote_remove_rules >/dev/null 2>&1 && firewall_clash_remote_remove_rules || true
     rm -f /usr/local/bin/5gpn
     rm -f /etc/systemd/system/5gpn-ios-profile@.service \
         /etc/systemd/system/5gpn-mihomo@.service \
@@ -4293,6 +4624,17 @@ PY
         fi
         [[ -f "${CLIENT_MTPROTO_ENABLED}" ]] && systemctl restart 5gpn-client-mtproto.service 2>/dev/null || true
     fi
+    if [[ -f "${CLASH_REMOTE_ENV}" ]]; then
+        local extra_cr allow_cr
+        extra_cr="$(sed -n 's/^CLASH_REMOTE_EXTRA_CIDR=//p' "${CLASH_REMOTE_ENV}" | head -1)"
+        allow_cr="$(clash_remote_merge_allow_cidr "$extra_cr")"
+        if grep -q '^CLASH_REMOTE_ALLOW_CIDR=' "${CLASH_REMOTE_ENV}"; then
+            sed -i -E "s#^CLASH_REMOTE_ALLOW_CIDR=.*#CLASH_REMOTE_ALLOW_CIDR=${allow_cr}#" "${CLASH_REMOTE_ENV}"
+        else
+            echo "CLASH_REMOTE_ALLOW_CIDR=${allow_cr}" >> "${CLASH_REMOTE_ENV}"
+        fi
+        [[ -f "${CLASH_REMOTE_ENABLED}" ]] && systemctl restart 5gpn-clash-remote.service 2>/dev/null || true
+    fi
     /usr/local/bin/update-mosdns-rules.sh >/dev/null 2>&1 || warn "mosdns 刷新失败，请手动 --update-rules"
     if [[ -f /etc/5gpn/.firewall-managed ]] && declare -F firewall_managed_apply >/dev/null 2>&1; then
         local ssh_ports tcp_ports tcp_ports_ipt
@@ -4306,6 +4648,7 @@ PY
     fi
     declare -F firewall_socks_sync >/dev/null 2>&1 && firewall_socks_sync || true
     declare -F firewall_mtproto_sync >/dev/null 2>&1 && firewall_mtproto_sync || true
+    declare -F firewall_clash_remote_sync >/dev/null 2>&1 && firewall_clash_remote_sync || true
     ok "客户端网段已设置为 ${cidr}"
 }
 confirm_client_cidr_choice() {
@@ -4581,6 +4924,7 @@ main_install() {
     install_quic_proxy
     install_client_socks_binary
     install_client_mtproto_binary || warn "client-mtproto 预装失败（可稍后 enable-client-mtproto）"
+    install_clash_remote_binary || warn "clash-remote 预装失败（可稍后 enable-clash-remote）"
     prompt_client_cidr_install
     install_mosdns
     init_rules
@@ -4820,6 +5164,21 @@ case "${1:-}" in
         ;;
     --generate-client-mtproto-secret)
         generate_client_mtproto_secret
+        ;;
+    --enable-clash-remote)
+        enable_clash_remote
+        ;;
+    --disable-clash-remote)
+        disable_clash_remote
+        ;;
+    --clash-remote-status)
+        clash_remote_status
+        ;;
+    --reset-clash-remote-secret)
+        reset_clash_remote_secret
+        ;;
+    --set-clash-remote-extra-cidr)
+        set_clash_remote_extra_cidr "${2:-}"
         ;;
     --uninstall)
         do_uninstall

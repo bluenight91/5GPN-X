@@ -1195,13 +1195,13 @@ BACKUP_PATHS = ["etc/5gpn", "etc/mosdns/gfwlist-extra-local.txt",
                 "etc/mosdns/.ecs", "etc/mosdns/.sniproxy_dns",
                 "etc/wireguard", "opt/5gpn/etc/current-exit",
                 "opt/5gpn/etc/.client_cidr", "opt/5gpn/etc/client-socks.port",
-                "opt/5gpn/etc/client-mtproto.port"]
+                "opt/5gpn/etc/client-mtproto.port", "opt/5gpn/etc/clash-remote.port"]
 
 
 def _backup_secret_name(name):
     base = os.path.basename(name).lower()
     if base in ("api.env", "tgbot.env", "client-socks.env", "client-mtproto.env",
-                "mtg.toml", "mtprotoproxy.conf.py", "mihomo-api-secret"):
+                "clash-remote.env", "mtg.toml", "mtprotoproxy.conf.py", "mihomo-api-secret"):
         return True
     if base.endswith(".pem"):
         return True
@@ -1252,7 +1252,8 @@ def _backup_allowed(name):
                 or re.match(r"etc/wireguard/pgw-[^/]+\.conf$", name)
                 or name in ("opt/5gpn/etc/current-exit", "opt/5gpn/etc/.client_cidr",
                             "opt/5gpn/etc/client-socks.port",
-                            "opt/5gpn/etc/client-mtproto.port"))
+                            "opt/5gpn/etc/client-mtproto.port",
+                            "opt/5gpn/etc/clash-remote.port"))
 
 
 def restore_backup(b64):
@@ -1646,6 +1647,8 @@ class Handler(BaseHTTPRequestHandler):
                 units.append("5gpn-client-socks")
             if os.path.isfile(os.path.join(CONF_DIR, "client-mtproto.enabled")):
                 units.extend(["5gpn-mtproxy", "5gpn-client-mtproto"])
+            if os.path.isfile(os.path.join(CONF_DIR, "clash-remote.enabled")):
+                units.append("5gpn-clash-remote")
             if cur and cur not in ("local", ""):
                 units.append(f"5gpn-mihomo@{cur}")
             services = {s: run(["systemctl", "is-active", s], timeout=5)[0] for s in units}
@@ -1786,6 +1789,36 @@ class Handler(BaseHTTPRequestHandler):
                 "allow_cidr": get_client_cidr(),
                 "engine": "mtprotoproxy",
                 "note": note,
+            })
+        if path == "/api/clash-remote":
+            enabled = os.path.isfile(os.path.join(CONF_DIR, "clash-remote.enabled"))
+            port = read_file(os.path.join(CONF_DIR, "clash-remote.port")).strip() or "9443"
+            extra = ""
+            allow = get_client_cidr()
+            has_secret = False
+            env = read_file(os.path.join(CONF_DIR, "clash-remote.env"))
+            for line in env.splitlines():
+                if line.startswith("CLASH_REMOTE_EXTRA_CIDR="):
+                    extra = line.split("=", 1)[1].strip()
+                elif line.startswith("CLASH_REMOTE_ALLOW_CIDR="):
+                    allow = line.split("=", 1)[1].strip() or allow
+                elif line.startswith("CLASH_REMOTE_SECRET="):
+                    has_secret = bool(line.split("=", 1)[1].strip())
+            running = False
+            if enabled:
+                running = run(["systemctl", "is-active", "5gpn-clash-remote"], timeout=5)[0]
+            host = read_file("/etc/mosdns/.public_ip").strip() or ""
+            domain = read_file(os.path.join(CONF_DIR, ".domain")).strip() \
+                or read_file("/etc/mosdns/.domain").strip()
+            url = f"https://{domain}:{port}" if domain else (f"https://{host}:{port}" if host else "")
+            return self._send(200, {
+                "ok": True, "enabled": enabled, "running": running,
+                "host": host, "domain": domain, "port": port, "url": url,
+                "secret": "***" if has_secret else "",
+                "extra_cidr": extra,
+                "allow_cidr": allow,
+                "note": "secret is masked; use enable/reset-secret to receive it once. "
+                        "Third-party panels: URL + secret; leave API path empty.",
             })
         return self._send(404, {"ok": False, "error": "not found"})
 
@@ -2117,6 +2150,58 @@ class Handler(BaseHTTPRequestHandler):
                 "allow_cidr": get_client_cidr(),
                 "note": ("secret returned once; future GET responses mask it"
                          if action in ("enable", "set-secret", "generate-secret") else "secret is masked"),
+            })
+
+        if path == "/api/clash-remote":
+            action = str(b.get("action", "")).strip().lower()
+            if action == "enable":
+                ok, out = ctl("--enable-clash-remote", timeout=180)
+            elif action == "disable":
+                ok, out = ctl("--disable-clash-remote", timeout=120)
+            elif action == "reset-secret":
+                ok, out = ctl("--reset-clash-remote-secret", timeout=120)
+            elif action == "set-extra-cidr":
+                extra = str(b.get("extra_cidr", "")).strip()
+                ok, out = ctl("--set-clash-remote-extra-cidr", extra, timeout=120)
+            else:
+                return self._send(400, {"ok": False,
+                                        "error": "action must be enable|disable|reset-secret|set-extra-cidr"})
+            host = port = secret = url = ""
+            for line in (out or "").splitlines():
+                s = line.strip()
+                if s.startswith("URL:") or "URL:" in s or "URL：" in s:
+                    url = s.split(":", 1)[-1].split("：", 1)[-1].strip()
+                elif "地址:" in s or "地址：" in s:
+                    val = s.split(":", 1)[-1].split("：", 1)[-1].strip()
+                    if ":" in val and not val.startswith("http"):
+                        host, port = val.rsplit(":", 1)
+                elif "密钥:" in s or "密钥：" in s:
+                    secret = s.split(":", 1)[-1].split("：", 1)[-1].strip()
+            if not url:
+                domain = read_file(os.path.join(CONF_DIR, ".domain")).strip()
+                if domain and port:
+                    url = f"https://{domain}:{port}"
+                elif host and port:
+                    url = f"https://{host}:{port}"
+            extra = ""
+            allow = get_client_cidr()
+            env = read_file(os.path.join(CONF_DIR, "clash-remote.env"))
+            for line in env.splitlines():
+                if line.startswith("CLASH_REMOTE_EXTRA_CIDR="):
+                    extra = line.split("=", 1)[1].strip()
+                elif line.startswith("CLASH_REMOTE_ALLOW_CIDR="):
+                    allow = line.split("=", 1)[1].strip() or allow
+            return self._send(200 if ok else 500, {
+                "ok": ok, "output": out,
+                "enabled": os.path.isfile(os.path.join(CONF_DIR, "clash-remote.enabled")),
+                "host": host,
+                "port": port or read_file(os.path.join(CONF_DIR, "clash-remote.port")).strip() or "9443",
+                "url": url,
+                "secret": secret,
+                "extra_cidr": extra,
+                "allow_cidr": allow,
+                "note": ("secret returned once; future GET responses mask it"
+                         if action in ("enable", "reset-secret") else "secret is masked"),
             })
 
         if path == "/api/restore":
