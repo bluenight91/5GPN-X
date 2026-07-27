@@ -32,12 +32,18 @@ has "$install_body" 'touch /etc/mosdns/direct-domains.txt' \
   "install/update must create direct-domains.txt"
 
 # Function smoke: normalize + validate without touching the host firewall.
-eval "$(awk '/^normalize_direct_domain\(\)/,/^}/' "${root}/install.sh")"
-eval "$(awk '/^valid_direct_domain\(\)/,/^}/' "${root}/install.sh")"
-[[ "$(normalize_direct_domain 'HTTPS://Box2.Example.com/path#x')" == "box2.example.com" ]] \
-  || fail "normalize_direct_domain must strip scheme/path and lowercase"
-valid_direct_domain "box2.example.com" || fail "valid_direct_domain must accept FQDNs"
-valid_direct_domain "bad" && fail "valid_direct_domain must reject bare labels" || true
+# `${var,,}` needs bash 4+; macOS ships bash 3.2, so skip the smoke there
+# (the string assertions above still run everywhere).
+if (( BASH_VERSINFO[0] >= 4 )); then
+  eval "$(awk '/^normalize_direct_domain\(\)/,/^}/' "${root}/install.sh")"
+  eval "$(awk '/^valid_direct_domain\(\)/,/^}/' "${root}/install.sh")"
+  [[ "$(normalize_direct_domain 'HTTPS://Box2.Example.com/path#x')" == "box2.example.com" ]] \
+    || fail "normalize_direct_domain must strip scheme/path and lowercase"
+  valid_direct_domain "box2.example.com" || fail "valid_direct_domain must accept FQDNs"
+  valid_direct_domain "bad" && fail "valid_direct_domain must reject bare labels" || true
+else
+  echo "note: bash >= 4 required for function smoke; skipping" >&2
+fi
 
 # --- API ----------------------------------------------------------------------
 has "$api" '/api/direct-domains' "api-server must expose /api/direct-domains"

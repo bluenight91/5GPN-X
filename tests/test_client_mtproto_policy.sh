@@ -13,9 +13,13 @@ doctor="$(cat "${root}/scripts/doctor.sh")"
 mtproto_go="$(cat "${root}/lib/client-mtproto.go")"
 
 [[ -f "${root}/lib/client-mtproto.go" ]] || fail "lib/client-mtproto.go must exist"
-( cd /tmp && cp "${root}/lib/client-mtproto.go" . && go build -ldflags='-s -w' -o /tmp/client-mtproto-test client-mtproto.go ) \
-    || fail "client-mtproto.go must compile"
-rm -f /tmp/client-mtproto-test /tmp/client-mtproto.go
+if command -v go >/dev/null 2>&1; then
+    ( cd /tmp && cp "${root}/lib/client-mtproto.go" . && go build -ldflags='-s -w' -o /tmp/client-mtproto-test client-mtproto.go ) \
+        || fail "client-mtproto.go must compile"
+    rm -f /tmp/client-mtproto-test /tmp/client-mtproto.go
+else
+    echo "note: go toolchain not found; skipping compile check" >&2
+fi
 
 [[ "${install}" == *'CLIENT_MTPROTO_PORT_DEFAULT=5753'* ]] || fail "default MTProto port must be 5753"
 [[ "${install}" == *'MTPROTOPROXY_VERSION_DEFAULT="v1.1.2"'* ]] || fail "mtprotoproxy must be pinned"

@@ -13,9 +13,13 @@ doctor="$(cat "${root}/scripts/doctor.sh")"
 socks_go="$(cat "${root}/lib/client-socks.go")"
 
 [[ -f "${root}/lib/client-socks.go" ]] || fail "lib/client-socks.go must exist"
-( cd /tmp && cp "${root}/lib/client-socks.go" . && go build -ldflags='-s -w' -o /tmp/client-socks-test client-socks.go ) \
-    || fail "client-socks.go must compile"
-rm -f /tmp/client-socks-test /tmp/client-socks.go
+if command -v go >/dev/null 2>&1; then
+    ( cd /tmp && cp "${root}/lib/client-socks.go" . && go build -ldflags='-s -w' -o /tmp/client-socks-test client-socks.go ) \
+        || fail "client-socks.go must compile"
+    rm -f /tmp/client-socks-test /tmp/client-socks.go
+else
+    echo "note: go toolchain not found; skipping compile check" >&2
+fi
 
 [[ "${install}" == *'API_PORT_DEFAULT=8444'* ]] || fail "API_PORT_DEFAULT=8444 must remain defined (set -u)"
 [[ "${install}" == *'CLIENT_SOCKS_PORT_DEFAULT=38443'* ]] || fail "default socks port must be uncommon 38443"
