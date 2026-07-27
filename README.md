@@ -131,6 +131,8 @@ sudo 5gpn list-direct-domains
 sudo 5gpn add-direct-domain box2.example.com   # 私网客户端对该域名返回真实解析（SSH 等）
 sudo 5gpn setup-tgbot        # 配置 Telegram Bot
 sudo 5gpn setup-api          # 启用 HTTP 控制 API + 网页控制台（可选）
+sudo 5gpn update-webui 1.270.5    # 升级 metacubexd 面板（写入 pin，后续 update 不降级）
+sudo 5gpn update-mihomo 1.19.29   # 升级 mihomo TUN 引擎并重启运行中的出口实例
 sudo 5gpn uninstall          # 卸载
 ```
 
@@ -214,7 +216,7 @@ sudo 5gpn setup-api   # 生成令牌并启用 HTTP 控制 API（默认端口 844
 
 **控制台六页**：仪表盘（实时状态、流量/延迟曲线、mihomo 概览）、出口管理、分流规则、mihomo 监控、AI 助手、设置（更新规则集、备份/恢复、主题切换）。界面支持深浅双主题跟随系统（可手动锁定），移动端为底部标签栏布局，已适配 iOS Safari（可「添加到主屏幕」）。
 
-**mihomo 监控**：`--setup-api` 会安装 metacubexd（默认锁定 **1.270.5**；可用 `METACUBEXD_VERSION=…` 覆盖，并写入 `/opt/5gpn/etc/metacubexd.pin`，之后 `update` 不会静默降级），并在 smart 实例上启用仅回环的 Clash API（`127.0.0.1:9090`，不对公网开放，经 api-server 8444 反代访问）。控制台「监控」页上半为概览摘要，下半为完整 metacubexd 面板：**控制台与 API 同源时面板内嵌显示；控制台跨站托管（Cloudflare Pages、本地 file:// 等）时改为「新标签页打开」**——顶层导航下认证 cookie 属第一方，iOS Safari 可靠。首次打开完整面板时，在其设置里把后端地址填 `https://<你的域名>:8444/api/mihomo/proxy`，**secret 留空**。
+**mihomo 监控**：`--setup-api` 会安装 metacubexd（默认锁定 **1.270.5**；可用 `sudo 5gpn update-webui <版本>` 自助升级，也可用 `METACUBEXD_VERSION=…` 覆盖，两者都会写入 `/opt/5gpn/etc/metacubexd.pin`，之后 `update` 不会静默降级），并在 smart 实例上启用仅回环的 Clash API（`127.0.0.1:9090`，不对公网开放，经 api-server 8444 反代访问）。控制台「监控」页上半为概览摘要，下半为完整 metacubexd 面板：**控制台与 API 同源时面板内嵌显示；控制台跨站托管（Cloudflare Pages、本地 file:// 等）时改为「新标签页打开」**——顶层导航下认证 cookie 属第一方，iOS Safari 可靠。首次打开完整面板时，在其设置里把后端地址填 `https://<你的域名>:8444/api/mihomo/proxy`，**secret 留空**。
 
 **安全模型**：唯一公网入口是 8444（TLS + Bearer 令牌）。mihomo Clash API 仅回环，真实 Clash secret 由 api-server 在服务端注入，浏览器永不接触。mihomo 静态资源经一次性 `?token=` 完成首次鉴权后种下 `pgw_mihomo` 会话 cookie（`Path=/; HttpOnly; Secure; SameSite=Strict`），后续子资源与 `/api/mihomo/*` 调用（含写方法与 WS 白名单流）走该 cookie；其他 `/api/*` 仍仅认 Bearer。所有响应带安全响应头（HSTS / X-Frame-Options / nosniff / CSP），`/api/*` 另有每源 IP 令牌桶限流（超限 429），请求日志静默不落盘。令牌等同控制台全部权限：不要分享给他人，泄露后立即在 `/opt/5gpn/etc/api.env` 更换并 `systemctl restart 5gpn-api`。
 
@@ -330,8 +332,8 @@ LOCAL_DNS="101.226.4.6,218.30.118.6,180.76.76.76,119.29.29.29"  # 国内 DNS 竞
 PGW_ECS="139.226.48.0/24"         # 国内链查询携带的 ECS（可用 --set-ecs 随时改）
 CLIENT_CIDR="172.22.0.0/16"       # 私网客户端源网段（可用 --set-client-cidr / --detect-client-cidr）
 LOWMEM=1                        # 强制低内存模式（≤1GB 自动启用）
-MIHOMO_VERSION="1.19.28"        # 可覆盖锁定版，建议保持默认
-METACUBEXD_VERSION="1.270.5"    # 可覆盖锁定版 metacubexd（会写入 etc/metacubexd.pin）
+MIHOMO_VERSION="1.19.28"        # 可覆盖锁定版 mihomo（写入 etc/mihomo.pin；日常升级建议用 5gpn update-mihomo）
+METACUBEXD_VERSION="1.270.5"    # 可覆盖锁定版 metacubexd（写入 etc/metacubexd.pin；日常升级建议用 5gpn update-webui）
 TG_BOT_TOKEN="123456:ABC"
 TG_ADMIN_IDS="11111111,22222222"
 FIREWALL_MODE=preserve          # preserve(默认)/auto/managed，见下方说明

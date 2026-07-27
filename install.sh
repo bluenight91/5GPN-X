@@ -2,7 +2,6 @@
 set -euo pipefail
 REPO_URL="https://github.com/bluenight91/5GPN-X.git"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SCRIPT_PATH="${SCRIPT_DIR}/$(basename "$0")"
 LIB_DIR="${SCRIPT_DIR}/lib"
 BASE_DIR="/opt/5gpn"
 CONF_DIR="${BASE_DIR}/etc"
@@ -31,6 +30,7 @@ DIRECT_FILE="/etc/5gpn/direct-categories"
 RULES_DEFAULT="/etc/5gpn/rules-default.conf"
 RULESET_CACHE="/etc/5gpn/rulesets"
 MIHOMO_BIN="/opt/5gpn/bin/mihomo"
+MIHOMO_VERSION_FILE="/opt/5gpn/bin/.mihomo-version"
 MIHOMO_CFG_GEN="/opt/5gpn/bin/mihomo-exit-config.py"
 MIHOMO_ROUTER_GEN="/opt/5gpn/bin/mihomo-router-config.py"
 RULES_IMPORT="/opt/5gpn/bin/rules-import.py"
@@ -438,6 +438,12 @@ Options:
                  TG_ADMIN_IDS env vars, or prompts interactively).
   --setup-api    Install/enable the HTTP control API + web panel (env API_TOKEN
                  / API_PORT, or generates a token; reuses existing token).
+  --update-webui [version]
+                 Update the metacubexd web dashboard. An explicit version is
+                 pinned (etc/metacubexd.pin) so later updates keep it.
+  --update-mihomo [version]
+                 Update the mihomo TUN engine and restart running exits.
+                 An explicit version is pinned (etc/mihomo.pin).
   --enable-client-socks
                  Enable private SOCKS5 (user/pass; only client CIDR; default TCP 38443)
   --disable-client-socks
@@ -484,7 +490,11 @@ Environment variables (for non-interactive use):
                  CORS origin (default empty/same-origin; set * explicitly for wildcard)
   API_TOKEN/API_PORT
                  API token/listen port for --setup-api or first install
-  MIHOMO_VERSION Override the locked mihomo version (default: ${MIHOMO_VERSION_DEFAULT})
+  MIHOMO_VERSION Override the locked mihomo version (default: ${MIHOMO_VERSION_DEFAULT};
+                 explicit use pins it via etc/mihomo.pin)
+  METACUBEXD_VERSION
+                 Override the locked metacubexd dashboard version
+                 (default: ${METACUBEXD_VERSION_DEFAULT}; pins via etc/metacubexd.pin)
   FIREWALL_MODE  preserve (default) | auto | managed.
                  preserve keeps the existing host firewall untouched and only
                  manages the project's own egress-marking rules; auto adds the
@@ -2115,10 +2125,28 @@ list_exit_names() {
     return 0
 }
 ensure_mihomo() {
-    [[ -x "${MIHOMO_BIN}" ]] && return 0
-    info "Installing locked mihomo ${MIHOMO_VERSION_DEFAULT} (TUN engine for URI exits)..."
-    local ver arch tmp url
-    ver="${MIHOMO_VERSION:-${MIHOMO_VERSION_DEFAULT}}"
+    # Version resolution: explicit env > persisted pin > repo default.
+    # Called by install/update/exit flows; a version mismatch triggers a
+    # reinstall so `5gpn update` follows the pin without touching configs.
+    local pin_file="${CONF_DIR}/mihomo.pin"
+    local ver="" explicit=0
+    if [[ -n "${MIHOMO_VERSION:-}" ]]; then
+        ver="${MIHOMO_VERSION}"
+        explicit=1
+    elif [[ -f "$pin_file" ]]; then
+        ver="$(tr -d '[:space:]' < "$pin_file" | head -n1)"
+    fi
+    [[ -n "$ver" ]] || ver="${MIHOMO_VERSION_DEFAULT}"
+    local installed=""
+    if [[ -f "${MIHOMO_VERSION_FILE}" ]]; then
+        installed="$(tr -d '[:space:]' < "${MIHOMO_VERSION_FILE}" | head -n1)"
+    fi
+    if [[ -x "${MIHOMO_BIN}" && "$installed" == "$ver" ]]; then
+        [[ "$explicit" -eq 1 ]] && printf '%s\n' "$ver" > "$pin_file"
+        return 0
+    fi
+    info "Installing locked mihomo ${ver} (TUN engine for URI exits)..."
+    local arch tmp url
     case "$(uname -m)" in
         x86_64) arch=amd64 ;;
         aarch64|arm64) arch=arm64 ;;
@@ -2135,8 +2163,40 @@ ensure_mihomo() {
     fi
     mkdir -p "${BASE_DIR}/bin"
     install -m 0755 "$tmp/mihomo" "${MIHOMO_BIN}"
+    printf '%s\n' "$ver" > "${MIHOMO_VERSION_FILE}"
     rm -rf "$tmp"
+    # Persist explicit pins so later `5gpn update` does not silently downgrade.
+    if [[ "$explicit" -eq 1 ]]; then
+        mkdir -p "${CONF_DIR}"
+        printf '%s\n' "$ver" > "$pin_file"
+    fi
     ok "mihomo ${ver} installed: ${MIHOMO_BIN}"
+}
+update_mihomo() {
+    # Self-service mihomo engine bump: 5gpn update-mihomo [version].
+    # An explicit version is pinned (etc/mihomo.pin); without an argument the
+    # version resolves via env > pin > repo default.
+    local ver="${1:-}" before="" after=""
+    if [[ -f "${MIHOMO_VERSION_FILE}" ]]; then
+        before="$(tr -d '[:space:]' < "${MIHOMO_VERSION_FILE}" | head -n1)"
+    fi
+    if [[ -n "$ver" ]]; then
+        MIHOMO_VERSION="${ver}" ensure_mihomo || return 1
+    else
+        ensure_mihomo || return 1
+    fi
+    after="$(tr -d '[:space:]' < "${MIHOMO_VERSION_FILE}" | head -n1)"
+    if [[ "$before" == "$after" ]]; then
+        ok "mihomo already at the resolved version ${after} (nothing to do)"
+        return 0
+    fi
+    info "mihomo ${before:-unknown} -> ${after}; restarting running instances..."
+    local units u
+    units="$(systemctl list-units --all --no-legend --no-pager '5gpn-mihomo@*.service' 2>/dev/null | awk '{print $1}')"
+    for u in $units; do
+        systemctl restart "$u" || warn "restart $u failed (check: journalctl -u $u -n 30)"
+    done
+    ok "mihomo updated to ${after}"
 }
 resolve_mihomo_gomemlimit() {
     local mem_mb="${MEM_TOTAL_MB:-}"
@@ -3397,6 +3457,17 @@ PY
     fi
     ok "metacubexd v${ver} installed to ${BASE_DIR}/webui/mihomo${app_ver:+ (appVersion=${app_ver})}"
     info "若浏览器仍显示旧版：清掉该站 Service Worker / 站点数据，或用无痕窗口打开 /mihomo/"
+}
+update_webui() {
+    # Self-service metacubexd dashboard bump: 5gpn update-webui [version].
+    # An explicit version is pinned (etc/metacubexd.pin); without an argument
+    # the version resolves via env > pin > repo default.
+    local ver="${1:-}"
+    if [[ -n "$ver" ]]; then
+        METACUBEXD_VERSION="${ver}" install_metacubexd
+    else
+        install_metacubexd
+    fi
 }
 setup_api() {
     local token="${API_TOKEN:-}"
@@ -4714,6 +4785,14 @@ case "${1:-}" in
     --setup-api)
         check_root
         setup_api
+        ;;
+    --update-webui)
+        check_root
+        update_webui "${2:-}"
+        ;;
+    --update-mihomo)
+        check_root
+        update_mihomo "${2:-}"
         ;;
     --enable-client-socks)
         enable_client_socks

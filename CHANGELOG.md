@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Self-service version bumps: `5gpn update-webui [ver]` upgrades the vendored metacubexd dashboard and `5gpn update-mihomo [ver]` upgrades the mihomo TUN engine (restarting running exit instances). Explicit versions are pinned via `etc/metacubexd.pin` / `etc/mihomo.pin` so later `5gpn update` runs never silently downgrade; mihomo installs now record the installed version and `ensure_mihomo` resolves env > pin > repo default.
+
 ### Changed
 
 - Hardening defaults: API now binds to `127.0.0.1` by default with empty CORS, mosdns cache/logging and China-DNS concurrency are reduced, and health checks run every 20 minutes.
