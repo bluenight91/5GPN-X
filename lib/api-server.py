@@ -29,10 +29,10 @@ import re
 import secrets
 import select
 import socket
-import tarfile
 import ssl
 import subprocess
 import sys
+import tarfile
 import threading
 import time
 import urllib.error
@@ -134,7 +134,7 @@ def rate_ok(ip):
 
 
 def rate_limited_path(path):
-    return path.startswith("/api/") or path.startswith("/mihomo")
+    return path.startswith(("/api/", "/mihomo"))
 
 
 def _prune_mihomo_sessions(now):
@@ -173,13 +173,14 @@ def valid_mihomo_session(sid):
 
 def run(argv, inp=None, timeout=180):
     try:
-        p = subprocess.run(argv, input=inp, capture_output=True, text=True, timeout=timeout)
+        p = subprocess.run(argv, input=inp, capture_output=True, text=True, timeout=timeout,
+                           check=False)
         out = ANSI.sub("", (p.stdout or "") + (p.stderr or ""))
         return p.returncode == 0, out.strip()
     except subprocess.TimeoutExpired:
         return False, "操作超时"
     except FileNotFoundError:
-        return False, "命令不存在：%s" % argv[0]
+        return False, f"命令不存在：{argv[0]}"
     except Exception as e:  # noqa: BLE001
         return False, str(e)
 
@@ -228,7 +229,7 @@ def clash_request(method, sub, body=None, ctype=None, timeout=30):
     if not secret:
         return 503, "application/json", json.dumps({"message": "mihomo api not configured"}).encode()
     path, _, query = sub.partition("?")
-    url = "http://%s/%s" % (CLASH_ADDR, urllib.parse.quote(path, safe="/"))
+    url = f"http://{CLASH_ADDR}/{urllib.parse.quote(path, safe='/')}"
     if query:
         url += "?" + query
     req = urllib.request.Request(url, data=body, method=method)
@@ -241,7 +242,7 @@ def clash_request(method, sub, body=None, ctype=None, timeout=30):
     except urllib.error.HTTPError as e:
         return e.code, e.headers.get("Content-Type", "application/json"), e.read()
     except Exception as e:  # noqa: BLE001
-        return 502, "application/json", json.dumps({"message": "mihomo unreachable: %s" % e}).encode()
+        return 502, "application/json", json.dumps({"message": f"mihomo unreachable: {e}"}).encode()
 
 
 def ws_allowed(sub):
@@ -252,16 +253,16 @@ def ws_allowed(sub):
 def build_ws_request(sub, client_headers):
     """Rebuild the client's WS upgrade request for the loopback Clash API,
     injecting the server-side secret. Returns raw bytes."""
-    lines = ["GET /%s HTTP/1.1" % sub,
-             "Host: %s" % CLASH_ADDR,
+    lines = [f"GET /{sub} HTTP/1.1",
+             f"Host: {CLASH_ADDR}",
              "Upgrade: websocket",
              "Connection: Upgrade",
-             "Sec-WebSocket-Version: %s" % client_headers.get("Sec-WebSocket-Version", "13"),
-             "Sec-WebSocket-Key: %s" % client_headers.get("Sec-WebSocket-Key", ""),
-             "Authorization: Bearer %s" % clash_secret()]
+             f"Sec-WebSocket-Version: {client_headers.get('Sec-WebSocket-Version', '13')}",
+             f"Sec-WebSocket-Key: {client_headers.get('Sec-WebSocket-Key', '')}",
+             f"Authorization: Bearer {clash_secret()}"]
     proto = client_headers.get("Sec-WebSocket-Protocol")
     if proto:
-        lines.append("Sec-WebSocket-Protocol: %s" % proto)
+        lines.append(f"Sec-WebSocket-Protocol: {proto}")
     return ("\r\n".join(lines) + "\r\n\r\n").encode()
 
 
@@ -357,7 +358,7 @@ def mihomo_overview():
     if not secret:
         return None, "mihomo API 未配置（缺少 secret，运行 install.sh --setup-api）"
     def get(p):
-        req = urllib.request.Request("http://%s%s" % (CLASH_ADDR, p))
+        req = urllib.request.Request(f"http://{CLASH_ADDR}{p}")
         req.add_header("Authorization", "Bearer " + secret)
         with urllib.request.urlopen(req, timeout=8) as r:
             return json.loads(r.read().decode())
@@ -366,7 +367,7 @@ def mihomo_overview():
         # mihomo's /memory is an INFINITE one-object-per-second stream (plain
         # HTTP included), and its first object is always inuse=0 by design.
         # Reading to EOF would hang forever — take the first two lines instead.
-        req = urllib.request.Request("http://%s/memory" % CLASH_ADDR)
+        req = urllib.request.Request(f"http://{CLASH_ADDR}/memory")
         req.add_header("Authorization", "Bearer " + secret)
         with urllib.request.urlopen(req, timeout=6) as r:
             first = json.loads((r.readline() or b"{}").decode() or "{}")
@@ -381,7 +382,7 @@ def mihomo_overview():
         mem = get_memory()
         ver = get("/version")
     except Exception as e:  # noqa: BLE001
-        return None, "mihomo 不可达（smart 出口未启用？）: %s" % e
+        return None, f"mihomo 不可达（smart 出口未启用？）: {e}"
     cl = conns.get("connections") or []
     top = {}
     for c in cl:
@@ -440,26 +441,27 @@ def list_exits():
         for f in os.listdir(EXITS_DIR):
             if f.endswith(".type"):
                 names.add(f[:-5])
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001, S110
         pass
     try:
         for f in os.listdir(WG_DIR):
             if f.startswith("pgw-") and f.endswith(".conf"):
                 names.add(f[4:-5])
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001, S110
         pass
     cur = current_exit()
     out = []
     for n in sorted(names):
         if n in ("local", "smart"):
             continue
-        t = read_file(EXITS_DIR + "/%s.type" % n).strip() or "wireguard"
+        t = read_file(EXITS_DIR + f"/{n}.type").strip() or "wireguard"
         server = ""
         try:
-            o = json.load(open(EXITS_DIR + "/%s.json" % n))["outbounds"][0]
+            with open(EXITS_DIR + f"/{n}.json") as f:
+                o = json.load(f)["outbounds"][0]
             if o.get("server"):
-                server = "%s:%s" % (o["server"], o.get("server_port", ""))
-        except Exception:  # noqa: BLE001
+                server = f"{o['server']}:{o.get('server_port', '')}"
+        except Exception:  # noqa: BLE001, S110
             pass
         out.append({"name": n, "type": t, "server": server, "active": n == cur})
     return out, cur
@@ -567,15 +569,15 @@ def resources():
         s = os.statvfs("/")
         r["disk_total_mb"] = (s.f_blocks * s.f_frsize) // (1024 * 1024)
         r["disk_used_mb"] = ((s.f_blocks - s.f_bfree) * s.f_frsize) // (1024 * 1024)
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001, S110
         pass
     try:
         r["uptime_sec"] = int(float(read_file("/proc/uptime").split()[0]))
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001, S110
         pass
     try:
         r["load"] = [float(x) for x in read_file("/proc/loadavg").split()[:3]]
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001, S110
         pass
     r["cpu_cores"] = os.cpu_count() or 1
     r["cpu_percent"] = cpu_percent()
@@ -592,7 +594,7 @@ def primary_iface():
             f = line.split()
             if len(f) >= 2 and f[1] == "00000000":
                 return f[0]
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001, S110
         pass
     return "eth0"
 
@@ -636,7 +638,7 @@ def _save_traffic(data):
         with open(tmp, "w") as f:
             json.dump(data, f)
         os.replace(tmp, TRAFFIC_FILE)
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001, S110
         pass
 
 
@@ -667,13 +669,13 @@ def traffic_tick():
 def traffic_loop():
     try:
         traffic_tick()      # establish a baseline immediately
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001, S110
         pass
     while True:
         time.sleep(TRAFFIC_INTERVAL)
         try:
             traffic_tick()
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S110
             pass
 
 
@@ -694,7 +696,7 @@ def _uri_host_port(uri):
             m = re.search(r"@([^@:/]+):(\d+)$", dec)
             if m:
                 return m.group(1), int(m.group(2))
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S110
             pass
         return None, None
     if u.scheme == "vmess" and "@" not in u.netloc:
@@ -716,14 +718,14 @@ def _uri_host_port(uri):
 
 def exit_endpoint(name):
     """(host, port) of an exit's upstream node, or (None, None)."""
-    t = read_file(EXITS_DIR + "/%s.type" % name).strip()
+    t = read_file(EXITS_DIR + f"/{name}.type").strip()
     if t == "wireguard":
-        m = re.search(r"(?im)^\s*Endpoint\s*=\s*(.+):(\d+)\s*$", read_file(WG_DIR + "/pgw-%s.conf" % name))
+        m = re.search(r"(?im)^\s*Endpoint\s*=\s*(.+):(\d+)\s*$", read_file(WG_DIR + f"/pgw-{name}.conf"))
         if m:
             return m.group(1), int(m.group(2))
         return None, None
     # URI exits keep the original link in <name>.uri (mihomo TUN engine)
-    first = read_file(EXITS_DIR + "/%s.uri" % name).strip().splitlines()
+    first = read_file(EXITS_DIR + f"/{name}.uri").strip().splitlines()
     if first:
         return _uri_host_port(first[0].strip())
     return None, None
@@ -791,7 +793,7 @@ def _save_latency(data):
         with open(tmp, "w") as f:
             json.dump(data, f)
         os.replace(tmp, LATENCY_FILE)
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001, S110
         pass
 
 
@@ -810,7 +812,7 @@ def latency_loop():
     while True:
         try:
             latency_tick()
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S110
             pass
         time.sleep(LATENCY_INTERVAL)
 
@@ -865,25 +867,25 @@ def github_context(repo_url):
     if not m:
         return None
     owner, repo = m.group(1), m.group(2).replace(".git", "")
-    info = _http_json("https://api.github.com/repos/%s/%s" % (owner, repo))
+    info = _http_json(f"https://api.github.com/repos/{owner}/{repo}")
     branch = info.get("default_branch", "main")
     ctx = {"owner": owner, "repo": repo, "branch": branch,
            "description": info.get("description") or "",
-           "raw_base": "https://raw.githubusercontent.com/%s/%s/%s/" % (owner, repo, branch),
+           "raw_base": f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/",
            "files": [], "readme": ""}
     try:
-        for it in _http_json("https://api.github.com/repos/%s/%s/contents" % (owner, repo)):
-            if it.get("type") == "file" and re.search(r"\.(list|ya?ml|txt|conf|srs)$", it.get("name", ""), re.I):
+        for it in _http_json(f"https://api.github.com/repos/{owner}/{repo}/contents"):
+            if it.get("type") == "file" and re.search(r"\.(list|ya?ml|txt|conf|srs)$", it.get("name", ""), re.IGNORECASE):
                 ctx["files"].append(it["path"])
         ctx["files"] = ctx["files"][:40]
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001, S110
         pass
     for fn in ("README.md", "readme.md", "README.MD"):
         try:
             ctx["readme"] = _http_text(ctx["raw_base"] + fn, limit=3000)
             if ctx["readme"]:
                 break
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S112
             continue
     return ctx
 
@@ -904,7 +906,7 @@ def ai_chat(cfg, user):
 
 def extract_json(text):
     t = (text or "").strip()
-    m = re.search(r"```(?:json)?\s*(.*?)```", t, re.S)
+    m = re.search(r"```(?:json)?\s*(.*?)```", t, re.DOTALL)
     if m:
         t = m.group(1).strip()
     i, j = t.find("{"), t.rfind("}")
@@ -924,14 +926,14 @@ def ai_plan(repo, intent):
     try:
         ctx = github_context(repo) if repo else None
     except Exception as e:  # noqa: BLE001
-        ctx = {"error": "仓库读取失败: %s" % e}
+        ctx = {"error": f"仓库读取失败: {e}"}
     exits = [e["name"] for e in list_exits()[0]]
     cats = list(policy_map().keys())
     lines = ["意图: " + intent, "",
              "可用出口: " + (", ".join(exits) or "(无)"),
              "现有分类: " + (", ".join(cats) or "(无)")]
     if ctx and not ctx.get("error"):
-        lines += ["", "GitHub 仓库: %s/%s" % (ctx["owner"], ctx["repo"]),
+        lines += ["", f"GitHub 仓库: {ctx['owner']}/{ctx['repo']}",
                   "描述: " + ctx["description"], "raw 前缀: " + ctx["raw_base"]]
         if ctx["files"]:
             lines.append("规则文件:")
@@ -943,7 +945,7 @@ def ai_plan(repo, intent):
     try:
         raw = ai_chat(cfg, "\n".join(lines))
     except Exception as e:  # noqa: BLE001
-        return None, "AI 调用失败: %s" % e
+        return None, f"AI 调用失败: {e}"
     return {"plan": extract_json(raw), "raw": raw, "exits": exits}, None
 
 
@@ -1114,9 +1116,7 @@ def route_test(domain):
             v = p[1].lower().lstrip(".")
             if d == v or d.endswith("." + v):
                 matched = (s, p[-1])
-        elif typ == "DOMAIN" and len(p) >= 3 and d == p[1].lower():
-            matched = (s, p[-1])
-        elif typ == "DOMAIN-KEYWORD" and len(p) >= 3 and p[1].lower() in d:
+        elif typ == "DOMAIN" and len(p) >= 3 and d == p[1].lower() or typ == "DOMAIN-KEYWORD" and len(p) >= 3 and p[1].lower() in d:
             matched = (s, p[-1])
     pm = policy_map()
     cat = matched[1] if matched else (final or "Proxy")
@@ -1202,15 +1202,15 @@ def _backup_allowed(name):
 
 def restore_backup(b64):
     raw = base64.b64decode(b64)
-    tf = tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz")
-    members = [m for m in tf.getmembers() if (m.isfile() or m.isdir()) and _backup_allowed(m.name)]
-    if not members:
-        return False, "备份内容无效（无可识别的配置文件）"
-    tf.extractall("/", members=members)
+    with tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz") as tf:
+        members = [m for m in tf.getmembers() if (m.isfile() or m.isdir()) and _backup_allowed(m.name)]
+        if not members:
+            return False, "备份内容无效（无可识别的配置文件）"
+        tf.extractall("/", members=members)
     ctl("--set-rules", inp=read_file(RULES_FILE), timeout=400)   # rebuild router from restored rules
     run(["systemctl", "restart", "mosdns"], timeout=30)          # pick up restored lists
     run(["/usr/local/bin/5gpn-apply-exit.sh"], timeout=30)
-    return True, "已恢复 %d 个文件，并重建路由。如需重建劫持名单可再执行『更新规则集』。" % len(members)
+    return True, f"已恢复 {len(members)} 个文件，并重建路由。如需重建劫持名单可再执行『更新规则集』。"
 
 
 def _tok_eq(a, b):
@@ -1261,7 +1261,7 @@ def run_doctor_json():
     ]
     try:
         p = subprocess.run(systemd_cmd, capture_output=True, text=True, timeout=180,
-                           encoding="utf-8", errors="replace")
+                           encoding="utf-8", errors="replace", check=False)
         out = ANSI.sub("", (p.stdout or "")).strip()
         if out:
             return p.returncode == 0, out
@@ -1270,7 +1270,7 @@ def run_doctor_json():
     try:
         p = subprocess.run(["/bin/bash", doctor, "--json"],
                            capture_output=True, text=True, timeout=180,
-                           env=_doctor_env(), encoding="utf-8", errors="replace")
+                           env=_doctor_env(), encoding="utf-8", errors="replace", check=False)
         out = ANSI.sub("", (p.stdout or "") + (p.stderr or "")).strip()
         return p.returncode == 0, out
     except subprocess.TimeoutExpired:
@@ -1335,29 +1335,29 @@ def metrics_text():
         "pgw_api_process_up 1",
         "# HELP pgw_api_process_uptime_seconds API process uptime.",
         "# TYPE pgw_api_process_uptime_seconds gauge",
-        "pgw_api_process_uptime_seconds %.0f" % max(0, time.time() - STARTED),
+        f"pgw_api_process_uptime_seconds {max(0, time.time() - STARTED):.0f}",
         "# HELP pgw_api_cpu_percent CPU usage percent.",
         "# TYPE pgw_api_cpu_percent gauge",
-        "pgw_api_cpu_percent %.1f" % cpu,
+        f"pgw_api_cpu_percent {cpu:.1f}",
         "# HELP pgw_api_memory_bytes Memory size in bytes.",
         "# TYPE pgw_api_memory_bytes gauge",
-        'pgw_api_memory_bytes{kind="total"} %d' % (int(mem.get("total_mb", 0)) * 1024 * 1024),
-        'pgw_api_memory_bytes{kind="used"} %d' % (int(mem.get("used_mb", 0)) * 1024 * 1024),
+        f'pgw_api_memory_bytes{{kind="total"}} {int(mem.get("total_mb", 0)) * 1024 * 1024}',
+        f'pgw_api_memory_bytes{{kind="used"}} {int(mem.get("used_mb", 0)) * 1024 * 1024}',
         "# HELP pgw_api_live_bytes_per_second Instantaneous network rate.",
         "# TYPE pgw_api_live_bytes_per_second gauge",
-        'pgw_api_live_bytes_per_second{scope="server",direction="rx"} %d' % live["server"]["rx"],
-        'pgw_api_live_bytes_per_second{scope="server",direction="tx"} %d' % live["server"]["tx"],
+        f'pgw_api_live_bytes_per_second{{scope="server",direction="rx"}} {live["server"]["rx"]}',
+        f'pgw_api_live_bytes_per_second{{scope="server",direction="tx"}} {live["server"]["tx"]}',
     ]
     for name, vals in sorted(live.get("exits", {}).items()):
         label = _metric_label(name)
-        lines.append('pgw_api_live_bytes_per_second{scope="exit",exit="%s",direction="rx"} %d'
-                     % (label, vals.get("rx", 0)))
-        lines.append('pgw_api_live_bytes_per_second{scope="exit",exit="%s",direction="tx"} %d'
-                     % (label, vals.get("tx", 0)))
+        lines.append(f'pgw_api_live_bytes_per_second{{scope="exit",exit="{label}",direction="rx"}}'
+                     f' {vals.get("rx", 0)}')
+        lines.append(f'pgw_api_live_bytes_per_second{{scope="exit",exit="{label}",direction="tx"}}'
+                     f' {vals.get("tx", 0)}')
     lines += [
         "# HELP pgw_api_live_connections Established TCP connections.",
         "# TYPE pgw_api_live_connections gauge",
-        "pgw_api_live_connections %d" % int(live.get("conns", 0)),
+        f"pgw_api_live_connections {int(live.get('conns', 0))}",
     ]
     return ("\n".join(lines) + "\n").encode("utf-8")
 
@@ -1403,7 +1403,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         try:
             self.wfile.write(body)
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S110
             pass
 
     def _send_raw(self, code, data, ctype="application/json", extra=None):
@@ -1420,7 +1420,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         try:
             self.wfile.write(data)
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S110
             pass
 
     def _auth(self):
@@ -1515,8 +1515,8 @@ class Handler(BaseHTTPRequestHandler):
             # iframe 内相对路径资源与面板 API 调用带不了 ?token=；种同源会话
             # cookie（Path=/ 覆盖 /mihomo 与 /api/mihomo/*）供其鉴权。
             sid = mint_mihomo_session()
-            extra.append(("Set-Cookie", "pgw_mihomo=%s; Path=/; HttpOnly; Secure; SameSite=Strict"
-                          % urllib.parse.quote(sid, safe="")))
+            extra.append(("Set-Cookie",
+                          f"pgw_mihomo={urllib.parse.quote(sid, safe='')}; Path=/; HttpOnly; Secure; SameSite=Strict"))
         return self._send_raw(200, data, MIME.get(ext, "application/octet-stream"), extra=extra)
 
     def _serve_webui_index(self):
@@ -1575,7 +1575,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 self.close_connection = True
                 ws_relay(self.connection, sub, self.headers)
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001, S110
                 pass
             return
         if path.startswith("/api/mihomo/proxy/"):
@@ -1592,7 +1592,7 @@ class Handler(BaseHTTPRequestHandler):
             if os.path.isfile(os.path.join(CONF_DIR, "client-mtproto.enabled")):
                 units.extend(["5gpn-mtproxy", "5gpn-client-mtproto"])
             if cur and cur not in ("local", ""):
-                units.append("5gpn-mihomo@%s" % cur)
+                units.append(f"5gpn-mihomo@{cur}")
             services = {s: run(["systemctl", "is-active", s], timeout=5)[0] for s in units}
             res = resources()
             return self._send(200, {"ok": True, "current": cur, "exits": exits,
@@ -1953,7 +1953,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not d or d.startswith("#"):
                     continue
                 if not DOMAIN_RE.match(d):
-                    return self._send(400, {"ok": False, "error": "无效域名: %s" % d})
+                    return self._send(400, {"ok": False, "error": f"无效域名: {d}"})
                 cleaned.append(d)
             ok, out = ctl("--set-direct-domains", inp="\n".join(cleaned) + ("\n" if cleaned else ""),
                           timeout=120)
@@ -2035,7 +2035,7 @@ class Handler(BaseHTTPRequestHandler):
                     if not link.startswith("tg:") and "tg://" in s:
                         link = s[s.find("tg://"):].strip()
             if not link and host and port and secret:
-                link = "tg://proxy?server=%s&port=%s&secret=%s" % (host, port, secret)
+                link = f"tg://proxy?server={host}&port={port}&secret={secret}"
             return self._send(200 if ok else 500, {
                 "ok": ok, "output": out,
                 "enabled": os.path.isfile(os.path.join(CONF_DIR, "client-mtproto.enabled")),
@@ -2053,7 +2053,7 @@ class Handler(BaseHTTPRequestHandler):
                 ok, msg = restore_backup(str(b.get("data", "")))
                 return self._send(200 if ok else 400, {"ok": ok, "output": msg})
             except Exception as e:  # noqa: BLE001
-                return self._send(500, {"ok": False, "error": "恢复失败: %s" % e})
+                return self._send(500, {"ok": False, "error": f"恢复失败: {e}"})
 
         if path == "/api/ai/plan":
             res, err = ai_plan(str(b.get("repo", "")).strip(), str(b.get("intent", "")).strip())
@@ -2070,19 +2070,19 @@ class Handler(BaseHTTPRequestHandler):
             for cat, tgt in policy.items():
                 cat, tgt = str(cat).strip(), str(tgt).strip()
                 if not CAT_RE.match(cat):
-                    out.append("跳过分类(名称无效): %s" % cat)
+                    out.append(f"跳过分类(名称无效): {cat}")
                     continue
                 if tgt not in ("direct", "block") and not EXIT_NAME_RE.match(tgt):
-                    out.append("跳过 %s(目标无效): %s" % (cat, tgt))
+                    out.append(f"跳过 {cat}(目标无效): {tgt}")
                     continue
                 ok, o = ctl("--set-policy", cat, tgt, timeout=300)
-                out.append("分类 %s -> %s: %s" % (cat, tgt, "ok" if ok else o))
+                out.append(f"分类 {cat} -> {tgt}: {'ok' if ok else o}")
             clean = [r.strip() for r in rules if isinstance(r, str) and r.strip() and "\n" not in r][:300]
             if clean:
                 txt = read_file(RULES_FILE)
                 txt = (txt.rstrip("\n") + "\n" + "\n".join(clean) + "\n") if txt.strip() else ("\n".join(clean) + "\n")
                 ok, o = rules_set(txt)
-                out.append("新增 %d 条规则: %s" % (len(clean), "ok" if ok else o))
+                out.append(f"新增 {len(clean)} 条规则: {'ok' if ok else o}")
             return self._send(200, {"ok": True, "output": "\n".join(out)})
 
         return self._send(404, {"ok": False, "error": "not found"})
@@ -2110,7 +2110,7 @@ class TLSServer(ThreadingHTTPServer):
         except Exception:  # noqa: BLE001
             try:
                 self.shutdown_request(request)
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001, S110
                 pass
             return
         super().process_request_thread(request, client_address)
@@ -2125,13 +2125,13 @@ def main():
     try:
         ctx.load_cert_chain(certfile=CERT, keyfile=KEY)
     except Exception as e:  # noqa: BLE001
-        sys.stderr.write("TLS cert load failed (%s / %s): %s\n" % (CERT, KEY, e))
+        sys.stderr.write(f"TLS cert load failed ({CERT} / {KEY}): {e}\n")
         sys.exit(1)
     threading.Thread(target=traffic_loop, daemon=True).start()
     threading.Thread(target=latency_loop, daemon=True).start()
     httpd = TLSServer((BIND, PORT), Handler)
     httpd.ssl_ctx = ctx
-    sys.stderr.write("5gpn-api listening on %s:%d (TLS)\n" % (BIND, PORT))
+    sys.stderr.write(f"5gpn-api listening on {BIND}:{PORT} (TLS)\n")
     sys.stderr.flush()
     try:
         httpd.serve_forever()
