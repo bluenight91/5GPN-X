@@ -101,10 +101,13 @@ _session_next_prune = 0.0
 # so our console can embed it, everything else locked down).
 # metacubexd (Nuxt) boots via small inline scripts; script-src 'self' alone
 # blocks them and the UI white-screens with TypeError on undefined `app`.
+# connect-src must reach beyond 'self': the dashboard's IP-info and latency
+# widgets (and its user-configurable latency-test URLs) fetch third-party
+# endpoints straight from the browser; 'self' alone makes them all fail.
 XD_CSP = ("default-src 'self'; "
           "script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'; "
           "style-src 'self' 'unsafe-inline'; "
-          "img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; "
+          "img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https: wss:; "
           "worker-src 'self' blob:; frame-ancestors 'self'; base-uri 'self'; form-action 'self'")
 
 # Per-source-IP token bucket for /api/* (brute-force and abuse protection).
