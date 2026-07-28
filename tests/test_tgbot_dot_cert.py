@@ -38,10 +38,27 @@ class DotCertStatusTest(unittest.TestCase):
             "tls://1.0.0.1:853 tcp://9.9.9.9:53",
         )
 
+    def test_dns_upstream_parser_accepts_domain_doh_with_custom_path(self):
+        value = bot._dns_arg(
+            "https://doh-a.example.com/api/camo1 "
+            "https://doh-b.example.com/api/camo2, tls://dot.example.com:853"
+        )
+        self.assertEqual(
+            value,
+            "https://doh-a.example.com/api/camo1 "
+            "https://doh-b.example.com/api/camo2 tls://dot.example.com:853",
+        )
+
     def test_dns_upstream_parser_rejects_unsafe_or_malformed_urls(self):
-        self.assertEqual(bot._dns_arg("https://example.com/dns-query"), "")
-        self.assertEqual(bot._dns_arg("https://1.1.1.1/wrong-path"), "")
+        # udp/tcp upstreams must stay IP literals (bootstrap resolves DoH/DoT only)
+        self.assertEqual(bot._dns_arg("udp://example.com:53"), "")
+        self.assertEqual(bot._dns_arg("tcp://example.com:53"), "")
+        # bad port, unknown scheme, embedded credentials
+        self.assertEqual(bot._dns_arg("https://1.1.1.1:99999/dns-query"), "")
         self.assertEqual(bot._dns_arg("file://1.1.1.1/dns-query"), "")
+        self.assertEqual(bot._dns_arg("https://user:pass@1.1.1.1/dns-query"), "")
+        # non-https upstreams must not carry a path
+        self.assertEqual(bot._dns_arg("tls://1.0.0.1:853/path"), "")
 
     def test_cert_expiry_parses_real_certificate(self):
         with tempfile.TemporaryDirectory() as tmp:

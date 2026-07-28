@@ -20,6 +20,7 @@
 
 ### Fixed
 
+- TG bot DNS upstream validation now matches `--set-dns`: DoH/DoT upstreams may use domain hostnames and custom paths (e.g. self-hosted AdGuard Home `https://domain/api/<id>`), while udp/tcp upstreams still require IP literals. Previously the bot rejected any non-IP hostname and any DoH path other than `/dns-query`, so camouflaged DoH endpoints could only be set from the CLI.
 - `5gpn snapshot list` and `5gpn snapshot restore [id]` now dispatch to snapshot subcommands correctly.
 - Private SOCKS5 enablement now aborts if firewall synchronization fails.
 

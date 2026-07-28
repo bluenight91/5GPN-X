@@ -1617,6 +1617,11 @@ def force_dot_domain_kb():
     ]
 
 
+DNS_HOSTNAME_RE = re.compile(
+    r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?"
+    r"(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*")
+
+
 def _dns_arg(text):
     value = (text or "").strip()
     if not value:
@@ -1629,16 +1634,27 @@ def _dns_arg(text):
             continue
         try:
             parsed = urlparse(item)
-            ipaddress.ip_address(parsed.hostname or "")
             port = parsed.port
         except (ValueError, TypeError):
             return ""
-        if (parsed.scheme not in DNS_UPSTREAM_SCHEMES or parsed.username or
-                parsed.password or parsed.query or parsed.fragment or
+        if (parsed.scheme not in DNS_UPSTREAM_SCHEMES or not parsed.hostname or
+                parsed.username or parsed.password or parsed.fragment or
                 (port is not None and not 1 <= port <= 65535)):
             return ""
+        if parsed.query and parsed.scheme != "https":
+            return ""
+        try:
+            ipaddress.ip_address(parsed.hostname)
+        except ValueError:
+            # DoH/DoT endpoints may use a domain (bootstrap resolver handles
+            # it); plain udp/tcp upstreams must stay IP literals.
+            if (parsed.scheme not in ("https", "tls") or
+                    not DNS_HOSTNAME_RE.fullmatch(parsed.hostname)):
+                return ""
+        # DoH is just an HTTP endpoint: any path is fine (camouflaged DoH
+        # servers commonly hide behind custom paths like /api/<id>).
         if parsed.scheme == "https":
-            if parsed.path != "/dns-query":
+            if parsed.path and not parsed.path.startswith("/"):
                 return ""
         elif parsed.path not in ("", "/"):
             return ""
@@ -1657,8 +1673,10 @@ def current_local_dns():
 def op_set_dns(kind, text):
     dns = _dns_arg(text)
     if not dns:
-        return ("DNS 格式无效。支持 IP[:端口]，或 https://IP/dns-query、"
-                "tls://IP:853、udp://IP:53、tcp://IP:53；多个地址用空格或逗号分隔。")
+        return ("DNS 格式无效。支持 IP[:端口]，或 https://主机/路径、"
+                "tls://主机:853、udp://IP:53、tcp://IP:53（https/tls 可用域名"
+                "和自定义路径，如自建 AdGuard Home 的 https://域名/api/标识）；"
+                "多个地址用空格或逗号分隔。")
     if kind == "remote":
         remote_dns = dns
         local_dns = current_local_dns()
@@ -3410,15 +3428,19 @@ def handle_callback(cb):
         PENDING[chat_id] = {"action": "dot_dns_remote", "prompt_mid": cb_mid}
         edit(cb,
              "🌍 <b>更改国际 DNS</b>\n\n"
-             "发送新的 DNS 地址，多个地址用空格或逗号分隔。\n\n"
-             "示例：<pre>1.1.1.1 8.8.8.8</pre>",
+             "发送新的 DNS 地址，多个地址用空格或逗号分隔。\n"
+             "支持 IP、https://域名/路径（DoH）、tls://域名（DoT）。\n\n"
+             "示例：<pre>1.1.1.1 8.8.8.8</pre>"
+             "或 <pre>https://dns.example.com/dns-query</pre>",
              cancel_kb("dot"))
     elif data == "dot:dns_local":
         PENDING[chat_id] = {"action": "dot_dns_local", "prompt_mid": cb_mid}
         edit(cb,
              "🇨🇳 <b>更改国内 DNS</b>\n\n"
-             "发送新的 DNS 地址，多个地址用空格或逗号分隔。\n\n"
-             "示例：<pre>223.5.5.5 119.29.29.29</pre>",
+             "发送新的 DNS 地址，多个地址用空格或逗号分隔。\n"
+             "支持 IP、https://域名/路径（DoH）、tls://域名（DoT）。\n\n"
+             "示例：<pre>223.5.5.5 119.29.29.29</pre>"
+             "或 <pre>https://dns.example.com/dns-query</pre>",
              cancel_kb("dot"))
     elif data == "dot:ecs":
         PENDING[chat_id] = {"action": "ecs_set", "prompt_mid": cb_mid}
