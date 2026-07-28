@@ -52,4 +52,22 @@ fi
 [[ "${doctor}" == *'clash-remote'* ]] || fail "doctor must check clash-remote when enabled"
 [[ "${renew}" == *'5gpn-clash-remote'* ]] || fail "cert renew hook must restart clash-remote"
 
+# --- output contract: api-server.py POST /api/clash-remote extracts the ------
+# one-time secret from enable/reset stdout by these exact prefixes. Changing
+# the wording silently breaks secret display in WebUI/Bot (URL has a fallback,
+# the secret does not).
+[[ "${api}" == *'"密钥:" in s'* ]] || fail "api must parse 密钥: from ctl output"
+[[ "${api}" == *'"地址:" in s'* ]] || fail "api must parse 地址: from ctl output"
+[[ "${api}" == *'startswith("URL:")'* ]] || fail "api must parse URL: from ctl output"
+[[ "${install}" == *'echo "  地址:   ${host}:${CLASH_REMOTE_PORT}"'* ]] \
+    || fail "enable output contract: 地址: line"
+[[ "${install}" == *'echo "  URL:    https://${domain}:${CLASH_REMOTE_PORT}"'* ]] \
+    || fail "enable output contract: URL: line"
+[[ "${install}" == *'echo "  密钥:   ${CLASH_REMOTE_SECRET}"'* ]] \
+    || fail "enable output contract: 密钥: line"
+[[ "${install}" == *'echo "  URL:  https://${domain}:${port}"'* ]] \
+    || fail "reset output contract: URL: line"
+[[ "${install}" == *'echo "  密钥: ${secret}"'* ]] \
+    || fail "reset output contract: 密钥: line"
+
 echo "test_clash_remote_policy: OK"
