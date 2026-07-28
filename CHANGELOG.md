@@ -4,6 +4,8 @@
 
 ### Added
 
+- HTTPS Clash remote API for third-party panels (Sphere / Neko Dash): token-authenticated remote read of mihomo state over HTTPS, enable/reset flow with API-parsed output contract.
+- Optional private MTProto proxy on TCP 5753 (mtg + client-CIDR ACL): classic secrets Telegram can paste as 32-hex, FakeTLS wrap for bare keys, enable fails closed when mtg/front are inactive, fuller status coverage.
 - Self-service version bumps: `5gpn update-webui [ver]` upgrades the vendored metacubexd dashboard and `5gpn update-mihomo [ver]` upgrades the mihomo TUN engine (restarting running exit instances). Explicit versions are pinned via `etc/metacubexd.pin` / `etc/mihomo.pin` so later `5gpn update` runs never silently downgrade; mihomo installs now record the installed version and `ensure_mihomo` resolves env > pin > repo default.
 - Component version management in WebUI and TG bot: `GET /api/component/versions` reports current/pinned/latest (upstream latest from GitHub, 10-minute cache, failure-tolerant) and `POST /api/component/update` runs the pinned upgrade. The WebUI settings (运维 → 组件版本) and the bot ops menu (运维 → 🧩 组件版本) offer update checks, one-click upgrades (mihomo upgrade asks for confirmation since it restarts exits), and manual version pinning.
 
