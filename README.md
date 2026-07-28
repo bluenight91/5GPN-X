@@ -74,6 +74,20 @@ export EMAIL="admin@example.com"
 sudo ./install.sh
 ```
 
+安装指定版本（Release）——不追最新 main，固定在某个已发布 tag：
+
+```bash
+# 一键脚本：用 PGW_BRANCH 指定 tag（对新装机器生效）
+curl -fsSL https://raw.githubusercontent.com/bluenight91/5GPN-X/main/quick-install.sh -o /tmp/5gpn.sh && sudo PGW_BRANCH=v1.1.0 bash /tmp/5gpn.sh
+
+# 手动：clone 时直接检出 tag
+git clone --depth 1 -b v1.1.0 https://github.com/bluenight91/5GPN-X.git
+cd 5GPN-X
+sudo ./install.sh
+```
+
+注意：固定版本安装后，执行 `sudo 5gpn update` 会切回最新 main；想停留在该版本就不要跑 update。
+
 安装前请先把域名 A 记录指向服务器公网 IP；脚本在申请 Let's Encrypt 证书前会验证解析（最长等待 120 秒）。
 
 ## 升级
