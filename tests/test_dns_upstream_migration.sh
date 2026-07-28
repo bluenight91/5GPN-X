@@ -62,7 +62,7 @@ done
 eval "$(sed -n '/^render_sniproxy_dns_nameservers() {/,/^}/p' "$install")"
 
 # DoH-only upstreams -> nameserver 127.0.0.1 (local mosdns), exactly once, no warnings.
-out="$(render_sniproxy_dns_nameservers "https://doh-a.example.com/api/camo1 https://doh-b.example.com/api/camo1")"
+out="$(render_sniproxy_dns_nameservers "https://doh-a.example.com/api/camo1 https://doh-b.example.com/api/camo2")"
 [[ "$out" == *'nameserver 127.0.0.1'* ]] \
     || fail "DoH upstreams must use loopback mosdns (got: $out)"
 [[ "$(grep -c 'nameserver 127.0.0.1' <<< "$out")" -eq 1 ]] \
