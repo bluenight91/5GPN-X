@@ -2924,6 +2924,8 @@ PYNAME
         fi
         chmod 600 "${EXITS_DIR}/${name}.uri"
         echo "$type" > "$(exit_type_file "$name")"
+        # New exits must appear in the smart router (metacubexd/delay tests).
+        [[ -f "${RULES_FILE}" ]] && { (regen_smart) >/dev/null 2>&1 || warn "smart 配置重建失败；可稍后手动 --set-rules"; }
         ok "Exit '$name' added (type: $type)"
         info "Activate it with: $0 --set-exit $name"
         return
@@ -2939,6 +2941,8 @@ PYNAME
     install -m 600 "$tmp" "$(exit_conf_path "$name")"
     rm -f "$tmp"
     echo wireguard > "$(exit_type_file "$name")"
+    # New exits must appear in the smart router (metacubexd/delay tests).
+    [[ -f "${RULES_FILE}" ]] && { (regen_smart) >/dev/null 2>&1 || warn "smart 配置重建失败；可稍后手动 --set-rules"; }
     ok "Exit '$name' added (type: wireguard)"
     info "Activate it with: $0 --set-exit $name"
 }
@@ -2957,6 +2961,8 @@ del_exit() {
     rm -f "$(exit_conf_path "$name")" "$(exit_mihomo_conf "$name")" \
         "$(exit_type_file "$name")" "${EXITS_DIR}/${name}.uri"
     rm -rf "${CONF_DIR}/mihomo/${name}"
+    # Dropped exits must disappear from the smart router as well.
+    [[ -f "${RULES_FILE}" ]] && { (regen_smart) >/dev/null 2>&1 || warn "smart 配置重建失败；可稍后手动 --set-rules"; }
     ok "Exit '$name' removed"
 }
 edit_exit() {
