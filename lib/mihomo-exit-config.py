@@ -352,7 +352,7 @@ def parse_flat_yaml(text):
             continue
         if line.startswith("- "):
             line = line[2:].strip()
-        match = re.match(r"^([A-Za-z0-9_-]+)\s*:\s*(.*)$", line)
+        match = re.match(r"^([A-Za-z0-9_-]+)\s*[:：]\s*(.*)$", line)
         if not match:
             die(f"unsupported YAML line: {line!r}")
         key, value = match.group(1), match.group(2).strip()

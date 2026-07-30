@@ -116,8 +116,8 @@ CONSOLE = {}
 LAST_FAILED_DOT_DOMAIN = {}
 PROXY_URI_RE = re.compile(r"^(ss|vmess|trojan|vless|hysteria2|hy2|tuic|anytls|masque|socks5h|socks5|socks|http|https)://", re.IGNORECASE)
 SUPPORTED_EXIT_LINKS = "ss:// vmess:// trojan:// vless:// hysteria2:// tuic:// anytls:// masque:// socks5:// http://"
-MASQUE_YAML_RE = re.compile(r"(?im)^\s*-?\s*type:\s*[\"']?masque[\"']?\s*$")
-MASQUE_YAML_NAME_RE = re.compile(r"(?im)^\s*-?\s*name:\s*[\"']?([^\"'\n#]+)")
+MASQUE_YAML_RE = re.compile(r"(?im)^\s*-?\s*type\s*[:：]\s*[\"']?masque[\"']?\s*(?:#.*)?$")
+MASQUE_YAML_NAME_RE = re.compile(r"(?im)^\s*-?\s*name\s*[:：]\s*[\"']?([^\"'\n#]+)")
 
 
 # --------------------------------------------------------------------------- #

@@ -2866,10 +2866,12 @@ PYNAME
         echo "Paste a WireGuard config, a supported proxy URI, or a masque YAML block for '$name', end with Ctrl-D:"
         cat > "$tmp"
     fi
+    # iOS paste artifacts: normalize non-breaking spaces so detection greps work.
+    sed -i 's/\xc2\xa0/ /g' "$tmp"
     local uri type px_user px_pass px_rdns masque_yaml
     uri="$(grep -iE '^[[:space:]]*(ss|vmess|trojan|vless|hysteria2|hy2|tuic|anytls|masque|socks5h|socks5|socks|http|https)://' "$tmp" | head -n1 | tr -d '\r' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
     masque_yaml=""
-    if [[ -z "$uri" ]] && grep -qiE '^[[:space:]]*-?[[:space:]]*type:[[:space:]]*"?masque"?[[:space:]]*$' "$tmp"; then
+    if [[ -z "$uri" ]] && grep -qiE '^[[:space:]]*-?[[:space:]]*type[[:space:]]*[:：][[:space:]]*"?masque"?([[:space:]#]|$)' "$tmp"; then
         masque_yaml=1   # pasted mihomo-style masque proxy block (usque/wiki format)
     fi
     if [[ -n "$uri" || -n "$masque_yaml" ]]; then

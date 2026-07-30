@@ -185,6 +185,21 @@ assert p["type"] == "masque", p
 assert p["server"] == "162.159.197.2" and p["sni"] == "www.example.com"
 assert p["ip"] == "100.96.0.5/32" and p["ipv6"] == "fd00::5/128" and p["mtu"] == 1280
 PY
+# iOS paste artifacts: fullwidth colon and trailing inline comments must parse.
+out="$(python3 "${gen}" warp --yaml <<YAML
+name：warp
+type：masque
+server: warp.example.com  # 节点地址
+private-key: ${priv}
+public-key: ${pub}
+ip: 172.16.0.2/32
+YAML
+)"
+python3 - "$out" <<'PY'
+import json, sys
+p = json.loads(sys.argv[1])["proxies"][0]
+assert p["type"] == "masque" and p["server"] == "warp.example.com", p
+PY
 # masque negatives: missing/invalid fields must be rejected in both modes.
 if python3 "${gen}" warp "masque://${priv}@warp.example.com:443?ip=172.16.0.2/32" >/dev/null 2>&1; then fail "masque requires public-key"; fi
 if python3 "${gen}" warp "masque://${priv}@warp.example.com:443?public-key=${pub}" >/dev/null 2>&1; then fail "masque requires ip"; fi
@@ -216,7 +231,7 @@ for scheme in vmess trojan vless hysteria2 tuic anytls socks http masque; do
     [[ "${install_body}" == *"$scheme"* ]] || fail "install help/runtime must document $scheme exits"
 done
 [[ "${install_body}" == *'masque://*)             type=masque ;;'* ]] || fail "add_exit must map masque:// to type masque"
-[[ "${install_body}" == *'type:[[:space:]]*"?masque"?[[:space:]]*$'* ]] || fail "add_exit must detect pasted masque YAML"
+[[ "${install_body}" == *'type[[:space:]]*[:：][[:space:]]*"?masque"?([[:space:]#]|$)'* ]] || fail "add_exit must detect pasted masque YAML"
 [[ "${install_body}" == *'"${MIHOMO_CFG_GEN}" "$name" --yaml'* ]] || fail "add_exit must wire generator --yaml mode"
 [[ "${install_body}" == *'[[ $current_removed -eq 1 ]]'* ]] || fail "migration must preserve an active WireGuard exit"
 
