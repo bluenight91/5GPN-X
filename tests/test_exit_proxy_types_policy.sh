@@ -232,6 +232,9 @@ for scheme in vmess trojan vless hysteria2 tuic anytls socks http masque; do
 done
 [[ "${install_body}" == *'masque://*)             type=masque ;;'* ]] || fail "add_exit must map masque:// to type masque"
 [[ "${install_body}" == *'type[[:space:]]*[:：][[:space:]]*"?masque"?([[:space:]#]|$)'* ]] || fail "add_exit must detect pasted masque YAML"
+# pipefail: a no-match grep in the URI extraction pipeline must not kill add_exit silently.
+uri_line="$(grep -F 'ss|vmess|trojan|vless' <<<"${install_body}" | grep -F '|| true')" || fail "add_exit URI grep pipeline must end with || true (pipefail silent-exit)"
+[[ -n "${uri_line}" ]] || fail "add_exit URI grep pipeline must end with || true (pipefail silent-exit)"
 [[ "${install_body}" == *'"${MIHOMO_CFG_GEN}" "$name" --yaml'* ]] || fail "add_exit must wire generator --yaml mode"
 [[ "${install_body}" == *'[[ $current_removed -eq 1 ]]'* ]] || fail "migration must preserve an active WireGuard exit"
 
