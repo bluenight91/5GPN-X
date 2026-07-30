@@ -275,15 +275,22 @@ def normalize_b64_key(value, field):
 def valid_cidr(value, field, version=None):
     if not value:
         die(f"masque proxy missing {field} (CIDR)")
-    if "/" not in str(value):
-        die(f"masque {field} must be CIDR notation: {value}")
+    value = str(value)
+    if "/" not in value:
+        # usque and the mihomo wiki examples often hand out a bare address;
+        # normalize to a host route (/32 or /128).
+        try:
+            addr = ipaddress.ip_address(value)
+        except ValueError:
+            die(f"masque {field} must be CIDR notation: {value}")
+        value = f"{addr}/{32 if addr.version == 4 else 128}"
     try:
-        network = ipaddress.ip_network(str(value), strict=False)
+        network = ipaddress.ip_network(value, strict=False)
     except ValueError:
         die(f"masque {field} must be CIDR notation: {value}")
     if version and network.version != version:
         die(f"masque {field} must be IPv{version}: {value}")
-    return str(value)
+    return value
 
 
 def parse_masque_fields(fields):
@@ -295,6 +302,8 @@ def parse_masque_fields(fields):
              "public-key": normalize_b64_key(fields.get("public-key"), "public-key"),
              "ip": valid_cidr(fields.get("ip"), "ip", version=4),
              "udp": True}
+    if fields.get("sni"):
+        proxy["sni"] = str(fields["sni"]).strip()
     if fields.get("ipv6"):
         proxy["ipv6"] = valid_cidr(fields["ipv6"], "ipv6", version=6)
     mtu = fields.get("mtu")
@@ -347,6 +356,8 @@ def parse_flat_yaml(text):
         if not match:
             die(f"unsupported YAML line: {line!r}")
         key, value = match.group(1), match.group(2).strip()
+        if key == "proxies" and value == "":
+            continue  # clash-style 'proxies:' wrapper around the list item
         if value[:1] in ("\"", "'"):
             quote = value[0]
             end = value.find(quote, 1)

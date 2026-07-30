@@ -162,12 +162,35 @@ assert p["server"] == "warp.example.com" and p["port"] == 443
 assert p["private-key"] == sys.argv[2] and p["public-key"] == sys.argv[3]
 assert p["ip"] == "172.16.0.2/32" and p["network"] == "h2"
 PY
+# YAML paste mode: clash-style 'proxies:' wrapper, bare ip/ipv6, sni passthrough.
+out="$(python3 "${gen}" warp --yaml <<YAML
+proxies:
+- name: "WARP"
+  type: masque
+  server: 162.159.197.2
+  port: 443
+  sni: www.example.com
+  private-key: "${priv}"
+  public-key: ${pub}
+  ip: 100.96.0.5
+  ipv6: fd00::5
+  mtu: 1280
+  udp: true
+YAML
+)"
+python3 - "$out" <<'PY'
+import json, sys
+p = json.loads(sys.argv[1])["proxies"][0]
+assert p["type"] == "masque", p
+assert p["server"] == "162.159.197.2" and p["sni"] == "www.example.com"
+assert p["ip"] == "100.96.0.5/32" and p["ipv6"] == "fd00::5/128" and p["mtu"] == 1280
+PY
 # masque negatives: missing/invalid fields must be rejected in both modes.
 if python3 "${gen}" warp "masque://${priv}@warp.example.com:443?ip=172.16.0.2/32" >/dev/null 2>&1; then fail "masque requires public-key"; fi
 if python3 "${gen}" warp "masque://${priv}@warp.example.com:443?public-key=${pub}" >/dev/null 2>&1; then fail "masque requires ip"; fi
 if python3 "${gen}" warp "masque://${priv}@warp.example.com:443?public-key=${pub}&ip=172.16.0.2/32&network=quic3" >/dev/null 2>&1; then fail "masque network must be quic or h2"; fi
 if python3 "${gen}" warp "masque://not-valid-b64!!@warp.example.com:443?public-key=${pub}&ip=172.16.0.2/32" >/dev/null 2>&1; then fail "masque keys must be base64"; fi
-if python3 "${gen}" warp "masque://${priv}@warp.example.com:443?public-key=${pub}&ip=172.16.0.2" >/dev/null 2>&1; then fail "masque ip must be CIDR"; fi
+if python3 "${gen}" warp "masque://${priv}@warp.example.com:443?public-key=${pub}&ip=999.1.2.3" >/dev/null 2>&1; then fail "masque ip must be a valid address"; fi
 if printf 'type: hysteria2\nserver: x\n' | python3 "${gen}" warp --yaml >/dev/null 2>&1; then fail "yaml mode must reject non-masque type"; fi
 if printf 'type: masque\nws-opts:\n  path: /\n' | python3 "${gen}" warp --yaml >/dev/null 2>&1; then fail "yaml mode must reject nested structures"; fi
 if python3 "${gen}" us 'ftp://x' >/dev/null 2>&1; then fail "generator must reject unsupported URIs"; fi
