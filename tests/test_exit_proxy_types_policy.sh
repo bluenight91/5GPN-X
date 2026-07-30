@@ -111,6 +111,65 @@ done
 vmess_payload='eyJhZGQiOiJleGFtcGxlLmNvbSIsInBvcnQiOiI0NDMiLCJpZCI6IjAwMDAwMDAwLTAwMDAtMDAwMC0wMDAwLTAwMDAwMDAwMDAwMCIsImFpZCI6IjAiLCJuZXQiOiJ3cyIsInRscyI6InRscyIsInNuaSI6ImV4YW1wbGUuY29tIiwicGF0aCI6Ii9wIn0='
 out="$(python3 "${gen}" us "vmess://${vmess_payload}")"
 grep -q '"type": "vmess"' <<<"$out" || fail "vmess URI must yield a vmess proxy"
+
+# --- masque outbound (masque:// URI and YAML paste) --------------------------
+priv="$(printf '0123456789abcdef0123456789abcdef' | base64)"
+pub="$(printf 'abcdef0123456789abcdef0123456789' | base64)"
+out="$(python3 "${gen}" warp "masque://${priv}@warp.example.com:443?public-key=${pub}&ip=172.16.0.2/32&ipv6=fd00::2/128&mtu=1280&udp=true&network=h2")"
+python3 - "$out" "$priv" "$pub" <<'PY'
+import json, sys
+p = json.loads(sys.argv[1])["proxies"][0]
+assert p["type"] == "masque", p
+assert p["server"] == "warp.example.com" and p["port"] == 443
+assert p["private-key"] == sys.argv[2] and p["public-key"] == sys.argv[3]
+assert p["ip"] == "172.16.0.2/32" and p["ipv6"] == "fd00::2/128"
+assert p["mtu"] == 1280 and p["udp"] is True and p["network"] == "h2"
+PY
+out="$(python3 "${gen}" warp "masque://${priv}@warp.example.com?public-key=${pub}&ip=172.16.0.2/32")"
+python3 - "$out" <<'PY'
+import json, sys
+p = json.loads(sys.argv[1])["proxies"][0]
+assert p["type"] == "masque" and p["port"] == 443
+assert p["udp"] is True and "network" not in p and "ipv6" not in p and "mtu" not in p
+PY
+# URL-safe base64 keys must be normalized to standard base64.
+priv_us="$(printf '%s' "$priv" | tr '+/' '-_' | tr -d '=')"
+out="$(python3 "${gen}" warp "masque://${priv_us}@warp.example.com:443?public-key=${pub}&ip=172.16.0.2/32")"
+python3 - "$out" "$priv" <<'PY'
+import base64, json, sys
+p = json.loads(sys.argv[1])["proxies"][0]
+assert base64.b64decode(p["private-key"]) == base64.b64decode(sys.argv[2])
+PY
+# YAML paste mode: mihomo-docs-style block, comments, quotes, list prefix.
+out="$(python3 "${gen}" warp --yaml <<YAML
+# masque exit, pasted from the mihomo wiki
+- name: "warp"
+  type: masque
+  server: "warp.example.com"
+  port: 443
+  private-key: ${priv}
+  public-key: '${pub}'
+  ip: 172.16.0.2/32
+  udp: true
+  network: h2
+YAML
+)"
+python3 - "$out" "$priv" "$pub" <<'PY'
+import json, sys
+p = json.loads(sys.argv[1])["proxies"][0]
+assert p["type"] == "masque", p
+assert p["server"] == "warp.example.com" and p["port"] == 443
+assert p["private-key"] == sys.argv[2] and p["public-key"] == sys.argv[3]
+assert p["ip"] == "172.16.0.2/32" and p["network"] == "h2"
+PY
+# masque negatives: missing/invalid fields must be rejected in both modes.
+if python3 "${gen}" warp "masque://${priv}@warp.example.com:443?ip=172.16.0.2/32" >/dev/null 2>&1; then fail "masque requires public-key"; fi
+if python3 "${gen}" warp "masque://${priv}@warp.example.com:443?public-key=${pub}" >/dev/null 2>&1; then fail "masque requires ip"; fi
+if python3 "${gen}" warp "masque://${priv}@warp.example.com:443?public-key=${pub}&ip=172.16.0.2/32&network=quic3" >/dev/null 2>&1; then fail "masque network must be quic or h2"; fi
+if python3 "${gen}" warp "masque://not-valid-b64!!@warp.example.com:443?public-key=${pub}&ip=172.16.0.2/32" >/dev/null 2>&1; then fail "masque keys must be base64"; fi
+if python3 "${gen}" warp "masque://${priv}@warp.example.com:443?public-key=${pub}&ip=172.16.0.2" >/dev/null 2>&1; then fail "masque ip must be CIDR"; fi
+if printf 'type: hysteria2\nserver: x\n' | python3 "${gen}" warp --yaml >/dev/null 2>&1; then fail "yaml mode must reject non-masque type"; fi
+if printf 'type: masque\nws-opts:\n  path: /\n' | python3 "${gen}" warp --yaml >/dev/null 2>&1; then fail "yaml mode must reject nested structures"; fi
 if python3 "${gen}" us 'ftp://x' >/dev/null 2>&1; then fail "generator must reject unsupported URIs"; fi
 if python3 "${gen}" us 'socks5://1.2.3.4:70000' >/dev/null 2>&1; then fail "generator must reject out-of-range ports"; fi
 if python3 "${gen}" us 'trojan://pw@:443' >/dev/null 2>&1; then fail "generator must reject missing server hosts"; fi
@@ -130,13 +189,18 @@ done
 [[ "${install_body}" == *'ip route replace default dev'* ]] || fail "exit must route through pgw device"
 [[ "${install_body}" != *'SINGBOX_VERSION_DEFAULT'* ]] || fail "sing-box runtime must be removed"
 [[ "${install_body}" != *'ensure_singbox()'* ]] || fail "sing-box runtime function must be removed"
-for scheme in vmess trojan vless hysteria2 tuic anytls socks http; do
+for scheme in vmess trojan vless hysteria2 tuic anytls socks http masque; do
     [[ "${install_body}" == *"$scheme"* ]] || fail "install help/runtime must document $scheme exits"
 done
+[[ "${install_body}" == *'masque://*)             type=masque ;;'* ]] || fail "add_exit must map masque:// to type masque"
+[[ "${install_body}" == *'type:[[:space:]]*"?masque"?[[:space:]]*$'* ]] || fail "add_exit must detect pasted masque YAML"
+[[ "${install_body}" == *'"${MIHOMO_CFG_GEN}" "$name" --yaml'* ]] || fail "add_exit must wire generator --yaml mode"
 [[ "${install_body}" == *'[[ $current_removed -eq 1 ]]'* ]] || fail "migration must preserve an active WireGuard exit"
 
-# --- check_exits must not TCP-probe UDP transports (hysteria2/tuic) -----------
-[[ "${install_body}" == *'"$typ" == "hysteria2" || "$typ" == "tuic"'* ]] || fail "check_exits must skip TCP probe for hysteria2/tuic"
+# --- check_exits must not TCP-probe UDP transports (hysteria2/tuic/masque) ---
+[[ "${install_body}" == *'"$typ" == "hysteria2" || "$typ" == "tuic" || "$typ" == "masque"'* ]] || fail "check_exits must skip TCP probe for hysteria2/tuic/masque"
 [[ "${install_body}" == *'state="udp"'* ]] || fail "UDP exits must report state udp instead of DOWN"
+# --- preflight_exit must not TCP-probe UDP transports either ------------------
+[[ "${install_body}" == *'hysteria2|tuic|masque) return 0'* ]] || fail "preflight_exit must skip TCP probe for UDP transports"
 
 echo "exit proxy types policy OK"

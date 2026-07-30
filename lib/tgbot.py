@@ -114,8 +114,10 @@ BUSY = set()
 # single bubble instead of sending a new message every time.
 CONSOLE = {}
 LAST_FAILED_DOT_DOMAIN = {}
-PROXY_URI_RE = re.compile(r"^(ss|vmess|trojan|vless|hysteria2|hy2|tuic|anytls|socks5h|socks5|socks|http|https)://", re.IGNORECASE)
-SUPPORTED_EXIT_LINKS = "ss:// vmess:// trojan:// vless:// hysteria2:// tuic:// anytls:// socks5:// http://"
+PROXY_URI_RE = re.compile(r"^(ss|vmess|trojan|vless|hysteria2|hy2|tuic|anytls|masque|socks5h|socks5|socks|http|https)://", re.IGNORECASE)
+SUPPORTED_EXIT_LINKS = "ss:// vmess:// trojan:// vless:// hysteria2:// tuic:// anytls:// masque:// socks5:// http://"
+MASQUE_YAML_RE = re.compile(r"(?im)^\s*-?\s*type:\s*[\"']?masque[\"']?\s*$")
+MASQUE_YAML_NAME_RE = re.compile(r"(?im)^\s*-?\s*name:\s*[\"']?([^\"'\n#]+)")
 
 
 # --------------------------------------------------------------------------- #
@@ -1146,9 +1148,11 @@ def op_add_exit(name, payload):
     text = (payload or "").strip()
     is_uri = bool(PROXY_URI_RE.match(text))
     is_wg = "[Interface]" in payload and "[Peer]" in payload
-    if not is_uri and not is_wg:
+    is_masque = bool(MASQUE_YAML_RE.search(text))
+    if not is_uri and not is_wg and not is_masque:
         return ("无法识别。请发送一段 WireGuard 配置（含 [Interface]/[Peer]），"
-                "或一个 ss:// / vmess:// / trojan:// / vless:// / hysteria2:// / tuic:// / anytls:// / socks5:// / http:// URI。")
+                "一个 ss:// / vmess:// / trojan:// / vless:// / hysteria2:// / tuic:// / anytls:// / masque:// / socks5:// / http:// URI，"
+                "或一段 mihomo 格式的 masque YAML（含 type: masque）。")
     ok, out = run2(["bash", MGMT, "--add-exit", name], inp=payload, timeout=180)
     if ok:
         m = re.search(r"type:\s*(\w+)", out)
@@ -1186,7 +1190,26 @@ def _normalize_batch_add_line(line):
     return "", raw, raw
 
 
+def masque_yaml_name(text):
+    match = MASQUE_YAML_NAME_RE.search(text or "")
+    if not match:
+        return ""
+    candidate = match.group(1).strip()
+    if not EXIT_ADD_NAME_RE.match(candidate) or candidate == "local":
+        return ""
+    return unique_exit_name(candidate)
+
+
 def parse_add_exit_inputs(payload):
+    whole = (payload or "").strip()
+    if MASQUE_YAML_RE.search(whole):
+        # A masque YAML block is multi-line; treat the whole paste as one exit.
+        name = masque_yaml_name(whole)
+        if not name:
+            return [], ("masque YAML 中没有可用的 name 字段（需 1-16 位字母/数字/中文/_/-）。"
+                        "请在块内补一行 <code>name: 出口名</code> 后重发。")
+        return [{"index": 1, "name": name, "payload": whole,
+                 "masked": "masque YAML 块（含私钥，已隐藏）"}], ""
     lines = [(line or "").strip() for line in (payload or "").splitlines()]
     lines = [line for line in lines if line]
     if not lines:
@@ -1317,10 +1340,17 @@ def parse_add_exit_input(payload):
     parts = first.split(None, 1)
     if len(parts) == 2 and EXIT_ADD_NAME_RE.match(parts[0]) and parts[0] != "local" and PROXY_URI_RE.match(parts[1].strip()):
         return parts[0], config.replace(first, parts[1].strip(), 1), ""
+    if MASQUE_YAML_RE.search(config):
+        name = masque_yaml_name(config)
+        if not name:
+            return "", "", ("masque YAML 中没有可用的 name 字段（需 1-16 位字母/数字/中文/_/-）。"
+                            "请在块内补一行 <code>name: 出口名</code> 后重发。")
+        return name, config, ""
     if "[Interface]" in config and "[Peer]" in config:
         return "", "", "WireGuard 配置本身没有节点名称。请改用命令行指定出口名添加。"
     if not PROXY_URI_RE.match(first):
-        return "", "", f"无法识别。请直接粘贴支持的节点链接：<code>{SUPPORTED_EXIT_LINKS}</code>，或整段 WireGuard 配置。"
+        return "", "", (f"无法识别。请直接粘贴支持的节点链接：<code>{SUPPORTED_EXIT_LINKS}</code>，"
+                        "一段 masque YAML（含 <code>type: masque</code>），或整段 WireGuard 配置。")
     name = exit_name_from_uri(first)
     if not name:
         return "", "", "这条节点链接没有可用名称。请改用：<code>出口名 链接</code>。"
@@ -3391,7 +3421,9 @@ def handle_callback(cb):
         edit(cb,
              "➕ <b>添加出口</b>\n\n"
              "直接发送一条或多条节点链接，每行一条；我会优先使用链接里的节点名称作为出口名。\n\n"
-             f"支持：<code>{SUPPORTED_EXIT_LINKS}</code>\n\n"
+             f"支持：<code>{SUPPORTED_EXIT_LINKS}</code>\n"
+             "MASQUE 出口也可以直接粘贴整段 mihomo 格式的 masque YAML（含 <code>type: masque</code> "
+             "和 <code>name:</code> 字段）。\n\n"
              "链接没有名称时，也可以发 <code>出口名 链接</code> 指定名称；同名会自动去重。\n\n"
              "🔐 为避免凭据留在聊天记录中，进入此步骤后，你发送的下一条消息会在读取后尝试自动删除；"
              "即使解析失败也会删除。删除失败时会提醒你手动处理。",
@@ -3401,7 +3433,9 @@ def handle_callback(cb):
         edit(cb,
              "2️⃣ <b>添加出口</b>\n\n"
              "直接发送一条或多条节点链接，每行一条；我会优先使用链接里的节点名称作为出口名。\n\n"
-             f"支持：<code>{SUPPORTED_EXIT_LINKS}</code>\n\n"
+             f"支持：<code>{SUPPORTED_EXIT_LINKS}</code>\n"
+             "MASQUE 出口也可以直接粘贴整段 mihomo 格式的 masque YAML（含 <code>type: masque</code> "
+             "和 <code>name:</code> 字段）。\n\n"
              "链接没有名称时，也可以发 <code>出口名 链接</code> 指定名称；同名会自动去重。\n\n"
              "🔐 为避免凭据留在聊天记录中，进入此步骤后，你发送的下一条消息会在读取后尝试自动删除。",
              cancel_kb("ops"))

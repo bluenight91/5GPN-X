@@ -16,7 +16,7 @@
 - DNS 服务全局不返回 AAAA 记录，客户端只使用 IPv4。
 - 国内 DNS 三层 fallback：UDP 竞速（4 路）→ 150ms 超时后 TCP 竞速 → 都不通时海外兜底（1.1.1.1、8.8.8.8、22.22.22.22）。国际 DNS primary/secondary fallback。
 
-支持的出口：本机直出、WireGuard、SOCKS5/SOCKS5H、SS/SS2022、VMess、Trojan、VLESS、Hysteria2、TUIC、AnyTLS、HTTP/HTTPS。URI 类出口由锁定版 mihomo `1.19.28` 提供 TUN 出口和智能分流。
+支持的出口：本机直出、WireGuard、SOCKS5/SOCKS5H、SS/SS2022、VMess、Trojan、VLESS、Hysteria2、TUIC、AnyTLS、MASQUE、HTTP/HTTPS。URI 类出口由锁定版 mihomo `1.19.28` 提供 TUN 出口和智能分流。
 
 出口切换基于 `ip rule fwmark` + 独立路由表，只影响代理进程出站，不影响 SSH、DNS、证书续期。
 
@@ -184,6 +184,29 @@ remote-dns: on
 ' | sudo 5gpn add-exit jp
 ```
 
+### MASQUE 出口
+
+支持 mihomo [MASQUE](https://wiki.metacubex.one/config/proxies/masque/) 出口（默认 QUIC 传输，`network: h2` 走 HTTP/2）。两种添加方式，校验规则相同：
+
+```bash
+# 方式 A：直接粘贴 mihomo 格式的 YAML proxy 块（usque 工具 / mihomo 文档的输出格式）
+sudo 5gpn add-exit warp <<'EOF'
+- name: "warp"
+  type: masque
+  server: server.com
+  port: 443
+  private-key: BASE64_PRIVATE_KEY
+  public-key: BASE64_PUBLIC_KEY
+  ip: 172.16.0.2/32
+  udp: true
+EOF
+
+# 方式 B：masque:// URI（适合单行命令；密钥含 + / = 时需 percent-encode）
+sudo 5gpn add-exit warp 'masque://BASE64_PRIVATE_KEY@server.com:443?public-key=BASE64_PUBLIC_KEY&ip=172.16.0.2/32&network=h2'
+```
+
+必填字段：`server`、`private-key`、`public-key`、`ip`（IPv4 CIDR）；可选：`port`（默认 443）、`ipv6`（CIDR）、`mtu`（576–1500，mihomo 默认 1280）、`udp`（默认 true）、`network`（`quic`/`h2`）。密钥为 base64（URL-safe 写法自动归一化，PEM 头尾/换行会自动剔除）。Bot 中添加：直接粘贴 YAML 块（需含 `name:` 字段作为出口名）或 `出口名 masque://…`。MASQUE 为 UDP 传输，`check-exits` 显示 `udp` 而非 TCP 探测结果。
+
 当前出口记录在 `/opt/5gpn/etc/current-exit`，开机自动恢复。
 
 ## 智能分流
@@ -270,7 +293,7 @@ sudo 5gpn setup-tgbot
 
 WLOC 仅在启用时将 `gs-loc.apple.com` 和 `gs-loc-cn.apple.com` 导向网关本地的受限拦截器；仅改写 `/clls/wloc` 及必要的 Apple 定位辅助响应。关闭后会清除这两个精确 DNS 映射并恢复原始网络定位。切换地点后 iOS 的 `locationd` 可能保有缓存，必要时重启设备。
 
-添加出口：`🌐 出口 -> ➕ 添加出口`，直接粘贴节点链接（`ss:// vmess:// trojan:// vless:// hysteria2:// tuic:// anytls:// socks5:// http://`），备注会自动作为出口名。
+添加出口：`🌐 出口 -> ➕ 添加出口`，直接粘贴节点链接（`ss:// vmess:// trojan:// vless:// hysteria2:// tuic:// anytls:// masque:// socks5:// http://`），备注会自动作为出口名；MASQUE 也可整段粘贴含 `type: masque` 和 `name:` 的 YAML 块。
 
 ## DNS 与 ECS
 

@@ -254,6 +254,122 @@ def parse_anytls(uri):
             "skip-cert-verify": truthy(query.get("insecure"))}
 
 
+def normalize_b64_key(value, field):
+    """Validate a base64 key; accept URL-safe alphabets and PEM-ish wrapping.
+
+    usque and the mihomo wiki hand out keys either bare or inside PEM armor;
+    normalize to standard padded base64 for the emitted config.
+    """
+    if not value:
+        die(f"masque proxy missing {field}")
+    key = re.sub(r"-----[A-Z ]+-----", "", str(value))
+    key = re.sub(r"\s+", "", key).replace("-", "+").replace("_", "/")
+    key += "=" * (-len(key) % 4)
+    try:
+        base64.b64decode(key, validate=True)
+    except ValueError:
+        die(f"masque {field} is not valid base64")
+    return key
+
+
+def valid_cidr(value, field, version=None):
+    if not value:
+        die(f"masque proxy missing {field} (CIDR)")
+    if "/" not in str(value):
+        die(f"masque {field} must be CIDR notation: {value}")
+    try:
+        network = ipaddress.ip_network(str(value), strict=False)
+    except ValueError:
+        die(f"masque {field} must be CIDR notation: {value}")
+    if version and network.version != version:
+        die(f"masque {field} must be IPv{version}: {value}")
+    return str(value)
+
+
+def parse_masque_fields(fields):
+    """Build the masque proxy dict from validated input fields (URI or YAML)."""
+    proxy = {"name": "out", "type": "masque",
+             "server": require_host(fields.get("server")),
+             "port": valid_port(fields.get("port") or 443),
+             "private-key": normalize_b64_key(fields.get("private-key"), "private-key"),
+             "public-key": normalize_b64_key(fields.get("public-key"), "public-key"),
+             "ip": valid_cidr(fields.get("ip"), "ip", version=4),
+             "udp": True}
+    if fields.get("ipv6"):
+        proxy["ipv6"] = valid_cidr(fields["ipv6"], "ipv6", version=6)
+    mtu = fields.get("mtu")
+    if mtu not in (None, ""):
+        try:
+            mtu = int(mtu)
+        except (TypeError, ValueError):
+            die(f"masque mtu must be an integer: {mtu}")
+        if not 576 <= mtu <= 1500:
+            die(f"masque mtu out of range (576-1500): {mtu}")
+        proxy["mtu"] = mtu
+    if str(fields.get("udp", "")).strip() != "":
+        proxy["udp"] = truthy(fields.get("udp"))
+    network = str(fields.get("network") or "").lower()
+    if network:
+        if network not in ("quic", "h2"):
+            die(f"masque network must be quic or h2: {network}")
+        if network != "quic":  # quic is the mihomo default; keep config minimal
+            proxy["network"] = network
+    return proxy
+
+
+def parse_masque(uri):
+    parsed, query = urlparse(uri), query_map(urlparse(uri))
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        die(f"invalid masque URI port: {exc}")
+    fields = {"server": parsed.hostname, "port": port,
+              "private-key": unquote(parsed.username or "")}
+    fields.update(query)
+    return parse_masque_fields(fields)
+
+
+def parse_flat_yaml(text):
+    """Minimal flat key: value YAML reader (stdlib-only).
+
+    Only supports the single-level proxy blocks usque / the mihomo wiki hand
+    out: optional '- ' list prefix, '#' comments, single/double quoted scalars.
+    Nested structures are rejected rather than misparsed.
+    """
+    fields = {}
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("- "):
+            line = line[2:].strip()
+        match = re.match(r"^([A-Za-z0-9_-]+)\s*:\s*(.*)$", line)
+        if not match:
+            die(f"unsupported YAML line: {line!r}")
+        key, value = match.group(1), match.group(2).strip()
+        if value[:1] in ("\"", "'"):
+            quote = value[0]
+            end = value.find(quote, 1)
+            if end < 0:
+                die(f"unterminated quoted scalar: {line!r}")
+            value = value[1:end]
+        else:
+            value = value.split(" #", 1)[0].strip()
+        if value == "":
+            die(f"nested YAML structures are not supported: {line!r}")
+        fields[key] = value
+    return fields
+
+
+def parse_masque_yaml(text):
+    fields = parse_flat_yaml(text)
+    ptype = fields.pop("type", "").lower()
+    if ptype != "masque":
+        die(f"YAML proxy type must be masque, got: {ptype or '(missing)'}")
+    fields.pop("name", None)
+    return parse_masque_fields(fields)
+
+
 def parse_http(uri):
     parsed = urlparse(uri)
     host = require_host(parsed.hostname)
@@ -272,9 +388,9 @@ def parse_proxy_uri(uri):
     low = uri.lower()
     parsers = (("ss://", parse_ss), ("vmess://", parse_vmess), ("trojan://", parse_trojan),
                ("vless://", parse_vless), ("hysteria2://", parse_hysteria2), ("hy2://", parse_hysteria2),
-               ("tuic://", parse_tuic), ("anytls://", parse_anytls), ("socks5h://", parse_socks),
-               ("socks5://", parse_socks), ("socks://", parse_socks), ("http://", parse_http),
-               ("https://", parse_http))
+               ("tuic://", parse_tuic), ("anytls://", parse_anytls), ("masque://", parse_masque),
+               ("socks5h://", parse_socks), ("socks5://", parse_socks), ("socks://", parse_socks),
+               ("http://", parse_http), ("https://", parse_http))
     for prefix, parser in parsers:
         if low.startswith(prefix):
             return parser(uri)
@@ -290,11 +406,16 @@ def interface_name(name):
 
 def main():
     if len(sys.argv) != 3:
-        die("usage: mihomo-exit-config.py <name> <uri>")
-    name, uri = sys.argv[1], sys.argv[2].strip()
+        die("usage: mihomo-exit-config.py <name> <uri>|--yaml")
+    name, source = sys.argv[1], sys.argv[2].strip()
     if name in ("local", "smart") or not re.match(r"^[\w\-\u4e00-\u9fff]{1,16}$", name, re.UNICODE):
         die("invalid exit name")
-    proxy = parse_proxy_uri(uri)
+    if source == "--yaml":
+        proxy = parse_masque_yaml(sys.stdin.read())
+        uri = "masque://"
+    else:
+        proxy = parse_proxy_uri(source)
+        uri = source
     if proxy["type"] in ("socks5", "http"):
         if os.environ.get("PGW_USER"):
             proxy["username"] = os.environ["PGW_USER"]

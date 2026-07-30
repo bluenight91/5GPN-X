@@ -172,6 +172,8 @@ PY
 [[ "${bot_body}" == *'当前域名：<code>%s</code>'* ]] || fail "tgbot.py DoT status must label the current DoT domain"
 [[ "${bot_body}" == *'url = "http://%s:8111/ios-dot.mobileconfig" % domain'* ]] || fail "tgbot.py iOS QR must prefer the current DoT domain over cached URL files"
 [[ "${bot_body}" == *'SUPPORTED_EXIT_LINKS'* ]] || fail "tgbot.py must centralize the supported exit link schemes"
+[[ "${bot_body}" == *'MASQUE_YAML_RE'* ]] || fail "tgbot.py must accept pasted masque YAML blocks"
+[[ "${bot_body}" == *'masque://'* ]] || fail "tgbot.py must document masque:// exit links"
 [[ "${bot_body}" == *'def parse_add_exit_input('* ]] || fail "tgbot.py must parse direct pasted exit links"
 [[ "${bot_body}" == *'def parse_add_exit_inputs('* ]] || fail "tgbot.py must support batch pasted exit links"
 [[ "${bot_body}" == *'def op_add_exit_batch('* ]] || fail "tgbot.py must batch-add exits in the background"

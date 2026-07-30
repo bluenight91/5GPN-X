@@ -394,9 +394,10 @@ Options:
   --check-exits  Test reachability of each exit's upstream node (UP/DOWN)
   --add-exit <name> [wg.conf | proxy-uri]
                  Register an egress exit. Accepts a WireGuard client config
-                 (file/stdin/paste) OR ss/vmess/trojan/vless/hysteria2/tuic/
-                 anytls/socks/http URI. URI types use the locked mihomo TUN
-                 engine (auto-installed).
+                 (file/stdin/paste), ss/vmess/trojan/vless/hysteria2/tuic/
+                 anytls/masque/socks/http URI, or a mihomo-style masque YAML
+                 proxy block (usque/wiki format). URI types use the locked
+                 mihomo TUN engine (auto-installed).
   --rename-exit <old> <new>
                  Rename a configured exit safely, including references in the
                  active selection and smart-routing policy/rules when needed.
@@ -2604,7 +2605,7 @@ exit_up() {
             runtime_conf="${WG_DIR}/${iface}.conf"
             [[ "$conf" == "$runtime_conf" ]] || ln -sf "$conf" "$runtime_conf"
             wg-quick up "$iface" ;;
-        shadowsocks|vmess|trojan|vless|hysteria|hysteria2|tuic|anytls|shadowtls|socks|http|router)
+        shadowsocks|vmess|trojan|vless|hysteria|hysteria2|tuic|anytls|masque|shadowtls|socks|http|router)
             ensure_mihomo || return 1
             ensure_mihomo_exit_iface "$name" || return 1
             install_mihomo_unit
@@ -2621,7 +2622,7 @@ exit_down() {
             runtime_conf="${WG_DIR}/${iface}.conf"
             wg-quick down "$iface" 2>/dev/null || true
             [[ "$conf" == "$runtime_conf" ]] || rm -f "$runtime_conf" ;;
-        shadowsocks|vmess|trojan|vless|hysteria|hysteria2|tuic|anytls|shadowtls|socks|http|router) systemctl stop "$(exit_mihomo_unit "$name")" 2>/dev/null || true ;;
+        shadowsocks|vmess|trojan|vless|hysteria|hysteria2|tuic|anytls|masque|shadowtls|socks|http|router) systemctl stop "$(exit_mihomo_unit "$name")" 2>/dev/null || true ;;
     esac
 }
 exit_server() {
@@ -2645,7 +2646,8 @@ exit_reachable() {
 preflight_exit() {
     local name="$1" t hp host port tgt
     t="$(exit_type "$name")"
-    if [[ "$t" =~ ^(shadowsocks|vmess|trojan|vless|hysteria|hysteria2|tuic|anytls|shadowtls|socks|http)$ ]]; then
+    if [[ "$t" =~ ^(shadowsocks|vmess|trojan|vless|hysteria|hysteria2|tuic|anytls|masque|shadowtls|socks|http)$ ]]; then
+        case "$t" in hysteria2|tuic|masque) return 0 ;; esac   # UDP transport: TCP preflight is not applicable
         hp="$(exit_server "$name")"; host="${hp%% *}"; port="${hp##* }"
         if ! exit_reachable "$host" "$port"; then
             warn "Exit '$name' upstream ${host}:${port} is UNREACHABLE — traffic via it will fail."
@@ -2669,7 +2671,7 @@ check_exits() {
         hp="$(exit_server "$n")"; host="${hp%% *}"; port="${hp##* }"
         if [[ -z "$host" ]]; then
             state="n/a"
-        elif [[ "$typ" == "hysteria2" || "$typ" == "tuic" ]]; then
+        elif [[ "$typ" == "hysteria2" || "$typ" == "tuic" || "$typ" == "masque" ]]; then
             state="udp"    # UDP transport: TCP probe is not applicable
         elif exit_reachable "$host" "$port"; then
             state="UP"
@@ -2745,7 +2747,7 @@ if ! ip link show "${iface}" >/dev/null 2>&1; then
             runtime_conf="${WG_DIR}/${iface}.conf"
             [[ "${conf}" == "${runtime_conf}" ]] || ln -sf "${conf}" "${runtime_conf}"
             wg-quick up "${iface}" 2>/dev/null || { echo "[!] exit '${current}' (wireguard) failed to start"; exit 1; } ;;
-        shadowsocks|vmess|trojan|vless|hysteria|hysteria2|tuic|anytls|shadowtls|socks|http|router)
+        shadowsocks|vmess|trojan|vless|hysteria|hysteria2|tuic|anytls|masque|shadowtls|socks|http|router)
             unit="$(mihomo_unit "${current}")"
             state="$(systemctl show -p ActiveState --value "${unit}" 2>/dev/null || echo inactive)"
             # When this script runs as the unit's own ExecStartPost the unit is
@@ -2825,7 +2827,7 @@ list_exits() {
         case "$t" in
             wireguard)
                 detail="$(grep -i '^[[:space:]]*Endpoint' "$(exit_conf_path "$n")" 2>/dev/null | head -n1 | sed 's/.*=[[:space:]]*//')" ;;
-            shadowsocks|vmess|trojan|vless|hysteria|hysteria2|tuic|anytls|shadowtls|socks|http)
+            shadowsocks|vmess|trojan|vless|hysteria|hysteria2|tuic|anytls|masque|shadowtls|socks|http)
                 detail="$(grep -oE '"server": *"[^"]+"|"port": *[0-9]+' "$(exit_mihomo_conf "$n")" 2>/dev/null | head -n2 | sed 's/.*: *//; s/"//g' | paste -sd: -)" ;;
             router)
                 detail="rules:$(grep -cvE '^[[:space:]]*(#|;|$)' "${RULES_FILE}" 2>/dev/null || echo 0)" ;;
@@ -2861,34 +2863,49 @@ PYNAME
     elif [[ ! -t 0 ]]; then
         cat > "$tmp"
     else
-        echo "Paste a WireGuard config OR a supported proxy URI for '$name', end with Ctrl-D:"
+        echo "Paste a WireGuard config, a supported proxy URI, or a masque YAML block for '$name', end with Ctrl-D:"
         cat > "$tmp"
     fi
-    local uri type px_user px_pass px_rdns
-    uri="$(grep -iE '^[[:space:]]*(ss|vmess|trojan|vless|hysteria2|hy2|tuic|anytls|socks5h|socks5|socks|http|https)://' "$tmp" | head -n1 | tr -d '\r' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
-    if [[ -n "$uri" ]]; then
-        local uri_lc; uri_lc="$(printf '%s' "$uri" | tr '[:upper:]' '[:lower:]')"
-        case "$uri_lc" in
-            ss://*)                 type=shadowsocks ;;
-            vmess://*)              type=vmess ;;
-            trojan://*)             type=trojan ;;
-            vless://*)              type=vless ;;
-            hysteria2://*|hy2://*)  type=hysteria2 ;;
-            tuic://*)               type=tuic ;;
-            anytls://*)             type=anytls ;;
-            socks5h://*|socks5://*|socks://*) type=socks ;;
-            http://*|https://*)     type=http ;;
-        esac
+    local uri type px_user px_pass px_rdns masque_yaml
+    uri="$(grep -iE '^[[:space:]]*(ss|vmess|trojan|vless|hysteria2|hy2|tuic|anytls|masque|socks5h|socks5|socks|http|https)://' "$tmp" | head -n1 | tr -d '\r' | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+    masque_yaml=""
+    if [[ -z "$uri" ]] && grep -qiE '^[[:space:]]*-?[[:space:]]*type:[[:space:]]*"?masque"?[[:space:]]*$' "$tmp"; then
+        masque_yaml=1   # pasted mihomo-style masque proxy block (usque/wiki format)
+    fi
+    if [[ -n "$uri" || -n "$masque_yaml" ]]; then
+        if [[ -n "$masque_yaml" ]]; then
+            type=masque
+        else
+            local uri_lc; uri_lc="$(printf '%s' "$uri" | tr '[:upper:]' '[:lower:]')"
+            case "$uri_lc" in
+                ss://*)                 type=shadowsocks ;;
+                vmess://*)              type=vmess ;;
+                trojan://*)             type=trojan ;;
+                vless://*)              type=vless ;;
+                hysteria2://*|hy2://*)  type=hysteria2 ;;
+                tuic://*)               type=tuic ;;
+                anytls://*)             type=anytls ;;
+                masque://*)             type=masque ;;
+                socks5h://*|socks5://*|socks://*) type=socks ;;
+                http://*|https://*)     type=http ;;
+            esac
+        fi
         px_user="$(grep -iE '^[[:space:]]*(user|username)[[:space:]]*[:=]' "$tmp" | head -n1 | sed -E 's/^[[:space:]]*[^:=]+[:=][[:space:]]*//' | tr -d '\r' || true)"
         px_pass="$(grep -iE '^[[:space:]]*(pass|password)[[:space:]]*[:=]' "$tmp" | head -n1 | sed -E 's/^[[:space:]]*[^:=]+[:=][[:space:]]*//' | tr -d '\r' || true)"
         px_rdns="$(grep -iE '^[[:space:]]*remote-?dns[[:space:]]*[:=]' "$tmp" | head -n1 | sed -E 's/^[[:space:]]*[^:=]+[:=][[:space:]]*//' | tr -d '\r' || true)"
+        local paste=""
+        [[ -n "$masque_yaml" ]] && paste="$(cat "$tmp")"
         rm -f "$tmp"
         [[ -f "${MIHOMO_CFG_GEN}" ]] || { err "Config generator missing: ${MIHOMO_CFG_GEN}"; exit 1; }
         ensure_mihomo || exit 1
         mihomo_dns_env
         local yaml gen_err
         yaml="$(exit_mihomo_conf "$name")"
-        if ! gen_err="$(PGW_USER="$px_user" PGW_PASS="$px_pass" PGW_REMOTE_DNS="$px_rdns" python3 "${MIHOMO_CFG_GEN}" "$name" "$uri" 2>&1 >"${yaml}.tmp")"; then
+        if [[ -n "$masque_yaml" ]]; then
+            if ! gen_err="$(printf '%s\n' "$paste" | python3 "${MIHOMO_CFG_GEN}" "$name" --yaml 2>&1 >"${yaml}.tmp")"; then
+                err "Failed to parse masque YAML: ${gen_err}"; rm -f "${yaml}.tmp"; exit 1
+            fi
+        elif ! gen_err="$(PGW_USER="$px_user" PGW_PASS="$px_pass" PGW_REMOTE_DNS="$px_rdns" python3 "${MIHOMO_CFG_GEN}" "$name" "$uri" 2>&1 >"${yaml}.tmp")"; then
             err "Failed to parse URI: ${gen_err}"; rm -f "${yaml}.tmp"; exit 1
         fi
         install_mihomo_unit
@@ -2898,14 +2915,18 @@ PYNAME
             rm -f "${yaml}.tmp"; exit 1
         fi
         install -m 600 "${yaml}.tmp" "${yaml}"; rm -f "${yaml}.tmp"
-        printf '%s\n' "$uri" > "${EXITS_DIR}/${name}.uri"
+        if [[ -n "$masque_yaml" ]]; then
+            printf '%s\n' "$paste" > "${EXITS_DIR}/${name}.uri"
+        else
+            printf '%s\n' "$uri" > "${EXITS_DIR}/${name}.uri"
+        fi
         chmod 600 "${EXITS_DIR}/${name}.uri"
         echo "$type" > "$(exit_type_file "$name")"
         ok "Exit '$name' added (type: $type)"
         info "Activate it with: $0 --set-exit $name"
         return
     fi
-    grep -qi '^\[Interface\]' "$tmp" || { err "Not a URI and not a WireGuard config (no proxy URI or [Interface])"; rm -f "$tmp"; exit 1; }
+    grep -qi '^\[Interface\]' "$tmp" || { err "Not a URI, masque YAML, or WireGuard config (no proxy URI, type: masque block, or [Interface])"; rm -f "$tmp"; exit 1; }
     grep -qi '^\[Peer\]'      "$tmp" || { err "Invalid WireGuard config (missing [Peer])"; rm -f "$tmp"; exit 1; }
     command -v wg-quick >/dev/null 2>&1 || { err "wireguard-tools (wg-quick) is not installed"; rm -f "$tmp"; exit 1; }
     if grep -qi '^[[:space:]]*Table[[:space:]]*=' "$tmp"; then
