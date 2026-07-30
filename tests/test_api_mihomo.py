@@ -57,6 +57,8 @@ class FakeClash(BaseHTTPRequestHandler):
             return self._j({"mode": "rule"})
         if path == "/proxies/日本/delay":
             return self._j({"delay": 42})
+        if path == "/proxies/warp/delay":
+            return self._j({"delay": 28})
         self.send_response(404)
         self.end_headers()
     def do_PUT(self):
@@ -103,6 +105,24 @@ class MihomoApiTests(unittest.TestCase):
         status, _, _ = self.api.clash_request("GET", "configs")
         self.assertEqual(status, 503)
         self.api.CLASH_SECRET_FILE = self.secret.name
+
+    def _with_exit_type(self, name, typ):
+        tmp = tempfile.mkdtemp()
+        with open(os.path.join(tmp, f"{name}.type"), "w", encoding="utf-8") as f:
+            f.write(typ + "\n")
+        old = self.api.EXITS_DIR
+        self.addCleanup(setattr, self.api, "EXITS_DIR", old)
+        self.api.EXITS_DIR = tmp
+
+    def test_measure_latency_udp_exit_uses_clash_delay(self):
+        self._with_exit_type("warp", "masque")
+        res = self.api.measure_latency("warp")
+        self.assertEqual(res, {"ms": 28.0, "method": "http"})
+
+    def test_measure_latency_udp_exit_unreachable(self):
+        self._with_exit_type("ghost", "masque")
+        res = self.api.measure_latency("ghost")
+        self.assertEqual(res, {"ms": None, "method": None})
 
     def test_overview_aggregates(self):
         data, err = self.api.mihomo_overview()

@@ -805,7 +805,30 @@ def tcp_ms(host, port):
         return None
 
 
+UDP_EXIT_TYPES = ("hysteria2", "tuic", "masque")
+
+
+def clash_delay_ms(name):
+    """Real HTTP delay through the smart router's Clash API. Only available
+    while the smart instance is running (exit = smart)."""
+    query = urllib.parse.urlencode({"timeout": "3000", "url": "http://www.gstatic.com/generate_204"})
+    status, _ctype, data = clash_request("GET", f"proxies/{name}/delay?{query}", timeout=6)
+    if status != 200:
+        return None
+    try:
+        return round(float(json.loads(data).get("delay")), 1)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def measure_latency(name):
+    typ = read_file(EXITS_DIR + f"/{name}.type").strip()
+    if typ in UDP_EXIT_TYPES:
+        # UDP transports: ICMP echo and TCP connect are not applicable (MASQUE
+        # has no TCP listener at all). Measure the real delay through the
+        # smart router's Clash API instead.
+        ms = clash_delay_ms(name)
+        return {"ms": ms, "method": "http" if ms is not None else None}
     host, port = exit_endpoint(name)
     if not host:
         return {"ms": None, "method": None}

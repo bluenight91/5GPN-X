@@ -1274,9 +1274,9 @@ async function checkExits(){
   try{
     const r=await api("/api/exits/check","POST",{});
     const items=r.exits||[];
-    const bad=items.filter(x=>x.state!=="UP").length;
+    const bad=items.filter(x=>x.state==="DOWN").length;   // UP/udp/n/a 都不算故障；udp = UDP 传输不做 TCP 探测
     $("checkResult").innerHTML = items.length ? items.map(x=>{
-      const cls = x.state==="UP"?"on":(x.state==="DOWN"?"off":"");
+      const cls = (x.state==="UP"||x.state==="udp")?"on":(x.state==="DOWN"?"off":"");
       return `<div class="exit"><span class="name grow">${esc(x.name)}</span>`+
         `<span class="meta">${esc(x.server||"")}</span>`+
         `<span class="pill ${cls}">${esc(x.state)}</span></div>`;

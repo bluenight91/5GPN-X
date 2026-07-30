@@ -64,4 +64,8 @@ done
 [[ "${ui}" == *'passive:true'* ]] || fail "tabbar scroll listener must be passive for iOS"
 [[ "${ui}" == *'overflow-x:auto'* ]] || fail "tabbar must allow horizontal overflow scrolling"
 
+# --- UDP transports (hysteria2/tuic/masque) are not connectivity failures -------
+[[ "${ui}" == *'x.state==="DOWN").length'* ]] || fail "connectivity check must only count DOWN exits as unreachable (udp is N/A, not bad)"
+[[ "${ui}" == *'x.state==="UP"||x.state==="udp"'* ]] || fail "udp state must render as an ok pill"
+
 echo "test_webui_policy: OK"
