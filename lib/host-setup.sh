@@ -484,7 +484,13 @@ firewall_managed_apply() {
         local tmp_conf; tmp_conf="$(mktemp /etc/nftables.conf.pgw.XXXXXX)"
         cat > "$tmp_conf" <<'EOF'
 #!/usr/sbin/nft -f
-flush ruleset
+# Recreate only this project's own tables. A global `flush ruleset` would also
+# wipe chains owned by other netfilter users of the same kernel ruleset (docker's
+# DOCKER/DOCKER-FORWARD via the iptables-nft shim, fail2ban, ...); those daemons
+# only re-add their rules at startup, so a flush silently breaks them until a
+# service restart. The add-then-delete pair is idempotent on first install.
+table inet filter
+delete table inet filter
 
 table inet filter {
     chain input {

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- Managed firewall mode: the generated `/etc/nftables.conf` no longer starts with a global `flush ruleset`; it now recreates only the project's own `inet filter` table (idempotent add-then-delete). A full flush also deleted chains owned by other netfilter users of the same kernel ruleset — notably docker's `DOCKER`/`DOCKER-FORWARD` chains via the iptables-nft shim — breaking `docker compose up` network creation (`No chain/target/match by that name`) until a docker restart.
+
 ### Added
 
 - mihomo MASQUE exit type: `5gpn add-exit` accepts a custom `masque://` share URI or a pasted mihomo-style masque YAML proxy block (usque/wiki format); base64 keys are validated and normalized (URL-safe/PEM tolerated), `ip`/`ipv6` must be CIDR, `network` limited to `quic`/`h2`. The TG bot accepts both forms too (YAML paste takes its `name:` field as the exit name). UDP-transport exits (hysteria2/tuic/masque) are no longer TCP-probed by `check-exits`/`preflight_exit`, avoiding false UNREACHABLE/DOWN reports.

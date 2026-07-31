@@ -20,6 +20,13 @@ fail() { echo "$1" >&2; exit 1; }
 [[ "${install_body}" == *'/etc/nftables.conf.pgw-backup'* ]] || fail "managed mode must back up the pre-existing ruleset"
 [[ "${install_body}" == *'include "/etc/5gpn/pgw-exit.nft"'* ]] || fail "managed ruleset must include the shared pgw-exit table file"
 
+# --- managed nftables template must not wipe the whole kernel ruleset --------
+# A global `flush ruleset` also deletes chains owned by other netfilter users
+# (docker's DOCKER/DOCKER-FORWARD via the iptables-nft shim, fail2ban, ...),
+# which only re-appear after those daemons restart.
+[[ "${install_body}" != *$'\nflush ruleset\n'* ]] || fail "managed template must not use a global flush ruleset (breaks docker/fail2ban chains)"
+[[ "${install_body}" == *'delete table inet filter'* ]] || fail "managed template must recreate only its own inet filter table"
+
 # --- load the functions under test -------------------------------------------
 helpers='info() { :; }; warn() { :; }; ok() { :; }; err() { echo "$*" >&2; }'
 eval "$helpers"

@@ -407,7 +407,9 @@ PGW_TUNING=essential            # essential(默认)/performance 内核调优档�
 - `FIREWALL_MODE=managed`：由项目完整接管 INPUT 防火墙（旧版行为），每次运行安装器都必须显式指定，历史标记不会自动启用。应用前会
   自动识别并放行**所有检测到的 SSH 端口**（当前会话端口、`sshd -T` 配置、实际
   监听端口的并集，检测失败才回落 22），校验新规则并备份原有
-  `/etc/nftables.conf` 到 `/etc/nftables.conf.pgw-backup`。
+  `/etc/nftables.conf` 到 `/etc/nftables.conf.pgw-backup`。生成的配置只重建项目
+  自己的 `inet filter` 表，**不做全局 `flush ruleset`**，可与 docker / fail2ban
+  等同样使用 nftables 的服务共存。
 - 从旧版本升级或重装也默认保持 `preserve`；历史标记不会自动触发 `managed`，
   避免覆盖用户后来添加的规则。
 
