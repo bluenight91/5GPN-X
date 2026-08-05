@@ -8,6 +8,7 @@
 
 ### Added
 
+- Normative architecture doc `docs/architecture.md`: system boundary, data flow, and runtime invariants I1–I9 (firewall managed-mode limits, loopback-only Clash API, pxout egress marking, secret permissions, sniproxy resolver rules, deterministic TUN naming, idempotent installs, validate-then-publish, public-repo hygiene), locked by the new `tests/test_architecture_invariants.sh` policy test. A short `AGENTS.md` points agents at the doc and the hard constraints.
 - mihomo MASQUE exit type: `5gpn add-exit` accepts a custom `masque://` share URI or a pasted mihomo-style masque YAML proxy block (usque/wiki format); base64 keys are validated and normalized (URL-safe/PEM tolerated), `ip`/`ipv6` must be CIDR, `network` limited to `quic`/`h2`. The TG bot accepts both forms too (YAML paste takes its `name:` field as the exit name). UDP-transport exits (hysteria2/tuic/masque) are no longer TCP-probed by `check-exits`/`preflight_exit`, avoiding false UNREACHABLE/DOWN reports.
 
 ## v1.1.0 (2026-07-28)

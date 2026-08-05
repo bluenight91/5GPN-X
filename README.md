@@ -4,6 +4,8 @@
 
 本仓库在 Xiuyixx/5GPN-X 基础上增强了管理与运维能力：网页控制台（含 mihomo 监控面板）、`--update` 一键更新（含快照回滚）、git 检出式 `/opt/5gpn`、`doctor` 健康检查、域名 DoH 上游与可配置 ECS、API 安全加固。
 
+架构与运行时不变量见 [docs/architecture.md](docs/architecture.md)（规范性文档，改动架构前先读）；排查步骤见 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)。
+
 ## 工作原理
 
 面向 5G NPN / N6 互通、私网终端出海和轻量透明代理场景：
