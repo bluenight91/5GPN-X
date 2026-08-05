@@ -4212,6 +4212,55 @@ sync_repo_to_origin_main() {
     return 0
 }
 
+# Post-deploy readiness probe: "service started" is not "service usable".
+# Runs doctor --deep --json once and classifies failures by surface:
+#   core     — services / listening ports / control API → deploy fails
+#   advisory — DNS answers, egress path, certs → warn only (domain
+#              propagation and cert issuance are legitimately transient)
+# Never rolls back automatically: fail-before-publish, report the stage.
+verify_installation() {
+    local doctor="${BASE_DIR}/scripts/doctor.sh" out classified rc line tag msg
+    [[ -f "${doctor}" ]] || { warn "doctor.sh 不存在，跳过就绪探测"; return 0; }
+    command -v python3 >/dev/null 2>&1 || { warn "python3 不存在，跳过就绪探测"; return 0; }
+    info "就绪探测 (doctor --deep)..."
+    out="$(bash "${doctor}" --deep --json 2>/dev/null || true)"
+    [[ -n "${out}" ]] || { warn "就绪探测无输出，跳过判定"; return 0; }
+    if classified="$(OUT="${out}" python3 - <<'PY'
+import json, os, sys
+try:
+    data = json.loads(os.environ.get("OUT", "") or "{}")
+except ValueError:
+    sys.exit(2)
+CORE_PREFIXES = ("服务 ",)
+CORE_LABELS = {"DoT", "DNS", "HTTPS/SNI", "控制 API",
+               "Clash API", "Clash API 暴露", "API /health"}
+core = 0
+for c in data.get("checks", []):
+    if c.get("level") != "fail":
+        continue
+    label = c.get("check", "")
+    tag = "CORE" if (label.startswith(CORE_PREFIXES) or label in CORE_LABELS) else "ADVISORY"
+    core += (tag == "CORE")
+    print(f"{tag}\t{label}: {c.get('detail', '')}")
+sys.exit(1 if core else 0)
+PY
+)"; then rc=0; else rc=$?; fi
+    if [[ $rc -eq 2 ]]; then
+        warn "就绪探测输出无法解析，跳过判定"
+        return 0
+    fi
+    while IFS=$'\t' read -r tag msg; do
+        [[ -n "${tag}" ]] || continue
+        if [[ "${tag}" == "CORE" ]]; then
+            err "就绪探测(核心): ${msg}"
+        else
+            warn "就绪探测(非核心): ${msg}"
+        fi
+    done <<< "${classified}"
+    [[ $rc -eq 0 ]] && ok "就绪探测通过"
+    return $rc
+}
+
 do_update() {
     check_root
     detect_os
@@ -4342,6 +4391,10 @@ EOF
     systemctl restart mosdns sniproxy wa-shim quic-proxy
     record_deployed_revision
     trap - ERR
+    if ! verify_installation; then
+        err "更新后核心就绪探测失败；请运行 sudo 5gpn doctor --deep 排查，必要时 sudo 5gpn rollback ${snap_id:-latest}"
+        exit 1
+    fi
     ok "更新完成 ($(deployed_revision_line))；回滚点: ${snap_id:-none}"
 }
 do_uninstall() {
@@ -4968,6 +5021,10 @@ main_install() {
     maybe_setup_api
     install_cli
     record_deployed_revision
+    if ! verify_installation; then
+        err "核心就绪探测失败，请运行 sudo 5gpn doctor --deep 排查后重试"
+        exit 1
+    fi
     echo ""
     echo "=========================================="
     echo "         部署完成 — 下一步清单"
