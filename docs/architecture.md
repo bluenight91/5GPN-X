@@ -72,6 +72,13 @@ Android Private DNS / iOS 描述文件          明文 DNS
   校验通过后才 `mv` 正式发布；校验失败保留旧配置。
 - **I9 公开仓库**：真实域名、密钥、token 永不进入仓库；文档与测试中的
   示例一律使用 `example.com`。
+- **I10 单元沙盒**：非编排服务一律 `ProtectSystem=strict` + 能力边界 +
+  `ProtectHome`/`PrivateTmp`；编排服务（`5gpn-tgbot`、`5gpn-api`）用
+  `ProtectSystem=full` + 显式 `ReadWritePaths` 白名单，两者白名单必须一致。
+  需要启动后自主降权的 sniproxy 和需要建 TUN 的 `5gpn-mihomo@` **禁止**
+  `NoNewPrivileges`；`5gpn-mihomo@` 用 `CapabilityBoundingSet` 收敛到
+  TUN 与配置读写所需的最小能力集，且不加 `ProtectSystem`
+  （ExecStartPost 与 drop-in 面太宽）。
 
 ## 目录与文件所有权
 

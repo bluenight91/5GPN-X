@@ -1115,6 +1115,12 @@ RestartSec=5
 User=root
 LimitNOFILE=65535
 MemoryMax=256M
+# Starts as root to bind 80/443 then setuid(pxout) per /etc/sniproxy.conf;
+# NoNewPrivileges is intentionally NOT set (privilege drop happens post-exec).
+ProtectSystem=strict
+ReadWritePaths=/var/run
+ProtectHome=true
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target
@@ -1314,7 +1320,11 @@ RestartSec=5
 User=pxout
 LimitNOFILE=65535
 AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 MemoryMax=256M
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target
@@ -2152,6 +2162,7 @@ PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
 ReadWritePaths=/etc/mosdns
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 LimitNOFILE=65535
 MemoryMax=${mosdns_memory_max}
 
@@ -2295,6 +2306,9 @@ StandardInput=socket
 StandardOutput=socket
 StandardError=journal
 User=root
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
 EOF
     systemctl daemon-reload
     systemctl enable --now 5gpn-ios-profile.socket
@@ -2553,6 +2567,11 @@ RestartSec=5
 # ExecStartPost may legitimately wait ~2min for the TUN on low-RAM boxes.
 TimeoutStartSec=180
 User=root
+# TUN creation + ExecStartPost `ip route/rule` need NET_ADMIN; config/cache
+# file handling needs the DAC/CHOWN/FOWNER set. Everything else is dropped.
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_DAC_OVERRIDE CAP_CHOWN CAP_FOWNER
+ProtectHome=true
+PrivateTmp=true
 LimitNOFILE=65535
 Environment=SKIP_SYSTEM_IPV6_CHECK=1
 Environment=GOGC=50
@@ -3721,6 +3740,12 @@ ExecStart=${py} ${BASE_DIR}/bin/tgbot.py
 Restart=on-failure
 RestartSec=5
 User=root
+# Root orchestrator: /etc and /usr read-only except the paths its operations
+# (add/del/switch-exit, update, renew-cert, DNS/firewall sync) must write.
+ProtectSystem=full
+ReadWritePaths=/etc/5gpn /etc/mosdns /etc/sniproxy.conf /etc/wireguard /etc/nftables.conf /etc/letsencrypt /etc/systemd/system /usr/local/bin
+ProtectHome=true
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target
@@ -3901,6 +3926,11 @@ ExecStart=${py} ${BASE_DIR}/bin/api-server.py
 Restart=on-failure
 RestartSec=5
 User=root
+# Root orchestrator: same write-path contract as 5gpn-tgbot.service.
+ProtectSystem=full
+ReadWritePaths=/etc/5gpn /etc/mosdns /etc/sniproxy.conf /etc/wireguard /etc/nftables.conf /etc/letsencrypt /etc/systemd/system /usr/local/bin
+ProtectHome=true
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target

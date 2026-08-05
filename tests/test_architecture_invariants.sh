@@ -13,7 +13,7 @@ fail() { echo "$1" >&2; exit 1; }
 
 # --- the normative architecture doc must exist and carry every invariant -----
 [[ -f "${archdoc}" ]] || fail "docs/architecture.md must exist (normative architecture doc)"
-for anchor in I1 I2 I3 I4 I5 I6 I7 I8 I9; do
+for anchor in I1 I2 I3 I4 I5 I6 I7 I8 I9 I10; do
     grep -q "\*\*${anchor} " "${archdoc}" || fail "docs/architecture.md must define invariant ${anchor}"
 done
 
