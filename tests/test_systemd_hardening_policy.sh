@@ -65,4 +65,15 @@ upd="$(awk '/^do_update\(\)/,/^}$/' "${install}")"
 [[ "$upd" == *'&& setup_api'* ]] || fail "do_update must re-render the api unit via setup_api"
 [[ "$upd" == *'setup_exit_switching'* ]] || fail "do_update must re-render exit-switching units"
 
+# --- no backticks inside unquoted unit heredocs --------------------------------
+# Unquoted <<EOF heredocs run command substitution while the unit file is
+# rendered; a backticked comment becomes an executed command (the 2026-08-05
+# `ip route/rule` noise). Quoted <<'EOF' heredocs are safe.
+bt="$(awk '
+    /cat > \/etc\/systemd\/system\/.* <<EOF$/ { inb=1; next }
+    inb && /^EOF$/ { inb=0; next }
+    inb && /`/ { print; found=1 }
+    END { exit found ? 0 : 1 }
+' "${install}")" && fail "unquoted unit heredoc must not contain backticks: ${bt}"
+
 echo "systemd hardening policy OK"

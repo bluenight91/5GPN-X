@@ -2567,8 +2567,10 @@ RestartSec=5
 # ExecStartPost may legitimately wait ~2min for the TUN on low-RAM boxes.
 TimeoutStartSec=180
 User=root
-# TUN creation + ExecStartPost `ip route/rule` need NET_ADMIN; config/cache
+# TUN creation + ExecStartPost ip route/rule need NET_ADMIN; config/cache
 # file handling needs the DAC/CHOWN/FOWNER set. Everything else is dropped.
+# NOTE: no backticks in this comment — the heredoc below is unquoted and
+# would execute them.
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_DAC_OVERRIDE CAP_CHOWN CAP_FOWNER
 ProtectHome=true
 PrivateTmp=true
@@ -4252,6 +4254,15 @@ verify_installation() {
     local doctor="${BASE_DIR}/scripts/doctor.sh" out classified rc line tag msg
     [[ -f "${doctor}" ]] || { warn "doctor.sh 不存在，跳过就绪探测"; return 0; }
     command -v python3 >/dev/null 2>&1 || { warn "python3 不存在，跳过就绪探测"; return 0; }
+    # Services were (re)started seconds ago; on low-memory hosts mosdns needs
+    # a while to load rulesets and bind 53/853. Wait for the core listeners
+    # before probing, otherwise a slow start is misreported as a core failure.
+    local i
+    for i in $(seq 1 30); do
+        ss -H -tln 2>/dev/null | grep -qE ':853( |$)' \
+            && ss -H -uln 2>/dev/null | grep -qE ':53( |$)' && break
+        sleep 2
+    done
     info "就绪探测 (doctor --deep)..."
     out="$(bash "${doctor}" --deep --json 2>/dev/null || true)"
     [[ -n "${out}" ]] || { warn "就绪探测无输出，跳过判定"; return 0; }

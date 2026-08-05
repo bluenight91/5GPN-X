@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- Readiness probe raced service startup: right after `do_update` restarts mosdns, a low-memory host needs seconds to load rulesets and bind 53/853, so the probe reported false core failures (`DoT/DNS not listening`) on an otherwise healthy deploy. `verify_installation` now poll-waits (up to 60s) for the DoT/DNS listeners before running `doctor --deep`.
+- I10 comment regression: the `5gpn-mihomo@` unit heredoc is unquoted, so a backticked `` `ip route/rule` `` in an explanatory comment was executed at unit-render time (`Object "route/rule" is unknown` noise on every install/update). Backticks removed; policy test now rejects backticks in any unquoted systemd unit heredoc.
 - `--update` now re-renders the tgbot unit via `setup_tgbot` (reusing the existing `tgbot.env` credentials, non-interactive) instead of only swapping `tgbot.py` and restarting — previously the I10 sandbox directives never reached `5gpn-tgbot.service` on updated hosts. Policy test asserts every hardened unit is re-rendered during updates.
 - Managed firewall mode: the generated `/etc/nftables.conf` no longer starts with a global `flush ruleset`; it now recreates only the project's own `inet filter` table (idempotent add-then-delete). A full flush also deleted chains owned by other netfilter users of the same kernel ruleset — notably docker's `DOCKER`/`DOCKER-FORWARD` chains via the iptables-nft shim — breaking `docker compose up` network creation (`No chain/target/match by that name`) until a docker restart.
 

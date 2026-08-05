@@ -50,4 +50,15 @@ fail() { echo "$1" >&2; exit 1; }
 [[ "${install_body}" == *'sudo 5gpn rollback ${snap_id:-latest}'* ]] \
     || fail "update probe failure must point at the manual rollback path"
 
+# --- probe must wait for core listeners first ---------------------------------
+# Services restart seconds before the probe; on low-memory hosts mosdns takes
+# real time to load rulesets and bind 53/853. Probing immediately races the
+# startup and reports false core failures (2026-08-05 incident).
+[[ "${install_body}" == *'for i in $(seq 1 30); do'* ]] \
+    || fail "verify_installation must poll-wait before probing"
+[[ "${install_body}" == *"grep -qE ':853( |\$)'"* ]] \
+    || fail "verify_installation must wait for the DoT listener"
+[[ "${install_body}" == *"grep -qE ':53( |\$)'"* ]] \
+    || fail "verify_installation must wait for the DNS listener"
+
 echo "readiness probe policy OK"
