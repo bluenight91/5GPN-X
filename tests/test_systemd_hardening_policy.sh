@@ -57,4 +57,12 @@ done
 [[ "$(unit_block 5gpn-tgbot.service | grep ReadWritePaths)" == "$(unit_block 5gpn-api.service | grep ReadWritePaths)" ]] \
     || fail "tgbot and api must carry identical ReadWritePaths"
 
+# --- do_update must re-render every hardened unit, not just restart ----------
+# (Unit heredocs carry the sandbox directives; an update that only restarts
+# the service leaves old unsandboxed units in place — tgbot regression.)
+upd="$(awk '/^do_update\(\)/,/^}$/' "${install}")"
+[[ "$upd" == *'setup_tgbot </dev/null'* ]] || fail "do_update must re-render the tgbot unit via setup_tgbot (non-interactive)"
+[[ "$upd" == *'&& setup_api'* ]] || fail "do_update must re-render the api unit via setup_api"
+[[ "$upd" == *'setup_exit_switching'* ]] || fail "do_update must re-render exit-switching units"
+
 echo "systemd hardening policy OK"

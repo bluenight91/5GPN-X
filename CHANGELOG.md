@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- `--update` now re-renders the tgbot unit via `setup_tgbot` (reusing the existing `tgbot.env` credentials, non-interactive) instead of only swapping `tgbot.py` and restarting — previously the I10 sandbox directives never reached `5gpn-tgbot.service` on updated hosts. Policy test asserts every hardened unit is re-rendered during updates.
 - Managed firewall mode: the generated `/etc/nftables.conf` no longer starts with a global `flush ruleset`; it now recreates only the project's own `inet filter` table (idempotent add-then-delete). A full flush also deleted chains owned by other netfilter users of the same kernel ruleset — notably docker's `DOCKER`/`DOCKER-FORWARD` chains via the iptables-nft shim — breaking `docker compose up` network creation (`No chain/target/match by that name`) until a docker restart.
 
 ### Added

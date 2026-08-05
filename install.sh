@@ -4400,7 +4400,17 @@ do_update() {
     cur_exit="$(cat "${CONF_DIR}/current-exit" 2>/dev/null || echo local)"
     [[ -f "${CONF_DIR}/api.env" ]] && setup_api
     if [[ -f "${CONF_DIR}/tgbot.env" ]]; then
-        install -m 0755 "${LIB_DIR}/tgbot.py" "${BASE_DIR}/bin/tgbot.py"
+        # Re-render the unit too (hardening directives land via setup_tgbot);
+        # reusing the existing env keeps tokens/IDs untouched. stdin is pinned
+        # away from the tty so setup_tgbot never prompts mid-update.
+        local tg_token tg_ids
+        tg_token="$(sed -n 's/^TG_BOT_TOKEN=//p' "${CONF_DIR}/tgbot.env" | head -n1)"
+        tg_ids="$(sed -n 's/^TG_ADMIN_IDS=//p' "${CONF_DIR}/tgbot.env" | head -n1)"
+        if [[ -n "$tg_token" ]]; then
+            TG_BOT_TOKEN="$tg_token" TG_ADMIN_IDS="$tg_ids" setup_tgbot </dev/null
+        else
+            install -m 0755 "${LIB_DIR}/tgbot.py" "${BASE_DIR}/bin/tgbot.py"
+        fi
         # Keep Bot UTF-8-safe under systemd LANG=C (doctor --json / Chinese UI).
         mkdir -p /etc/systemd/system/5gpn-tgbot.service.d
         cat > /etc/systemd/system/5gpn-tgbot.service.d/locale.conf <<'EOF'
