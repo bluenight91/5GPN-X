@@ -41,6 +41,8 @@ assert bot.ops_menu() == [
     [{"text": "🧦 私网 SOCKS5", "callback_data": "menu:socks"},
      {"text": "📡 私网 MTProto", "callback_data": "menu:mtproto"}],
     [{"text": "🖥 远程 Clash API", "callback_data": "menu:clash_remote"}],
+    [{"text": "🔑 轮换 API 令牌", "callback_data": "act:rotate_token"},
+     {"text": "🛡 API 白名单", "callback_data": "menu:api_allow"}],
     [{"text": "🧩 组件版本", "callback_data": "menu:components"},
      {"text": "♻️ 重启服务", "callback_data": "act:restart"}],
     [{"text": "📜 日志", "callback_data": "menu:logs"}],
