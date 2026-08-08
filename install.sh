@@ -443,6 +443,11 @@ Options:
                  / API_PORT, or generates a token; reuses existing token).
   --rotate-token Rotate API_TOKEN (keeps port/bind), restart the API, print the
                  new token once. Old tokens stop working immediately.
+  --api-allow [list|add <cidr>|del <cidr>]
+                 Manage the API/webui source allowlist (etc/api-allow.list).
+                 Empty list = unrestricted (loopback always allowed); once any
+                 CIDR is present, every other source gets HTTP 403. Enforced
+                 inside 5gpn-api, hot-reloaded on file change.
   --update-webui [version]
                  Update the metacubexd web dashboard. An explicit version is
                  pinned (etc/metacubexd.pin) so later updates keep it.
@@ -4000,6 +4005,58 @@ rotate_api_token() {
     warn "旧令牌立即失效；请更新所有客户端/书签里的令牌。"
 }
 
+# --- API source allowlist (etc/api-allow.list; enforced by api-server.py) -----
+api_allow_file() { printf '%s/api-allow.list' "${CONF_DIR}"; }
+
+valid_cidr() {
+    python3 - "$1" <<'PYEOF' >/dev/null 2>&1
+import ipaddress
+import sys
+ipaddress.ip_network(sys.argv[1], strict=False)
+PYEOF
+}
+
+api_allow_list() {
+    local f; f="$(api_allow_file)"
+    if [[ -s "$f" ]]; then
+        echo "API 来源白名单 (${f}):"
+        grep -v '^\s*#' "$f" | grep -v '^\s*$' || true
+    else
+        info "API 来源白名单为空：不限制来源（回环始终允许）。"
+    fi
+}
+
+api_allow_add() {
+    check_root
+    local cidr="${1:-}" f
+    [[ -n "$cidr" ]] || { err "Usage: $0 --api-allow add <cidr>"; exit 1; }
+    valid_cidr "$cidr" || { err "Invalid CIDR: $cidr"; exit 1; }
+    f="$(api_allow_file)"
+    mkdir -p "${CONF_DIR}"
+    touch "$f"
+    chmod 600 "$f"
+    if grep -qxF "$cidr" "$f"; then
+        info "已在白名单中: ${cidr}"
+    else
+        echo "$cidr" >> "$f"
+        ok "API 来源白名单已添加: ${cidr}"
+    fi
+    warn "HTTP 层立即生效（api-server 按 mtime 热加载）。白名单非空时，名单外来源访问 API/webui 一律 403，请确认已覆盖你的管理来源。"
+}
+
+api_allow_del() {
+    check_root
+    local cidr="${1:-}" f tmp
+    [[ -n "$cidr" ]] || { err "Usage: $0 --api-allow del <cidr>"; exit 1; }
+    f="$(api_allow_file)"
+    [[ -f "$f" ]] || { info "白名单为空，无需删除。"; return 0; }
+    tmp="${f}.tmp"
+    grep -vxF "$cidr" "$f" > "$tmp" 2>/dev/null || true
+    chmod 600 "$tmp"
+    mv "$tmp" "$f"
+    ok "API 来源白名单已删除: ${cidr}（剩余条目为空时恢复不限制）"
+}
+
 # Opt-in API + web panel during install (API_SETUP=1 / API_TOKEN set / prompt).
 maybe_setup_api() {
     local want="${API_SETUP:-}"
@@ -5338,6 +5395,14 @@ case "${1:-}" in
     --rotate-token)
         check_root
         rotate_api_token
+        ;;
+    --api-allow)
+        case "${2:-list}" in
+            list) api_allow_list ;;
+            add) api_allow_add "${3:-}" ;;
+            del|remove|rm) api_allow_del "${3:-}" ;;
+            *) err "Usage: $0 --api-allow [list|add <cidr>|del <cidr>]"; exit 1 ;;
+        esac
         ;;
     --update-webui)
         check_root

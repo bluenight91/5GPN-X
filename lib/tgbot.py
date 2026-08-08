@@ -2608,7 +2608,8 @@ def ops_menu():
         [{"text": "🧦 私网 SOCKS5", "callback_data": "menu:socks"},
          {"text": "📡 私网 MTProto", "callback_data": "menu:mtproto"}],
         [{"text": "🖥 远程 Clash API", "callback_data": "menu:clash_remote"}],
-        [{"text": "🔑 轮换 API 令牌", "callback_data": "act:rotate_token"}],
+        [{"text": "🔑 轮换 API 令牌", "callback_data": "act:rotate_token"},
+         {"text": "🛡 API 白名单", "callback_data": "menu:api_allow"}],
         [{"text": "🧩 组件版本", "callback_data": "menu:components"},
          {"text": "♻️ 重启服务", "callback_data": "act:restart"}],
         [{"text": "📜 日志", "callback_data": "menu:logs"}],
@@ -2646,6 +2647,36 @@ def clash_remote_menu():
         [{"text": "🔄 刷新状态", "callback_data": "clashr:status"}],
         [{"text": "« 返回", "callback_data": "menu:ops"}],
     ]
+
+
+def api_allow_menu():
+    return [
+        [{"text": "➕ 添加网段", "callback_data": "apia:add"},
+         {"text": "➖ 删除网段", "callback_data": "apia:del"}],
+        [{"text": "🔄 刷新状态", "callback_data": "apia:status"}],
+        [{"text": "« 返回", "callback_data": "menu:ops"}],
+    ]
+
+
+def op_api_allow_status():
+    _, out = run2(["bash", MGMT, "--api-allow", "list"], timeout=60)
+    body = html.escape(_strip_ansi(out)[-2000:] or "无输出")
+    return (f"🛡 <b>API 来源白名单</b>\n<pre>{body}</pre>\n"
+            "名单为空=不限制；非空时名单外来源访问 API/webui 一律 403（回环始终允许）。")
+
+
+def op_api_allow_add(cidr_text):
+    ok, out = run2(["bash", MGMT, "--api-allow", "add", cidr_text.strip()], timeout=60)
+    body = html.escape(_strip_ansi(out)[-1500:] or "无输出")
+    head = "✅ <b>白名单已更新</b>" if ok else "❌ <b>添加失败</b>"
+    return f"{head}\n<pre>{body}</pre>"
+
+
+def op_api_allow_del(cidr_text):
+    ok, out = run2(["bash", MGMT, "--api-allow", "del", cidr_text.strip()], timeout=60)
+    body = html.escape(_strip_ansi(out)[-1500:] or "无输出")
+    head = "✅ <b>白名单已更新</b>" if ok else "❌ <b>删除失败</b>"
+    return f"{head}\n<pre>{body}</pre>"
 
 
 def op_client_socks_status():
@@ -3195,6 +3226,24 @@ def handle_message(msg):
         console_async(chat_id, lambda: op_set_clash_remote_extra_cidr(cidr_text),
                       clash_remote_menu(), message_id=mid)
         return
+    if state and state.get("action") == "api_allow_add":
+        prompt_mid = state.get("prompt_mid")
+        PENDING.pop(chat_id, None)
+        cidr_text = text
+        background(delete_message, chat_id, msg.get("message_id"))
+        mid = upsert_console(chat_id, "⏳ 正在添加 API 白名单网段…", message_id=prompt_mid)
+        console_async(chat_id, lambda: op_api_allow_add(cidr_text),
+                      api_allow_menu(), message_id=mid)
+        return
+    if state and state.get("action") == "api_allow_del":
+        prompt_mid = state.get("prompt_mid")
+        PENDING.pop(chat_id, None)
+        cidr_text = text
+        background(delete_message, chat_id, msg.get("message_id"))
+        mid = upsert_console(chat_id, "⏳ 正在删除 API 白名单网段…", message_id=prompt_mid)
+        console_async(chat_id, lambda: op_api_allow_del(cidr_text),
+                      api_allow_menu(), message_id=mid)
+        return
 
     send(chat_id, "未知命令。发送 /menu 打开操作面板。")
 
@@ -3309,6 +3358,26 @@ def handle_callback(cb):
         PENDING.pop(chat_id, None)
         edit(cb, "⏳ 正在读取远程 Clash API 状态…")
         edit_async(cb, op_clash_remote_status, clash_remote_menu())
+    elif data == "menu:api_allow":
+        PENDING.pop(chat_id, None)
+        edit(cb, "⏳ 正在读取 API 白名单…")
+        edit_async(cb, op_api_allow_status, api_allow_menu())
+    elif data == "apia:status":
+        edit(cb, "⏳ 正在读取 API 白名单…")
+        edit_async(cb, op_api_allow_status, api_allow_menu())
+    elif data == "apia:add":
+        PENDING[chat_id] = {"action": "api_allow_add", "prompt_mid": cb_mid}
+        edit(cb,
+             "🛡 <b>添加 API 白名单网段</b>\n"
+             "发送一行 IPv4/IPv6 CIDR，例如 <code>203.0.113.10/32</code>。\n"
+             "⚠️ 第一条生效后，名单外来源访问 API/webui 会立即 403，请先确认覆盖你的管理来源。",
+             back_kb("menu:api_allow"))
+    elif data == "apia:del":
+        PENDING[chat_id] = {"action": "api_allow_del", "prompt_mid": cb_mid}
+        edit(cb,
+             "🛡 <b>删除 API 白名单网段</b>\n"
+             "发送要删除的 CIDR（与名单中的写法一致）。删空后恢复不限制。",
+             back_kb("menu:api_allow"))
     elif data == "menu:logs":
         edit(cb, "选择要查看日志的服务：", services_menu("logs", "menu:ops"))
     elif data == "wiz:start":

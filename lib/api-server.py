@@ -63,6 +63,7 @@ TRAFFIC_INTERVAL = int(re.sub(r"\D", "", os.environ.get("TRAFFIC_INTERVAL", "300
 TRAFFIC_MAX = 24 * 3600 // TRAFFIC_INTERVAL + 2   # ~24h of samples
 LATENCY_FILE = os.environ.get("LATENCY_FILE", CONF_DIR + "/latency.json")
 LATENCY_INTERVAL = TRAFFIC_INTERVAL
+ALLOW_FILE = os.environ.get("API_ALLOW_FILE", CONF_DIR + "/api-allow.list")
 AI_CONF = os.environ.get("AI_CONF", CONF_DIR + "/ai.json")
 STARTED = time.time()
 
@@ -152,6 +153,55 @@ def rate_ok(ip):
 
 def rate_limited_path(path):
     return path.startswith(("/api/", "/mihomo"))
+
+
+# --- optional source allowlist (etc/api-allow.list) ----------------------------
+# One CIDR per line; '#' comments ok. Empty/missing file = unrestricted
+# (backwards compatible). Loopback is always allowed so local health checks
+# and the mihomo reverse proxy keep working. The list is the enforcement of
+# record: the project never opens the API port in any firewall template, so a
+# broad operator-side ACCEPT would defeat nft/iptables-layer restriction.
+_allow_lock = threading.Lock()
+_allow_cache = {"mtime": None, "nets": []}
+
+
+def _allow_nets():
+    try:
+        mtime = os.path.getmtime(ALLOW_FILE)
+    except OSError:
+        mtime = None
+    with _allow_lock:
+        if mtime != _allow_cache["mtime"]:
+            nets = []
+            if mtime is not None:
+                try:
+                    with open(ALLOW_FILE, encoding="utf-8") as f:
+                        for line in f:
+                            line = line.split("#", 1)[0].strip()
+                            if not line:
+                                continue
+                            try:
+                                nets.append(ipaddress.ip_network(line, strict=False))
+                            except ValueError:
+                                continue
+                except OSError:
+                    nets = []
+            _allow_cache["mtime"] = mtime
+            _allow_cache["nets"] = nets
+        return _allow_cache["nets"]
+
+
+def source_allowed(ip_str):
+    try:
+        ip = ipaddress.ip_address(ip_str)
+    except ValueError:
+        return False
+    if ip.is_loopback:
+        return True
+    nets = _allow_nets()
+    if not nets:
+        return True
+    return any(ip in n for n in nets)
 
 
 def _prune_mihomo_sessions(now):
@@ -1612,6 +1662,8 @@ class Handler(BaseHTTPRequestHandler):
     def _dispatch(self, method):
         """PUT/PATCH/DELETE are only routed to the mihomo reverse proxy."""
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
+        if not source_allowed(self.client_address[0]):
+            return self._send(403, {"ok": False, "error": "forbidden"})
         if rate_limited_path(path) and not rate_ok(self.client_address[0]):
             return self._send(429, {"ok": False, "error": "请求过于频繁，请稍后再试"})
         if not self._auth():
@@ -1636,6 +1688,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
+        if not source_allowed(self.client_address[0]):
+            return self._send(403, {"ok": False, "error": "forbidden"})
         if rate_limited_path(path) and not rate_ok(self.client_address[0]):
             return self._send(429, {"ok": False, "error": "请求过于频繁，请稍后再试"})
         if path == "/api/health":
@@ -1847,6 +1901,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path.split("?", 1)[0].rstrip("/") or "/"
+        if not source_allowed(self.client_address[0]):
+            return self._send(403, {"ok": False, "error": "forbidden"})
         if rate_limited_path(path) and not rate_ok(self.client_address[0]):
             return self._send(429, {"ok": False, "error": "请求过于频繁，请稍后再试"})
         if not self._auth():
