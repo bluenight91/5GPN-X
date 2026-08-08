@@ -20,6 +20,7 @@ iOS 描述文件）或明文 DNS 接入，DNS 答案决定"直连还是进网关
 | `5gpn-mihomo@<exit>` | 每个出口一个 mihomo 实例 + 独立 TUN 设备 | root（需建 TUN） |
 | `5gpn-tgbot` | Telegram 控制面 | root（编排服务） |
 | `5gpn-api` | HTTP 控制 API + 静态 webui（默认仅回环 `:8444`） | root（编排服务） |
+| `5gpn-failover.timer` | 出口自愈 watchdog（每 60s 一跳，**默认关闭**，I11） | root（编排服务） |
 | `5gpn-ios-profile.socket` | iOS 描述文件 HTTP 分发（每连接一个实例） | root 短时 |
 | 可选 | `5gpn-wloc`、`5gpn-mtproxy`、`5gpn-client-mtproto`、`5gpn-client-socks`、`5gpn-clash-remote` | 各自专用用户 |
 
@@ -73,12 +74,18 @@ Android Private DNS / iOS 描述文件          明文 DNS
 - **I9 公开仓库**：真实域名、密钥、token 永不进入仓库；文档与测试中的
   示例一律使用 `example.com`。
 - **I10 单元沙盒**：非编排服务一律 `ProtectSystem=strict` + 能力边界 +
-  `ProtectHome`/`PrivateTmp`；编排服务（`5gpn-tgbot`、`5gpn-api`）用
-  `ProtectSystem=full` + 显式 `ReadWritePaths` 白名单，两者白名单必须一致。
+  `ProtectHome`/`PrivateTmp`；编排服务（`5gpn-tgbot`、`5gpn-api`、
+  `5gpn-failover`）用 `ProtectSystem=full` + 显式 `ReadWritePaths` 白名单，
+  三者白名单必须一致。
   需要启动后自主降权的 sniproxy 和需要建 TUN 的 `5gpn-mihomo@` **禁止**
   `NoNewPrivileges`；`5gpn-mihomo@` 用 `CapabilityBoundingSet` 收敛到
   TUN 与配置读写所需的最小能力集，且不加 `ProtectSystem`
   （ExecStartPost 与 drop-in 面太宽）。
+- **I11 出口自愈（failover）**：默认**关闭**（opt-in，
+  `/etc/5gpn/failover.enabled` + `5gpn-failover.timer`）；watchdog 的一切
+  切换必须经 `install.sh --set-exit`，禁止直接改路由表/fwmark/防火墙；
+  防抖动护栏为强制项——连续失败阈值、切换冷却、每小时切换上限、手动
+  切换后的宽限期；`local`/`smart` 不参与 failover。
 
 ## 目录与文件所有权
 
@@ -89,6 +96,7 @@ Android Private DNS / iOS 描述文件          明文 DNS
 | `/etc/5gpn/exits/*.yaml` (700 目录内) | 运维者出口配置 | 运维者经 CLI/tgbot/api；生成走 I8 |
 | `/etc/mosdns` | mosdns 配置、证书、规则缓存 | install.sh / update-mosdns-rules.timer |
 | `/etc/sniproxy.conf` | sniproxy 配置（脚本生成，I5） | install.sh / DNS 切换流程 |
+| `/etc/5gpn/failover.*` | 自愈开关（`failover.enabled`）、候选顺序（`failover.env`）、状态（`health/failover.json`） | failover_ctl / 5gpn-failover |
 | `/etc/systemd/system/` | 全部单元与 drop-in | install.sh（唯一写入者） |
 
 ## 与 moooyo/5gpn 的差异

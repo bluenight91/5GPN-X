@@ -2607,7 +2607,8 @@ def ops_menu():
          {"text": "🧭 向导", "callback_data": "wiz:start"}],
         [{"text": "🧦 私网 SOCKS5", "callback_data": "menu:socks"},
          {"text": "📡 私网 MTProto", "callback_data": "menu:mtproto"}],
-        [{"text": "🖥 远程 Clash API", "callback_data": "menu:clash_remote"}],
+        [{"text": "🖥 远程 Clash API", "callback_data": "menu:clash_remote"},
+         {"text": "🩹 出口自愈", "callback_data": "menu:failover"}],
         [{"text": "🔑 轮换 API 令牌", "callback_data": "act:rotate_token"},
          {"text": "🛡 API 白名单", "callback_data": "menu:api_allow"}],
         [{"text": "🧩 组件版本", "callback_data": "menu:components"},
@@ -2656,6 +2657,37 @@ def api_allow_menu():
         [{"text": "🔄 刷新状态", "callback_data": "apia:status"}],
         [{"text": "« 返回", "callback_data": "menu:ops"}],
     ]
+
+
+def failover_menu():
+    return [
+        [{"text": "▶️ 开启", "callback_data": "fo:on"},
+         {"text": "⏹ 关闭", "callback_data": "fo:off"}],
+        [{"text": "🔢 候选顺序", "callback_data": "fo:order"},
+         {"text": "🔄 刷新状态", "callback_data": "fo:status"}],
+        [{"text": "« 返回", "callback_data": "menu:ops"}],
+    ]
+
+
+def op_failover_status():
+    _, out = run2(["bash", MGMT, "--failover", "status"], timeout=60)
+    body = html.escape(_strip_ansi(out)[-2500:] or "无输出")
+    return (f"🩹 <b>出口自愈 failover</b>\n<pre>{body}</pre>\n"
+            "开启后每 60s 探测当前出口；连续 3 次失败自动切换到最优候选并通知。")
+
+
+def op_failover_ctl(action):
+    ok, out = run2(["bash", MGMT, "--failover", action], timeout=120)
+    body = html.escape(_strip_ansi(out)[-1500:] or "无输出")
+    head = "✅ <b>操作完成</b>" if ok else "❌ <b>操作失败</b>"
+    return f"{head}\n<pre>{body}</pre>"
+
+
+def op_failover_order(order_text):
+    ok, out = run2(["bash", MGMT, "--failover", "order", order_text.strip()], timeout=60)
+    body = html.escape(_strip_ansi(out)[-1500:] or "无输出")
+    head = "✅ <b>候选顺序已更新</b>" if ok else "❌ <b>设置失败</b>"
+    return f"{head}\n<pre>{body}</pre>"
 
 
 def op_api_allow_status():
@@ -3244,6 +3276,15 @@ def handle_message(msg):
         console_async(chat_id, lambda: op_api_allow_del(cidr_text),
                       api_allow_menu(), message_id=mid)
         return
+    if state and state.get("action") == "failover_order":
+        prompt_mid = state.get("prompt_mid")
+        PENDING.pop(chat_id, None)
+        order_text = text
+        background(delete_message, chat_id, msg.get("message_id"))
+        mid = upsert_console(chat_id, "⏳ 正在设置 failover 候选顺序…", message_id=prompt_mid)
+        console_async(chat_id, lambda: op_failover_order(order_text),
+                      failover_menu(), message_id=mid)
+        return
 
     send(chat_id, "未知命令。发送 /menu 打开操作面板。")
 
@@ -3362,6 +3403,26 @@ def handle_callback(cb):
         PENDING.pop(chat_id, None)
         edit(cb, "⏳ 正在读取 API 白名单…")
         edit_async(cb, op_api_allow_status, api_allow_menu())
+    elif data == "menu:failover":
+        PENDING.pop(chat_id, None)
+        edit(cb, "⏳ 正在读取 failover 状态…")
+        edit_async(cb, op_failover_status, failover_menu())
+    elif data == "fo:status":
+        edit(cb, "⏳ 正在读取 failover 状态…")
+        edit_async(cb, op_failover_status, failover_menu())
+    elif data == "fo:on":
+        edit(cb, "⏳ 正在开启出口自愈…")
+        edit_async(cb, lambda: op_failover_ctl("on"), failover_menu())
+    elif data == "fo:off":
+        edit(cb, "⏳ 正在关闭出口自愈…")
+        edit_async(cb, lambda: op_failover_ctl("off"), failover_menu())
+    elif data == "fo:order":
+        PENDING[chat_id] = {"action": "failover_order", "prompt_mid": cb_mid}
+        edit(cb,
+             "🔢 <b>failover 候选顺序</b>\n"
+             "发送逗号分隔的出口名，例如 <code>hk,jp,us</code>。\n"
+             "未设置时按最近已知延迟自动排序。",
+             back_kb("menu:failover"))
     elif data == "apia:status":
         edit(cb, "⏳ 正在读取 API 白名单…")
         edit_async(cb, op_api_allow_status, api_allow_menu())

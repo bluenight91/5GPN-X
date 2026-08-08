@@ -448,6 +448,13 @@ Options:
                  Empty list = unrestricted (loopback always allowed); once any
                  CIDR is present, every other source gets HTTP 403. Enforced
                  inside 5gpn-api, hot-reloaded on file change.
+  --failover [on|off|status|order <a,b,c>]
+                 Exit failover watchdog (opt-in, off by default). When on,
+                 probes the active exit every 60s through its TUN device;
+                 after 3 consecutive failures switches to the best healthy
+                 candidate (order via 'order', else last-known latency) and
+                 sends a Telegram notification. Anti-flap: 10min cooldown,
+                 max 3 switches/hour, 5min grace after a manual switch.
   --update-webui [version]
                  Update the metacubexd web dashboard. An explicit version is
                  pinned (etc/metacubexd.pin) so later updates keep it.
@@ -4057,6 +4064,94 @@ api_allow_del() {
     ok "API 来源白名单已删除: ${cidr}（剩余条目为空时恢复不限制）"
 }
 
+# --- exit failover watchdog (opt-in; invariant I11) ---------------------------
+setup_failover() {
+    [[ -f "${LIB_DIR}/failover.py" ]] || { err "failover.py not found in ${LIB_DIR}"; return 1; }
+    mkdir -p "${BASE_DIR}/bin"
+    install -m 0755 "${LIB_DIR}/failover.py" "${BASE_DIR}/bin/failover.py"
+    # Root orchestrator (switches via install.sh --set-exit): same write-path
+    # contract as 5gpn-tgbot.service / 5gpn-api.service (I10).
+    cat > /etc/systemd/system/5gpn-failover.service <<EOF
+[Unit]
+Description=5GPN-X exit failover watchdog (one tick)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 ${BASE_DIR}/bin/failover.py tick
+ProtectSystem=full
+ReadWritePaths=/etc/5gpn /etc/mosdns /etc/sniproxy.conf /etc/wireguard /etc/nftables.conf /etc/letsencrypt /etc/systemd/system /usr/local/bin
+ProtectHome=true
+PrivateTmp=true
+EOF
+    cat > /etc/systemd/system/5gpn-failover.timer <<'EOF'
+[Unit]
+Description=Run 5GPN-X exit failover watchdog every 60 seconds
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=60s
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+    systemctl daemon-reload
+    # I11: opt-in. Units are rendered but the timer is only ever enabled by
+    # `failover_ctl on` — never here.
+}
+
+failover_ctl() {
+    check_root
+    local action="${1:-status}"
+    local py; py="$(command -v python3 || echo /usr/bin/python3)"
+    case "$action" in
+        on)
+            setup_failover
+            mkdir -p /etc/5gpn
+            touch /etc/5gpn/failover.enabled
+            chmod 600 /etc/5gpn/failover.enabled
+            systemctl enable --now 5gpn-failover.timer
+            ok "出口自愈已开启：每 60s 探测当前出口，连续失败自动切换到最优候选出口并推送 Telegram 通知。"
+            info "自定义候选顺序: $0 --failover order hk,jp,us"
+            ;;
+        off)
+            rm -f /etc/5gpn/failover.enabled
+            systemctl disable --now 5gpn-failover.timer 2>/dev/null || true
+            ok "出口自愈已关闭（单元保留，状态文件保留）。"
+            ;;
+        order)
+            local order="${2:-}" item clean=()
+            [[ -n "$order" ]] || { err "Usage: $0 --failover order <exit1,exit2,...>"; exit 1; }
+            IFS=',' read -r -a items <<< "$order"
+            for item in "${items[@]}"; do
+                item="$(echo "$item" | tr -d '[:space:]')"
+                [[ -z "$item" ]] && continue
+                if [[ "$item" == "local" || "$item" == "smart" ]]; then
+                    err "local/smart 不能作为 failover 候选"; exit 1
+                fi
+                exit_exists "$item" || { err "未知出口: $item（先 --add-exit 添加）"; exit 1; }
+                clean+=("$item")
+            done
+            [[ ${#clean[@]} -gt 0 ]] || { err "候选顺序不能为空"; exit 1; }
+            mkdir -p /etc/5gpn
+            umask 077
+            printf 'FAILOVER_ORDER="%s"\n' "$(IFS=,; echo "${clean[*]}")" > /etc/5gpn/failover.env
+            chmod 600 /etc/5gpn/failover.env
+            ok "failover 候选顺序: $(IFS=,; echo "${clean[*]}")"
+            ;;
+        status)
+            if [[ -f /etc/5gpn/failover.enabled ]]; then
+                echo -e "failover: ${GREEN}enabled${NC} (timer: $(systemctl is-active 5gpn-failover.timer 2>/dev/null || echo unknown))"
+            else
+                echo "failover: disabled（开启: $0 --failover on）"
+            fi
+            [[ -x "${BASE_DIR}/bin/failover.py" ]] && "$py" "${BASE_DIR}/bin/failover.py" status 2>/dev/null || true
+            ;;
+        *)
+            err "Usage: $0 --failover [on|off|status|order <a,b,c>]"; exit 1 ;;
+    esac
+}
+
 # Opt-in API + web panel during install (API_SETUP=1 / API_TOKEN set / prompt).
 maybe_setup_api() {
     local want="${API_SETUP:-}"
@@ -4221,6 +4316,7 @@ EOF
     systemctl enable --now update-mosdns-rules.timer
     systemctl enable --now 5gpn-health.timer 2>/dev/null || true
     systemctl enable --now 5gpn-snapshot.timer 2>/dev/null || true
+    setup_failover || warn "failover 单元渲染失败；可稍后重跑 $0 --failover on"
     install_certbot_firewall_hooks
     systemctl enable --now certbot.timer 2>/dev/null || true
     ok "Schedules configured (rules: weekly, health: 20m, snapshot: daily, cert: auto)"
@@ -4262,6 +4358,9 @@ show_status() {
     local cur_exit="local"
     [[ -f "${CONF_DIR}/current-exit" ]] && cur_exit="$(cat "${CONF_DIR}/current-exit" 2>/dev/null || echo local)"
     echo "Egress exit: ${cur_exit}"
+    if [[ -f /etc/5gpn/failover.enabled ]]; then
+        echo -e "Failover: ${GREEN}on${NC} (timer: $(systemctl is-active 5gpn-failover.timer 2>/dev/null || echo unknown))"
+    fi
     if [[ -f /etc/mosdns/.cache_size ]]; then
         local cs; cs="$(cat /etc/mosdns/.cache_size 2>/dev/null || echo '?')"
         echo "Mem profile: $([[ "$cs" -le 50000 ]] 2>/dev/null && echo low-memory || echo standard) (mosdns cache=${cs})"
@@ -5403,6 +5502,9 @@ case "${1:-}" in
             del|remove|rm) api_allow_del "${3:-}" ;;
             *) err "Usage: $0 --api-allow [list|add <cidr>|del <cidr>]"; exit 1 ;;
         esac
+        ;;
+    --failover)
+        failover_ctl "${2:-status}" "${3:-}"
         ;;
     --update-webui)
         check_root

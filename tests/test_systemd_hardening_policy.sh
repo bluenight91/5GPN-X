@@ -47,15 +47,17 @@ b="$(unit_block '5gpn-ios-profile@.service')"
 
 # --- root orchestrators: full /etc-/usr lockdown with an explicit whitelist ----
 rw='/etc/5gpn /etc/mosdns /etc/sniproxy.conf /etc/wireguard /etc/nftables.conf /etc/letsencrypt /etc/systemd/system /usr/local/bin'
-for u in 5gpn-tgbot.service 5gpn-api.service; do
+for u in 5gpn-tgbot.service 5gpn-api.service 5gpn-failover.service; do
     b="$(unit_block "$u")"
     [[ "$b" == *'ProtectSystem=full'* ]] || fail "$u must get ProtectSystem=full"
     [[ "$b" == *"ReadWritePaths=${rw}"* ]] || fail "$u ReadWritePaths whitelist mismatch"
     [[ "$b" == *'ProtectHome=true'* && "$b" == *'PrivateTmp=true'* ]] || fail "$u needs ProtectHome/PrivateTmp"
 done
-# The two orchestrators must share the identical write-path contract.
+# The orchestrators must share the identical write-path contract.
 [[ "$(unit_block 5gpn-tgbot.service | grep ReadWritePaths)" == "$(unit_block 5gpn-api.service | grep ReadWritePaths)" ]] \
     || fail "tgbot and api must carry identical ReadWritePaths"
+[[ "$(unit_block 5gpn-tgbot.service | grep ReadWritePaths)" == "$(unit_block 5gpn-failover.service | grep ReadWritePaths)" ]] \
+    || fail "tgbot and failover must carry identical ReadWritePaths"
 
 # --- do_update must re-render every hardened unit, not just restart ----------
 # (Unit heredocs carry the sandbox directives; an update that only restarts

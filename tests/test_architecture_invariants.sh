@@ -50,4 +50,27 @@ if grep -rnE '258364448\.xyz' "${root}" --exclude-dir=.git --exclude="$(basename
     fail "I9: real operator domain must never appear in the repo"
 fi
 
+# --- I11: failover is opt-in and only ever switches via set_exit ---------------
+fo_body="$(cat "${root}/lib/failover.py")"
+[[ "${install_body}" == *'cat > /etc/systemd/system/5gpn-failover.timer'* ]] \
+    || fail "I11: failover timer unit must be rendered"
+setup_fo="$(sed -n '/^setup_failover() {/,/^}/p' "${install}")"
+[[ "${setup_fo}" != *'enable --now 5gpn-failover.timer'* ]] \
+    || fail "I11: setup_failover must never enable the timer (opt-in via failover_ctl on)"
+[[ "${install_body}" == *'touch /etc/5gpn/failover.enabled'* ]] \
+    || fail "I11: failover_ctl on must create the enabled marker"
+[[ "${fo_body}" == *'os.path.isfile(ENABLED_FILE)'* ]] \
+    || fail "I11: a tick must no-op without the enabled marker"
+[[ "${fo_body}" == *'"--set-exit", name'* ]] \
+    || fail "I11: switching must go through install.sh --set-exit"
+for forbidden in 'ip route' 'ip rule' 'nft ' 'iptables'; do
+    [[ "${fo_body}" != *"${forbidden}"* ]] \
+        || fail "I11: failover.py must not touch routing/firewall directly (${forbidden})"
+done
+[[ "${fo_body}" == *'COOLDOWN_SEC'* && "${fo_body}" == *'MAX_SWITCHES_PER_HOUR'* \
+    && "${fo_body}" == *'GRACE_SEC'* && "${fo_body}" == *'FAIL_AFTER'* ]] \
+    || fail "I11: anti-flap guards (threshold/cooldown/hourly cap/grace) are mandatory"
+[[ "${fo_body}" == *'SKIP_EXITS = ("local", "smart")'* ]] \
+    || fail "I11: local/smart must be excluded from failover"
+
 echo "architecture invariants policy OK"

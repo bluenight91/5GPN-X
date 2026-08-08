@@ -125,6 +125,27 @@ sudo systemctl list-timers 5gpn-health.timer
 sudo bash /opt/5gpn/scripts/health-notify.sh
 ```
 
+## 出口自愈（failover）不工作 / 行为异常
+
+failover 默认关闭。开启后 `5gpn-failover.timer` 每 60s 探测当前出口的真实路径
+（`curl --interface pgw-<出口>`）；连续 3 次失败才切换，切换有 10 分钟冷却、
+每小时最多 3 次、手动 `set-exit` 后 5 分钟宽限。`local`/`smart` 不参与。
+
+```bash
+sudo 5gpn failover status            # 开关状态、候选顺序、内部状态 JSON
+sudo 5gpn failover on|off            # 开关（Bot「运维 → 出口自愈」同效）
+sudo 5gpn failover order hk,jp,us    # 固定候选顺序；不设置则按最近延迟排序
+python3 /opt/5gpn/bin/failover.py tick   # 手动跑一跳，看 action 字段
+systemctl list-timers 5gpn-failover.timer
+```
+
+手动探测当前出口：
+
+```bash
+curl --interface "pgw-$(cat /etc/5gpn/current-exit)" -m 8 -sf -o /dev/null -w '%{http_code}\n' \
+  http://www.gstatic.com/generate_204
+```
+
 ## 需要把现场发给维护者
 
 在 Bot「运维 → 诊断报告」会收到脱敏 `.txt` 附件；或：

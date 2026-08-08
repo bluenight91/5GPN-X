@@ -1,7 +1,7 @@
 # AGENTS.md
 
 架构真相源是 [docs/architecture.md](docs/architecture.md)——改动架构前先读它，
-改动后同步更新它。它定义的运行时不变量 I1–I9 由 `tests/` 下的 policy 测试锁定。
+改动后同步更新它。它定义的运行时不变量 I1–I11 由 `tests/` 下的 policy 测试锁定。
 
 硬约束：
 
