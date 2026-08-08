@@ -4093,12 +4093,39 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 EOF
+    # Daily config snapshot (configs only; retention via SNAP_KEEP).
+    cat > /etc/systemd/system/5gpn-snapshot.service <<EOF
+[Unit]
+Description=5GPN-X daily config snapshot
+
+[Service]
+Type=oneshot
+Environment=SNAP_KEEP=7
+ExecStart=/bin/bash ${BASE_DIR}/scripts/snapshot.sh create auto
+ProtectSystem=strict
+ReadWritePaths=/var/lib/5gpn
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+EOF
+    cat > /etc/systemd/system/5gpn-snapshot.timer <<'EOF'
+[Unit]
+Description=Run 5GPN-X config snapshot daily
+
+[Timer]
+OnCalendar=*-*-* 04:17:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
     systemctl daemon-reload
     systemctl enable --now update-mosdns-rules.timer
     systemctl enable --now 5gpn-health.timer 2>/dev/null || true
+    systemctl enable --now 5gpn-snapshot.timer 2>/dev/null || true
     install_certbot_firewall_hooks
     systemctl enable --now certbot.timer 2>/dev/null || true
-    ok "Schedules configured (rules: weekly, health: 20m, cert: auto)"
+    ok "Schedules configured (rules: weekly, health: 20m, snapshot: daily, cert: auto)"
 }
 show_status() {
     echo "=========================================="
