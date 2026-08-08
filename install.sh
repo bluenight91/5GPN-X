@@ -441,6 +441,8 @@ Options:
                  TG_ADMIN_IDS env vars, or prompts interactively).
   --setup-api    Install/enable the HTTP control API + web panel (env API_TOKEN
                  / API_PORT, or generates a token; reuses existing token).
+  --rotate-token Rotate API_TOKEN (keeps port/bind), restart the API, print the
+                 new token once. Old tokens stop working immediately.
   --update-webui [version]
                  Update the metacubexd web dashboard. An explicit version is
                  pinned (etc/metacubexd.pin) so later updates keep it.
@@ -3959,6 +3961,45 @@ EOF
     fi
 }
 
+# Rotate API_TOKEN in place (keeps port/bind/origin), restart the API, verify.
+rotate_api_token() {
+    check_root
+    [[ -f "${CONF_DIR}/api.env" ]] || { err "API 未安装；先运行 --setup-api"; return 1; }
+    local token port domain tmp i
+    token="$(openssl rand -hex 24 2>/dev/null || head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+    if [[ -z "$token" || ${#token} -lt 16 ]]; then
+        err "Could not generate an API token."; return 1
+    fi
+    tmp="${CONF_DIR}/api.env.tmp"
+    if grep -q '^API_TOKEN=' "${CONF_DIR}/api.env"; then
+        sed "s/^API_TOKEN=.*/API_TOKEN=${token}/" "${CONF_DIR}/api.env" > "$tmp"
+    else
+        cat "${CONF_DIR}/api.env" > "$tmp"
+        echo "API_TOKEN=${token}" >> "$tmp"
+    fi
+    chmod 600 "$tmp"
+    mv "$tmp" "${CONF_DIR}/api.env"
+    systemctl restart 5gpn-api.service
+
+    port="$(sed -n 's/^API_PORT=//p' "${CONF_DIR}/api.env" | head -n1)"; port="${port:-8444}"
+    for i in $(seq 1 10); do
+        if curl -k -fsS -m 3 -H "Authorization: Bearer ${token}" \
+                "https://127.0.0.1:${port}/api/health" >/dev/null 2>&1; then
+            break
+        fi
+        if [[ "$i" == "10" ]]; then
+            warn "重启后健康检查未通过，请运行 journalctl -u 5gpn-api 排查"
+        fi
+        sleep 1
+    done
+
+    domain="$(cat "${CONF_DIR}/.domain" 2>/dev/null || echo "")"
+    ok "API token 已轮换，5gpn-api 已重启。"
+    echo "  新令牌 (API_TOKEN): ${token}"
+    echo "  WebUI:              https://${domain:-<域名>}:${port}/"
+    warn "旧令牌立即失效；请更新所有客户端/书签里的令牌。"
+}
+
 # Opt-in API + web panel during install (API_SETUP=1 / API_TOKEN set / prompt).
 maybe_setup_api() {
     local want="${API_SETUP:-}"
@@ -5293,6 +5334,10 @@ case "${1:-}" in
     --setup-api)
         check_root
         setup_api
+        ;;
+    --rotate-token)
+        check_root
+        rotate_api_token
         ;;
     --update-webui)
         check_root

@@ -2048,6 +2048,15 @@ def op_snapshot():
     return f"❌ <b>快照失败</b>\n{html.escape(_reason(out))}"
 
 
+def op_rotate_token():
+    ok, out = run2(["bash", MGMT, "--rotate-token"], timeout=120)
+    if ok:
+        return ("✅ <b>API 令牌已轮换</b>\n"
+                f"<pre>{html.escape(_strip_ansi(out)[-1500:])}</pre>\n"
+                "⚠️ 旧令牌立即失效；本消息含新令牌，复制后建议删除。")
+    return f"❌ <b>轮换失败</b>\n{html.escape(_reason(out))}"
+
+
 def _snapshot_script():
     return SNAPSHOT if os.path.isfile(SNAPSHOT) else "/opt/5gpn/scripts/snapshot.sh"
 
@@ -2599,6 +2608,7 @@ def ops_menu():
         [{"text": "🧦 私网 SOCKS5", "callback_data": "menu:socks"},
          {"text": "📡 私网 MTProto", "callback_data": "menu:mtproto"}],
         [{"text": "🖥 远程 Clash API", "callback_data": "menu:clash_remote"}],
+        [{"text": "🔑 轮换 API 令牌", "callback_data": "act:rotate_token"}],
         [{"text": "🧩 组件版本", "callback_data": "menu:components"},
          {"text": "♻️ 重启服务", "callback_data": "act:restart"}],
         [{"text": "📜 日志", "callback_data": "menu:logs"}],
@@ -3670,6 +3680,15 @@ def handle_callback(cb):
     elif data == "act:snapshot":
         edit(cb, "⏳ 正在保存配置快照…")
         edit_async(cb, op_snapshot, back_kb("menu:ops"))
+    elif data == "act:rotate_token":
+        edit(cb,
+             "🔑 <b>轮换 API 令牌</b>\n"
+             "旧令牌将立即失效，webui 和脚本里的令牌都要更新。确认继续？",
+             [[{"text": "✅ 确认轮换", "callback_data": "act:rotate_token!"}],
+              [{"text": "« 返回", "callback_data": "menu:ops"}]])
+    elif data == "act:rotate_token!":
+        edit(cb, "⏳ 正在轮换 API 令牌…")
+        edit_async(cb, op_rotate_token, back_kb("menu:ops"))
     elif data == "act:snaplist":
         edit(cb, "⏳ 正在读取快照列表…")
         edit_snapshot_list_async(cb)
