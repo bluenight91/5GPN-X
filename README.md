@@ -34,7 +34,7 @@
 
 **管理与控制台**
 
-- 网页控制台（可选）：六页静态控制台——仪表盘、出口管理、分流规则、mihomo 监控、AI 助手、设置；深浅双主题跟随系统，移动端底部标签栏（可滑动、滚动自动隐藏），适配 iOS Safari。
+- 网页控制台（可选）：六页静态控制台——仪表盘、出口管理、分流规则、mihomo 监控、AI 助手、设置；深浅双主题跟随系统，移动端底部标签栏（可滑动、滚动自动隐藏），适配 iOS Safari；流量/延迟图表支持 5m–24h 实时窗口与 7d/30d 日汇总视图（UTC 日粒度，保留 62 天）。
 - mihomo 监控面板：metacubexd 经 api-server 同源反代接入，secret 不出服务端；支持连接查看、延迟测试、断开连接、规则集刷新。
 - Telegram Bot：状态、出口管理、分流规则、DNS/DoT 设置（含客户端网段）、日志、iOS 二维码、运维自检。
 - AI 助手：绑定自己的 OpenAI 兼容接口，自然语言生成分流方案，人工确认后才生效。
@@ -42,6 +42,10 @@
 **运维**
 
 - `--update` 一键更新：git 自更新 + 重部署运行时（保留全部配置）；更新前自动快照，失败可回滚。
+- 每日配置快照：`5gpn-snapshot.timer` 每天自动保存配置快照（默认保留 7 份），即使多天无人值守也可用 `rollback` 恢复。
+- API 令牌自助轮换：`--rotate-token` 一键更换控制台令牌并重载相关服务（Bot 运维菜单亦有入口，带二次确认）。
+- 控制面来源白名单：`etc/api-allow.list` 按 CIDR 限制可访问 API/WebUI 的来源（应用层 403、热加载，`--api-allow list|add|del` 或 Bot 管理）。
+- 出口自愈（可选，默认关闭）：`5gpn failover on` 后持续探测当前出口，连续失败自动切换到备用出口（冷却/频次防抖、手动切换宽限、TG 通知）。
 - `/opt/5gpn` 自动成为 git 检出，管理命令全部在该目录执行。
 - `doctor` / `report`：结构化自检与脱敏诊断报告；`smoke` 为 `doctor --deep` 别名。
 - 可配置客户端网段（CLI / Bot / WebUI）；健康定时器可经 Telegram 告警。
@@ -147,6 +151,9 @@ sudo 5gpn list-direct-domains
 sudo 5gpn add-direct-domain box2.example.com   # 私网客户端对该域名返回真实解析（SSH 等）
 sudo 5gpn setup-tgbot        # 配置 Telegram Bot
 sudo 5gpn setup-api          # 启用 HTTP 控制 API + 网页控制台（可选）
+sudo 5gpn rotate-token       # 轮换控制台 API 令牌（Bot 运维菜单亦可，带确认）
+sudo 5gpn api-allow list     # 查看 API/WebUI 来源白名单（add/del CIDR 管理）
+sudo 5gpn failover on        # 开启出口自愈（status 查看、order 调整候选顺序）
 sudo 5gpn update-webui 1.270.5    # 升级 metacubexd 面板（写入 pin，后续 update 不降级）
 sudo 5gpn update-mihomo 1.19.29   # 升级 mihomo TUN 引擎并重启运行中的出口实例
 # 以上也可在网页控制台「设置 → 运维 → 组件版本」或 Bot「运维 → 组件版本」中完成，
@@ -336,8 +343,9 @@ sudo 5gpn report          # 脱敏报告写入 /tmp
 ### 仓库结构
 
 ```text
-install.sh        # 安装/管理入口（唯一需要直接运行的脚本）
+install.sh        # 安装/管理入口（常量、curl|bash 引导、命令分发；唯一需要直接运行的脚本）
 quick-install.sh  # 一键安装引导
+lib/setup-*.sh    # install.sh 按域拆出的业务函数：setup-core（核心组件）/ setup-exit（出口与分流）/ setup-control（API/Bot/客户端代理）/ setup-ops（运维生命周期），由 install.sh source
 lib/              # 组件源码与模板（tgbot、wa-shim、api-server、Go 代理、mihomo/mosdns 生成器等）
 webui/            # 静态网页控制台（index.html 单文件）
 scripts/          # 运维脚本（doctor / snapshot / report / health-notify）
