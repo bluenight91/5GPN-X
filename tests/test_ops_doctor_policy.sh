@@ -9,7 +9,7 @@ for f in doctor.sh snapshot.sh report.sh health-notify.sh smoke-check.sh; do
     bash -n "${root}/scripts/${f}" || fail "scripts/${f} must pass bash -n"
 done
 
-install="$(cat "${root}/install.sh")"
+install="$(cat "${root}/install.sh" "${root}/lib"/setup-*.sh)"
 host="$(cat "${root}/lib/host-setup.sh")"
 template="$(cat "${root}/lib/mosdns.yaml.template")"
 rules="$(cat "${root}/lib/update-rules.sh")"

@@ -3,7 +3,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-install_body="$(cat "${root}/install.sh")"
+install_body="$(cat "${root}/install.sh" "${root}/lib"/setup-*.sh)"
 tgbot_body="$(cat "${root}/lib/tgbot.py")"
 
 fail() { echo "$1" >&2; exit 1; }

@@ -5,7 +5,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 install="${root}/install.sh"
 gen="${root}/lib/mihomo-exit-config.py"
-install_body="$(cat "${install}")"
+install_body="$(cat "${install}" "${root}/lib"/setup-*.sh)"
 
 fail() { echo "$1" >&2; exit 1; }
 
@@ -42,7 +42,7 @@ trap 'rm -rf "$tmpdir"' EXIT
 WG_DIR="${tmpdir}/wg"
 EXITS_DIR="${tmpdir}/exits"
 mkdir -p "$WG_DIR" "$EXITS_DIR"
-eval "$(awk '/^exit_conf_path\(\)/{copy=1} copy{if ($0 ~ /^ensure_mihomo\(\)/) exit; print}' "${install}")"
+eval "$(awk '/^exit_conf_path\(\)/{copy=1} copy{if ($0 ~ /^ensure_mihomo\(\)/) exit; print}' "${root}/lib/setup-exit.sh")"
 printf '{"tun":{"device":"pgw-%s"}}\n' "$name" > "${EXITS_DIR}/${name}.yaml"
 ensure_mihomo_exit_iface "$name"
 python3 - "$name" "${EXITS_DIR}/${name}.yaml" <<'PY'
@@ -233,9 +233,9 @@ done
 [[ "${install_body}" == *'masque://*)             type=masque ;;'* ]] || fail "add_exit must map masque:// to type masque"
 [[ "${install_body}" == *'type[[:space:]]*[:：][[:space:]]*"?masque"?([[:space:]#]|$)'* ]] || fail "add_exit must detect pasted masque YAML"
 # add/del-exit must refresh the smart router or new exits never appear in metacubexd.
-add_fn="$(awk '/^add_exit\(\)/,/^}/' "${install}")"
+add_fn="$(awk '/^add_exit\(\)/,/^}/' "${root}/lib/setup-exit.sh")"
 [[ "$(grep -c 'regen_smart' <<<"${add_fn}")" -eq 2 ]] || fail "add_exit must regen smart on both add paths (URI/YAML and WireGuard)"
-del_fn="$(awk '/^del_exit\(\)/,/^}/' "${install}")"
+del_fn="$(awk '/^del_exit\(\)/,/^}/' "${root}/lib/setup-exit.sh")"
 [[ "$(grep -c 'regen_smart' <<<"${del_fn}")" -eq 1 ]] || fail "del_exit must regen smart after removal"
 # pipefail: a no-match grep in the URI extraction pipeline must not kill add_exit silently.
 uri_line="$(grep -F 'ss|vmess|trojan|vless' <<<"${install_body}" | grep -F '|| true')" || fail "add_exit URI grep pipeline must end with || true (pipefail silent-exit)"

@@ -3,7 +3,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-install_body="$(cat "${root}/install.sh")"
+install_body="$(cat "${root}/install.sh" "${root}/lib"/setup-*.sh)"
 template="$(cat "${root}/lib/mosdns.yaml.template")"
 rules="$(cat "${root}/lib/update-rules.sh")"
 api="$(cat "${root}/lib/api-server.py")"
@@ -35,8 +35,8 @@ has "$install_body" 'touch /etc/mosdns/direct-domains.txt' \
 # `${var,,}` needs bash 4+; macOS ships bash 3.2, so skip the smoke there
 # (the string assertions above still run everywhere).
 if (( BASH_VERSINFO[0] >= 4 )); then
-  eval "$(awk '/^normalize_direct_domain\(\)/,/^}/' "${root}/install.sh")"
-  eval "$(awk '/^valid_direct_domain\(\)/,/^}/' "${root}/install.sh")"
+  eval "$(awk '/^normalize_direct_domain\(\)/,/^}/' "${root}/lib/setup-exit.sh")"
+  eval "$(awk '/^valid_direct_domain\(\)/,/^}/' "${root}/lib/setup-exit.sh")"
   [[ "$(normalize_direct_domain 'HTTPS://Box2.Example.com/path#x')" == "box2.example.com" ]] \
     || fail "normalize_direct_domain must strip scheme/path and lowercase"
   valid_direct_domain "box2.example.com" || fail "valid_direct_domain must accept FQDNs"

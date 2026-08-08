@@ -5,7 +5,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 install="${root}/install.sh"
 hostsetup="${root}/lib/host-setup.sh"
-install_body="$(cat "${install}" "${hostsetup}")"
+install_body="$(cat "${install}" "${root}/lib"/setup-*.sh "${hostsetup}")"
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 

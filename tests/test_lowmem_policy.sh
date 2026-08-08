@@ -8,7 +8,7 @@ tmpl="${root}/lib/mosdns.yaml.template"
 update="${root}/lib/update-rules.sh"
 ioshttp="${root}/lib/ios-http.py"
 # Firewall/tuning helpers moved to lib/host-setup.sh (sourced by install.sh).
-install_body="$(cat "${install}" "${root}/lib/host-setup.sh")"
+install_body="$(cat "${install}" "${root}/lib"/setup-*.sh "${root}/lib/host-setup.sh")"
 
 fail() { echo "$1" >&2; exit 1; }
 

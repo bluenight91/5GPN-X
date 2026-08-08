@@ -4,6 +4,10 @@ $root = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 
 $paths = @(
     "install.sh",
+    "lib/setup-core.sh",
+    "lib/setup-exit.sh",
+    "lib/setup-control.sh",
+    "lib/setup-ops.sh",
     "README.md"
 )
 

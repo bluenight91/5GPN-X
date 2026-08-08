@@ -4,7 +4,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 gen="$(cat "${root}/lib/mihomo-router-config.py")"
 exitgen="$(cat "${root}/lib/mihomo-exit-config.py")"
-install_body="$(cat "${root}/install.sh")"
+install_body="$(cat "${root}/install.sh" "${root}/lib"/setup-*.sh)"
 api_body="$(cat "${root}/lib/api-server.py")"
 fail() { echo "$1" >&2; exit 1; }
 

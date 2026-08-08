@@ -4,7 +4,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fail() { echo "$1" >&2; exit 1; }
 
-install="$(cat "${root}/install.sh")"
+install="$(cat "${root}/install.sh" "${root}/lib"/setup-*.sh)"
 host="$(cat "${root}/lib/host-setup.sh")"
 api="$(cat "${root}/lib/api-server.py")"
 ui="$(cat "${root}/webui/index.html")"
@@ -37,7 +37,7 @@ fi
 # Smoke: bare key stays bare (Telegram-pasteable)
 canon_tmp="$(mktemp)"
 sed -n '/^canonicalize_mtproto_secret()/,/^}/p; /^validate_mtproto_secret()/,/^}/p' \
-    "${root}/install.sh" > "${canon_tmp}"
+    "${root}/lib/setup-control.sh" > "${canon_tmp}"
 # shellcheck disable=SC1090
 got="$(bash -c '. "$1"; canonicalize_mtproto_secret 2cf16b88a9ba60ac6aff397eafc8336c' _ "${canon_tmp}")"
 rm -f "${canon_tmp}"

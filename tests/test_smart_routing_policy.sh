@@ -4,7 +4,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 install="${root}/install.sh"
 gen="${root}/lib/mihomo-router-config.py"
-install_body="$(cat "${install}")"
+install_body="$(cat "${install}" "${root}/lib"/setup-*.sh)"
 fail() { echo "$1" >&2; exit 1; }
 
 [[ -f "${gen}" ]] || fail "mihomo-router-config.py must exist"

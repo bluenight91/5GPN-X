@@ -33,8 +33,18 @@ EOF
 chmod +x "${tmp}/update-mosdns-rules.sh"
 
 script="${tmp}/install-wrapper.sh"
-# install.sh sources lib/host-setup.sh relative to its own directory.
-ln -s "${root}/lib" "${tmp}/lib"
+# install.sh sources lib/host-setup.sh and lib/setup-*.sh relative to its own
+# directory. The setup-*.sh modules carry the same host paths install.sh used
+# to, so they need the identical sed redirection into ${tmp}.
+cp -R "${root}/lib" "${tmp}/lib"
+for m in "${tmp}/lib"/setup-*.sh; do
+    sed \
+      -e "s#/etc/sniproxy.conf#${tmp}/sniproxy.conf#g" \
+      -e "s#/etc/mosdns#${tmp}/etc/mosdns#g" \
+      -e "s#/opt/5gpn/etc#${tmp}/opt/etc#g" \
+      -e "s#/usr/local/bin/update-mosdns-rules.sh#${tmp}/update-mosdns-rules.sh#g" \
+      "$m" > "$m.tmp" && mv "$m.tmp" "$m"
+done
 sed \
   -e "s#/etc/sniproxy.conf#${tmp}/sniproxy.conf#g" \
   -e "s#/etc/mosdns#${tmp}/etc/mosdns#g" \
@@ -43,10 +53,10 @@ sed \
   "${root}/install.sh" > "${script}"
 chmod +x "${script}"
 
-# G5PNX_BOOTSTRAPPED prevents the wrapper (which lives outside the repo and has
-# no lib/) from re-execing a freshly downloaded install.sh: that pristine copy
-# would ignore every sed-redirected path above and write to the REAL host
-# config (/etc/mosdns, systemctl restart mosdns, ...).
+# G5PNX_BOOTSTRAPPED prevents the wrapper (which lives outside the repo) from
+# re-execing a freshly downloaded install.sh: that pristine copy would ignore
+# every sed-redirected path above and write to the REAL host config
+# (/etc/mosdns, systemctl restart mosdns, ...).
 export G5PNX_BOOTSTRAPPED=1
 PATH="${tmp}/bin:${PATH}" bash "${script}" --set-dns \
   "1.1.1.1 8.8.8.8 9.9.9.9" \

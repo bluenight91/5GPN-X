@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 $installPath = Join-Path $root "install.sh"
 # Firewall/tuning helpers moved to lib/host-setup.sh (sourced by install.sh).
-$install = (Get-Content -Path $installPath -Raw -Encoding UTF8) + (Get-Content -Path (Join-Path $root "lib/host-setup.sh") -Raw -Encoding UTF8)
+$install = (Get-Content -Path $installPath -Raw -Encoding UTF8) + ((Get-Content -Path (Join-Path $root "lib/setup-*.sh") -Raw -Encoding UTF8) -join "`n") + (Get-Content -Path (Join-Path $root "lib/host-setup.sh") -Raw -Encoding UTF8)
 
 function Assert-Contains {
     param(

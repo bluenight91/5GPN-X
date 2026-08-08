@@ -3,7 +3,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-install="${root}/install.sh"
+install=("${root}/install.sh" "${root}/lib"/setup-*.sh)
 
 fail() { echo "$1" >&2; exit 1; }
 
@@ -12,7 +12,7 @@ unit_block() { # unit-name → heredoc body of its unit definition in install.sh
         $0 ~ "cat > /etc/systemd/system/" u " <<" { inb=1; next }
         inb && /^EOF$/ { exit }
         inb { print }
-    ' "${install}"
+    ' "${install[@]}"
 }
 
 # --- sniproxy: root→setuid(pxout); sandbox but never NoNewPrivileges ---------
@@ -62,7 +62,7 @@ done
 # --- do_update must re-render every hardened unit, not just restart ----------
 # (Unit heredocs carry the sandbox directives; an update that only restarts
 # the service leaves old unsandboxed units in place — tgbot regression.)
-upd="$(awk '/^do_update\(\)/,/^}$/' "${install}")"
+upd="$(awk '/^do_update\(\)/,/^}$/' "${install[@]}")"
 [[ "$upd" == *'setup_tgbot </dev/null'* ]] || fail "do_update must re-render the tgbot unit via setup_tgbot (non-interactive)"
 [[ "$upd" == *'&& setup_api'* ]] || fail "do_update must re-render the api unit via setup_api"
 [[ "$upd" == *'setup_exit_switching'* ]] || fail "do_update must re-render exit-switching units"
@@ -76,6 +76,6 @@ bt="$(awk '
     inb && /^EOF$/ { inb=0; next }
     inb && /`/ { print; found=1 }
     END { exit found ? 0 : 1 }
-' "${install}")" && fail "unquoted unit heredoc must not contain backticks: ${bt}"
+' "${install[@]}")" && fail "unquoted unit heredoc must not contain backticks: ${bt}"
 
 echo "systemd hardening policy OK"

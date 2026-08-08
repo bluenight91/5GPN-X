@@ -3,7 +3,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-install="$(cat "${root}/install.sh")"
+install="$(cat "${root}/install.sh" "${root}/lib"/setup-*.sh)"
 sniproxy="$(cat "${root}/lib/sniproxy.conf")"
 fail() { echo "$1" >&2; exit 1; }
 

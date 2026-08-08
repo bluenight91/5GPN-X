@@ -2,7 +2,7 @@
 # shellcheck disable=SC2016
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-install_body="$(cat "${root}/install.sh")"
+install_body="$(cat "${root}/install.sh" "${root}/lib"/setup-*.sh)"
 rules="$(cat "${root}/lib/update-rules.sh")"
 tpl="$(cat "${root}/lib/mosdns.yaml.template")"
 gen="$(cat "${root}/lib/mihomo-router-config.py")"

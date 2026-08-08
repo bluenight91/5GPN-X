@@ -9,12 +9,17 @@
 2. `FIREWALL_MODE` 默认 `preserve`，只有显式 `managed` 才能写 `/etc/nftables.conf`，
    且禁止全局 `flush ruleset`（详见不变量 I1）。
 3. 生成的 mihomo 配置必须先 `.tmp` + `mihomo -t` 校验再 `mv` 发布（不变量 I8）。
+4. `install.sh` 只保留常量、bootstrap、日志函数、usage 与命令分发；函数本体按域
+   拆到 `lib/setup-core.sh`（DNS/mosdns/sniproxy/证书/核心服务）、
+   `lib/setup-exit.sh`（出口/mihomo/策略路由）、`lib/setup-control.sh`
+   （客户端 SOCKS/MTProto/Clash-remote/tgbot/API）、`lib/setup-ops.sh`
+   （CLI/更新/卸载/生命周期），由 install.sh 顶部按此顺序 source。
 
 验证基线（提交前必跑）：
 
 ```bash
 python3 -m unittest discover -s tests -p "test_*.py"
 pipx run ruff check lib/ tests/
-bash -n install.sh lib/host-setup.sh
+bash -n install.sh lib/host-setup.sh lib/setup-*.sh
 for t in tests/test_*_policy.sh; do bash "$t"; done
 ```

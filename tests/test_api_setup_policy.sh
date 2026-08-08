@@ -6,7 +6,7 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 install="${root}/install.sh"
 api="${root}/lib/api-server.py"
 webui="${root}/webui/index.html"
-install_body="$(cat "${install}")"
+install_body="$(cat "${install}" "${root}/lib"/setup-*.sh)"
 
 fail() { echo "$1" >&2; exit 1; }
 

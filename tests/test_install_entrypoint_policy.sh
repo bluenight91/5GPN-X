@@ -4,7 +4,7 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 install="${root}/install.sh"
-install_body="$(cat "${install}")"
+install_body="$(cat "${install}" "${root}/lib"/setup-*.sh)"
 
 if [[ ! -x "${install}" ]]; then
     echo "install.sh must be executable after cloning the repository." >&2
@@ -78,7 +78,7 @@ if [[ "${install_body}" != *'REMOTE_DNS="$cur_ns" install_sniproxy'* ]]; then
     exit 1
 fi
 
-update_body="$(sed -n '/^do_update()/,/^}/p' "${install}")"
+update_body="$(sed -n '/^do_update()/,/^}/p' "${root}/lib/setup-ops.sh")"
 if [[ "${update_body}" != *'detect_os'* || "${update_body}" != *'detect_memory_profile'* ]]; then
     echo "do_update must run detect_os/detect_memory_profile before install_deps (PKG_MGR et al)." >&2
     exit 1
@@ -132,7 +132,7 @@ if [[ "${install_body}" != *'set -- "--$1" "${@:2}"'* ]]; then
     exit 1
 fi
 
-uninstall_body="$(sed -n '/^do_uninstall()/,/^}/p' "${install}")"
+uninstall_body="$(sed -n '/^do_uninstall()/,/^}/p' "${root}/lib/setup-ops.sh")"
 if [[ "${uninstall_body}" != *'5gpn-wloc'* || "${uninstall_body}" != *'userdel wloc'* ]]; then
     echo "do_uninstall must clean up the WLOC service and user." >&2
     exit 1

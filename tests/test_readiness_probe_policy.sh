@@ -5,7 +5,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 install="${root}/install.sh"
 doctor="${root}/scripts/doctor.sh"
-install_body="$(cat "${install}")"
+install_body="$(cat "${install}" "${root}/lib"/setup-*.sh)"
 doctor_body="$(cat "${doctor}")"
 
 fail() { echo "$1" >&2; exit 1; }

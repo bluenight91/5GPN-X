@@ -4,7 +4,7 @@
 # shellcheck disable=SC2016
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-install_body="$(cat "${root}/install.sh")"
+install_body="$(cat "${root}/install.sh" "${root}/lib"/setup-*.sh)"
 api_body="$(cat "${root}/lib/api-server.py")"
 bot_body="$(cat "${root}/lib/tgbot.py")"
 ui_body="$(cat "${root}/webui/index.html")"

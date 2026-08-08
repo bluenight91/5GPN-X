@@ -4,7 +4,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fail() { echo "$1" >&2; exit 1; }
 
-install="$(cat "${root}/install.sh")"
+install="$(cat "${root}/install.sh" "${root}/lib"/setup-*.sh)"
 host="$(cat "${root}/lib/host-setup.sh")"
 api="$(cat "${root}/lib/api-server.py")"
 ui="$(cat "${root}/webui/index.html")"

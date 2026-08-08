@@ -6,7 +6,7 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 install="${root}/install.sh"
 hostsetup="${root}/lib/host-setup.sh"
 archdoc="${root}/docs/architecture.md"
-install_body="$(cat "${install}")"
+install_body="$(cat "${install}" "${root}/lib"/setup-*.sh)"
 hostsetup_body="$(cat "${hostsetup}")"
 
 fail() { echo "$1" >&2; exit 1; }
@@ -54,7 +54,7 @@ fi
 fo_body="$(cat "${root}/lib/failover.py")"
 [[ "${install_body}" == *'cat > /etc/systemd/system/5gpn-failover.timer'* ]] \
     || fail "I11: failover timer unit must be rendered"
-setup_fo="$(sed -n '/^setup_failover() {/,/^}/p' "${install}")"
+setup_fo="$(sed -n '/^setup_failover() {/,/^}/p' "${root}/lib/setup-control.sh")"
 [[ "${setup_fo}" != *'enable --now 5gpn-failover.timer'* ]] \
     || fail "I11: setup_failover must never enable the timer (opt-in via failover_ctl on)"
 [[ "${install_body}" == *'touch /etc/5gpn/failover.enabled'* ]] \

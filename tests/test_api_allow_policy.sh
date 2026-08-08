@@ -3,7 +3,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-install_body="$(cat "${root}/install.sh")"
+install_body="$(cat "${root}/install.sh" "${root}/lib"/setup-*.sh)"
 api_body="$(cat "${root}/lib/api-server.py")"
 tgbot_body="$(cat "${root}/lib/tgbot.py")"
 
