@@ -20,6 +20,7 @@ Env (systemd EnvironmentFile):
   CONF_DIR          gateway state dir               (default /opt/5gpn/etc)
 """
 import base64
+import calendar
 import hmac
 import io
 import ipaddress
@@ -64,6 +65,9 @@ TRAFFIC_MAX = 24 * 3600 // TRAFFIC_INTERVAL + 2   # ~24h of samples
 LATENCY_FILE = os.environ.get("LATENCY_FILE", CONF_DIR + "/latency.json")
 LATENCY_INTERVAL = TRAFFIC_INTERVAL
 ALLOW_FILE = os.environ.get("API_ALLOW_FILE", CONF_DIR + "/api-allow.list")
+HISTORY_TRAFFIC_FILE = os.environ.get("HISTORY_TRAFFIC_FILE", CONF_DIR + "/history-traffic.json")
+HISTORY_LATENCY_FILE = os.environ.get("HISTORY_LATENCY_FILE", CONF_DIR + "/history-latency.json")
+HISTORY_DAYS = 62
 AI_CONF = os.environ.get("AI_CONF", CONF_DIR + "/ai.json")
 STARTED = time.time()
 
@@ -769,6 +773,10 @@ def traffic_tick():
         data["raw_ts"] = now
         data["interval_sec"] = TRAFFIC_INTERVAL
         _save_traffic(data)
+        try:
+            rollup_traffic(data.get("points", []), now=now)
+        except Exception:  # noqa: BLE001, S110
+            pass
 
 
 def traffic_loop():
@@ -782,6 +790,133 @@ def traffic_loop():
             traffic_tick()
         except Exception:  # noqa: BLE001, S110
             pass
+
+
+# --- daily rollup (62d history, UTC day buckets) ------------------------------
+# The 24h rings above survive restarts but age out after a day; the rollup
+# aggregates each completed UTC day once (marker in hist["done"]) so the webui
+# can show 7d/30d windows. Same atomic .tmp + os.replace write pattern.
+
+
+def _utc_day(ts):
+    return time.strftime("%Y-%m-%d", time.gmtime(ts))
+
+
+def _load_json(path, default):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except Exception:  # noqa: BLE001
+        return default
+
+
+def _save_json(path, obj):
+    try:
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(obj, f)
+        os.replace(tmp, path)
+    except Exception:  # noqa: BLE001, S110
+        pass
+
+
+def _rollup_days(ring_points, hist, value_fn, now=None):
+    """Fold every completed UTC day found in ring_points into hist['days']
+    exactly once; prune to HISTORY_DAYS. Returns hist (mutated)."""
+    now = time.time() if now is None else now
+    today = _utc_day(now)
+    days = hist.setdefault("days", {})
+    done = set(hist.get("done", []))
+    by_day = {}
+    for p in ring_points:
+        d = _utc_day(p.get("t", 0))
+        if d < today and d not in done:
+            by_day.setdefault(d, []).append(p)
+    for d in sorted(by_day):
+        days[d] = value_fn(by_day[d], days.get(d))
+        done.add(d)
+    hist["done"] = sorted(done)[-HISTORY_DAYS:]
+    for old in sorted(days)[:-HISTORY_DAYS]:
+        days.pop(old, None)
+    return hist
+
+
+def _traffic_day_value(pts, bucket):
+    bucket = bucket or {}
+    for p in pts:
+        for lbl, pair in (p.get("v") or {}).items():
+            if isinstance(pair, list) and len(pair) == 2:
+                cur = bucket.setdefault(lbl, [0, 0])
+                cur[0] += pair[0]
+                cur[1] += pair[1]
+    return bucket
+
+
+def _latency_day_value(pts, bucket):
+    bucket = bucket or {}
+    for p in pts:
+        for name, ms in (p.get("v") or {}).items():
+            if not isinstance(ms, (int, float)):
+                continue
+            cur = bucket.setdefault(name, {"sum": 0.0, "n": 0, "min": None, "max": None})
+            cur["sum"] += ms
+            cur["n"] += 1
+            cur["min"] = ms if cur["min"] is None else min(cur["min"], ms)
+            cur["max"] = ms if cur["max"] is None else max(cur["max"], ms)
+    return bucket
+
+
+def rollup_traffic(points, now=None):
+    hist = _rollup_days(points, _load_json(HISTORY_TRAFFIC_FILE, {}),
+                        _traffic_day_value, now=now)
+    _save_json(HISTORY_TRAFFIC_FILE, hist)
+
+
+def rollup_latency(points, now=None):
+    hist = _rollup_days(points, _load_json(HISTORY_LATENCY_FILE, {}),
+                        _latency_day_value, now=now)
+    _save_json(HISTORY_LATENCY_FILE, hist)
+
+
+def daily_series(hist_days, n, now, current=None, value_map=None):
+    """Uniform chart payload for the webui: one synthetic point per UTC day
+    (midnight), same shape as /api/traffic & /api/latency. `current` is the
+    in-progress today's bucket (not yet persisted)."""
+    n = max(1, min(HISTORY_DAYS, n))
+    today = _utc_day(now)
+    days = dict(hist_days or {})
+    if current:
+        days[today] = current
+    keys = sorted(days)[-n:]
+    points = []
+    names = set()
+    for d in keys:
+        v = days[d]
+        if value_map:
+            v = value_map(v)
+        names.update(v.keys())
+        ts = calendar.timegm(time.strptime(d, "%Y-%m-%d"))
+        points.append({"t": ts, "v": v})
+    return {"ok": True, "now": int(now), "interval_sec": 86400,
+            "series": sorted(names), "points": points}
+
+
+def _current_traffic_day(data, now=None):
+    return _traffic_day_value(
+        [p for p in data.get("points", []) if _utc_day(p.get("t", 0)) == _utc_day(now or time.time())],
+        {})
+
+
+def _current_latency_day(data, now=None):
+    return _latency_day_value(
+        [p for p in data.get("points", []) if _utc_day(p.get("t", 0)) == _utc_day(now or time.time())],
+        {})
+
+
+def _latency_avg_map(bucket):
+    return {name: round(v["sum"] / v["n"], 1)
+            for name, v in (bucket or {}).items() if v.get("n")}
+
 
 
 # --- exit latency (ICMP ping, falling back to TCP-ping) + 24h history --------
@@ -934,6 +1069,10 @@ def latency_tick():
         data["points"] = data["points"][-TRAFFIC_MAX:]
         data["interval_sec"] = LATENCY_INTERVAL
         _save_latency(data)
+        try:
+            rollup_latency(data.get("points", []))
+        except Exception:  # noqa: BLE001, S110
+            pass
 
 
 def latency_loop():
@@ -1752,6 +1891,31 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"ok": True, "now": int(time.time()),
                                     "interval_sec": data.get("interval_sec", LATENCY_INTERVAL),
                                     "series": series, "points": pts})
+        if path == "/api/traffic/daily":
+            q = urllib.parse.parse_qs(self.path.partition("?")[2])
+            try:
+                n = max(1, min(HISTORY_DAYS, int(q.get("days", ["7"])[0])))
+            except (TypeError, ValueError):
+                n = 7
+            with _traffic_lock:
+                data = _load_traffic()
+                hist = _load_json(HISTORY_TRAFFIC_FILE)
+                current = _current_traffic_day(data)
+            return self._send(200, daily_series(hist.get("days", {}), n,
+                                                int(time.time()), current))
+        if path == "/api/latency/daily":
+            q = urllib.parse.parse_qs(self.path.partition("?")[2])
+            try:
+                n = max(1, min(HISTORY_DAYS, int(q.get("days", ["7"])[0])))
+            except (TypeError, ValueError):
+                n = 7
+            with _lat_lock:
+                data = _load_latency()
+                hist = _load_json(HISTORY_LATENCY_FILE)
+                current = _current_latency_day(data)
+            return self._send(200, daily_series(hist.get("days", {}), n,
+                                                int(time.time()), current,
+                                                _latency_avg_map))
         if path == "/api/exits/latency":
             return self._send(200, {"ok": True, "latency": all_latency()})
         if path == "/api/component/versions":

@@ -988,8 +988,11 @@ function fmtRate(mbps){ return mbps>=1 ? mbps.toFixed(1)+" Mbps" : (mbps*1000).t
 function fmtBytes(b){ const u=["B","KB","MB","GB","TB"]; let i=0; while(b>=1024&&i<u.length-1){b/=1024;i++;}
   return b.toFixed(b<10&&i>0?1:0)+u[i]; }
 
-/* Shared chart time window (client-side filter over ~24h samples) */
+/* Shared chart time window; >24h ranges are served by the server-side
+   daily rollup endpoints (/api/*/daily) and need a refetch on range switch. */
 const CHART_RANGES = [
+  {id:"30d", sec:2592000, label:"30d"},
+  {id:"7d",  sec:604800,  label:"7d"},
   {id:"24h", sec:86400, label:"24h"},
   {id:"12h", sec:43200, label:"12h"},
   {id:"6h",  sec:21600, label:"6h"},
@@ -999,8 +1002,8 @@ const CHART_RANGES = [
 const CHART_RANGE_KEY="pgw_chart_range";
 function chartRangeSec(){
   const id=localStorage.getItem(CHART_RANGE_KEY)||"24h";
-  const hit=CHART_RANGES.find(r=>r.id===id);
-  return (hit||CHART_RANGES[0]).sec;
+  const hit=CHART_RANGES.find(r=>r.id===id)||CHART_RANGES.find(r=>r.id==="24h");
+  return hit.sec;
 }
 function chartRangeId(){
   const id=localStorage.getItem(CHART_RANGE_KEY)||"24h";
@@ -1010,6 +1013,10 @@ function setChartRange(id){
   if(!CHART_RANGES.some(r=>r.id===id)) id="24h";
   localStorage.setItem(CHART_RANGE_KEY, id);
   document.querySelectorAll("#chartRange button").forEach(b=>b.classList.toggle("on", b.dataset.range===id));
+  const wantDaily = chartRangeSec() > 86400;
+  const trafficDaily = !!(lastTraffic && (lastTraffic.interval_sec||0) >= 86400);
+  const latencyDaily = !!(lastLatency && (lastLatency.interval_sec||0) >= 86400);
+  if(lastTraffic && wantDaily !== trafficDaily){ loadTraffic(); if(lastLatency) loadLatency(); return; }
   if(lastTraffic) drawChart(lastTraffic);
   if(lastLatency) drawLatency(lastLatency);
 }
@@ -1040,6 +1047,16 @@ function sortedSeries(preferred, pts){
 }
 function xTickLabels(winSec){
   // return [{frac:0..1, label}]
+  if(winSec>86400){
+    // daily rollup windows: 7d → tick per day, 30d → tick per 5 days
+    const step = winSec<=604800 ? 86400 : 432000;
+    const out=[];
+    for(let s=0;s<=winSec;s+=step){
+      const left=winSec-s;
+      out.push({frac:s/winSec, label:s===winSec?"今天":("-"+Math.round(left/86400)+"d")});
+    }
+    return out;
+  }
   if(winSec<=300){
     return [0,60,120,180,240,300].map(s=>({frac:s/winSec, label:s===winSec?"现在":("-"+(winSec-s)/60+"m")}));
   }
@@ -1055,8 +1072,18 @@ function xTickLabels(winSec){
   return out;
 }
 
-async function loadTraffic(){ try{ initChartRange(); drawChart(await api("/api/traffic")); }catch(e){ log("流量获取失败："+e.message); } }
-async function loadLatency(){ try{ initChartRange(); drawLatency(await api("/api/latency")); }catch(e){ log("延迟图获取失败："+e.message); } }
+async function loadTraffic(){ try{
+  initChartRange();
+  const sec=chartRangeSec();
+  const url = sec>86400 ? "/api/traffic/daily?days="+Math.min(62,Math.ceil(sec/86400)) : "/api/traffic";
+  drawChart(await api(url));
+}catch(e){ log("流量获取失败："+e.message); } }
+async function loadLatency(){ try{
+  initChartRange();
+  const sec=chartRangeSec();
+  const url = sec>86400 ? "/api/latency/daily?days="+Math.min(62,Math.ceil(sec/86400)) : "/api/latency";
+  drawLatency(await api(url));
+}catch(e){ log("延迟图获取失败："+e.message); } }
 window.addEventListener("resize", ()=>{ if(lastTraffic) drawChart(lastTraffic); if(lastLatency) drawLatency(lastLatency); });
 
 // generic multi-series line chart over a selectable time window
@@ -1103,10 +1130,12 @@ function attachHover(cv){
       let best=null,bd=1e15; for(const p of pa){ const dd=Math.abs(p[0]-t); if(dd<bd){bd=dd;best=p;} }
       if(!best) return;
       ctx.fillStyle=COLORS[i%COLORS.length]; ctx.beginPath(); ctx.arc(g.xOf(best[0]),g.yOf(best[1]),3,0,7); ctx.fill();
-      rows.push([s,best[1],COLORS[i%COLORS.length]]);
+      rows.push([s,best[1],COLORS[i%COLORS.length],best[0]]);
     });
     rows.sort((p,q)=>q[1]-p[1]);
-    const tl=new Date(t*1000).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"});
+    const tl = span>=172800
+      ? new Date((rows.length?rows[0][3]:t)*1000).toLocaleDateString([], {month:"numeric",day:"numeric",timeZone:"UTC"})+" (UTC日)"
+      : new Date(t*1000).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"});
     tip.innerHTML = `<div class="t">${tl}</div>` + (rows.length? rows.map(r=>
       `<div><span class="d" style="background:${r[2]}"></span>${esc(r[0]==="server"?"本机":r[0])} <b>${esc(a.yfmt(r[1]))}</b></div>`).join("")
       : `<div class="muted">无数据</div>`);
@@ -1120,6 +1149,7 @@ function attachHover(cv){
   cv.addEventListener("mouseleave", ()=>{ tip.classList.add("hide"); base(); });
 }
 function chartSparseNote(iv, winSec, pts){
+  if(iv>=86400) return pts.length?"按 UTC 日汇总（当日为进行中数据）":"历史数据积累中，明天起可见";
   if(pts.length>=2){
     if(winSec<=iv*2) return "采样约每 "+(iv/60)+" 分钟一次，短窗口点很少";
     return "";
