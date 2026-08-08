@@ -68,4 +68,21 @@ done
 [[ "${ui}" == *'x.state==="DOWN").length'* ]] || fail "connectivity check must only count DOWN exits as unreachable (udp is N/A, not bad)"
 [[ "${ui}" == *'x.state==="UP"||x.state==="udp"'* ]] || fail "udp state must render as an ok pill"
 
+# --- inline script must parse (a stray '*/' inside a JS comment once killed
+#     every handler on the page; node is available on GitHub runners) ----------
+if command -v node >/dev/null 2>&1; then
+  tmp_js="$(mktemp /tmp/webui-inline.XXXXXX.js)"
+  python3 - "${root}/webui/index.html" "${tmp_js}" <<'PYEOF'
+import re, sys
+html = open(sys.argv[1], encoding="utf-8").read()
+scripts = re.findall(r"<script>(.*?)</script>", html, re.S)
+assert scripts, "no inline <script> found"
+open(sys.argv[2], "w").write("\n;\n".join(scripts))
+PYEOF
+  node --check "${tmp_js}" || fail "webui inline script has a JS syntax error"
+  rm -f "${tmp_js}"
+else
+  echo "test_webui_policy: WARN node not found, skipping JS syntax check"
+fi
+
 echo "test_webui_policy: OK"

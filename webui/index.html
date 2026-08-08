@@ -988,8 +988,8 @@ function fmtRate(mbps){ return mbps>=1 ? mbps.toFixed(1)+" Mbps" : (mbps*1000).t
 function fmtBytes(b){ const u=["B","KB","MB","GB","TB"]; let i=0; while(b>=1024&&i<u.length-1){b/=1024;i++;}
   return b.toFixed(b<10&&i>0?1:0)+u[i]; }
 
-/* Shared chart time window; >24h ranges are served by the server-side
-   daily rollup endpoints (/api/*/daily) and need a refetch on range switch. */
+/* Shared chart time window; ranges above 24h are served by the server-side
+   daily rollup endpoints and need a refetch on range switch. */
 const CHART_RANGES = [
   {id:"30d", sec:2592000, label:"30d"},
   {id:"7d",  sec:604800,  label:"7d"},
