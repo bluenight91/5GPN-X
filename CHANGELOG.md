@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.2.2 (2026-08-18)
 
 ### Removed
 
