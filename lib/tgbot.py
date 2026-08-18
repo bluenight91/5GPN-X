@@ -20,7 +20,6 @@ Environment:
 """
 
 import base64
-import grp
 import hashlib
 import html
 import http.client
@@ -69,7 +68,6 @@ SERVICES = [
     "sniproxy",
     "wa-shim",
     "quic-proxy",
-    "5gpn-wloc",
     "5gpn-ios-profile",
     "5gpn-tgbot",
     "5gpn-api",
@@ -91,21 +89,6 @@ DNS_LIST_RE = re.compile(r"^[0-9A-Fa-f:.,\s]+$")
 DNS_UPSTREAM_SCHEMES = {"https", "tls", "udp", "tcp"}
 SNAP_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,96}$")
 WWW_DIR = "/opt/5gpn/www"
-WLOC_DIR = "/opt/5gpn/etc/wloc"
-WLOC_LOCATION = os.path.join(WLOC_DIR, "location.json")
-WLOC_MODIFIER = os.path.join(WLOC_DIR, "modifier.state")
-WLOC_CA = os.path.join(WLOC_DIR, "ca.der")
-WLOC_DOMAINS = "/etc/mosdns/wloc.txt"
-WLOC_SERVICE = "5gpn-wloc"
-WLOC_HOSTS = ("gs-loc.apple.com", "gs-loc-cn.apple.com")
-WLOC_PRESETS = {
-    "tokyo": ("东京", 35.681236, 139.767125),
-    "hongkong": ("香港", 22.319304, 114.169361),
-    "singapore": ("新加坡", 1.304833, 103.831833),
-    "losangeles": ("洛杉矶", 34.052235, -118.243683),
-    "paris": ("巴黎", 48.856613, 2.352222),
-    "frankfurt": ("法兰克福", 50.110924, 8.682127),
-}
 
 # Per-chat conversational state for multi-step flows (e.g. add-exit).
 PENDING = {}
@@ -873,7 +856,6 @@ STATUS_ITEMS = [
     ("sniproxy", "sniproxy"),
     ("wa-shim", "wa-shim"),
     ("quic-proxy", "quic-proxy"),
-    ("5gpn-wloc", "WLOC"),
     ("5gpn-ios-profile.socket", "iOS 描述文件"),
     ("5gpn-api", "控制 API"),
     ("5gpn-tgbot", "Telegram Bot"),
@@ -1062,8 +1044,8 @@ def op_status():
     for unit, label in _status_items():
         st = _is_active(unit)
         ok = st == "active"
-        # WLOC / wa-shim may be intentionally inactive — show as note, not ❌.
-        if not ok and unit in ("5gpn-wloc", "wa-shim") and st in ("inactive", "dead"):
+        # wa-shim may be intentionally inactive — show as note, not ❌.
+        if not ok and unit == "wa-shim" and st in ("inactive", "dead"):
             lines.append("⚪ " + html.escape(label) + "（未启用）")
             continue
         lines.append(("✅ " if ok else "❌ ") + html.escape(label))
@@ -2419,170 +2401,6 @@ def op_ios_send_inline(cb):
 
 
 # --------------------------------------------------------------------------- #
-# WLOC (scoped Apple network-location rewriting)
-# --------------------------------------------------------------------------- #
-_WLOC_COORDS_RE = re.compile(
-    r"^\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*(?:,|，|\s+)\s*"
-    r"([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*$"
-)
-
-
-def _wloc_atomic_write(path, content, mode=0o640):
-    parent = os.path.dirname(path)
-    os.makedirs(parent, mode=0o750, exist_ok=True)
-    fd, temp = tempfile.mkstemp(prefix=".wloc-", dir=parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(content)
-            handle.flush()
-            os.fsync(handle.fileno())
-        if path.startswith(WLOC_DIR + os.sep):
-            try:
-                os.chown(temp, 0, grp.getgrnam("wloc").gr_gid)
-            except (PermissionError, KeyError):
-                # chown is best-effort hardening; atomicity comes from the
-                # rename. Non-root environments (dev machines, tests) may
-                # lack the permission or the wloc group entirely.
-                pass
-        os.chmod(temp, mode)
-        os.replace(temp, path)
-    except Exception:
-        try:
-            os.unlink(temp)
-        except OSError:
-            pass
-        raise
-
-
-def _wloc_load():
-    try:
-        data = json.loads(_read_file(WLOC_LOCATION))
-        entry = data["presets"][data["active"]]
-        return bool(_read_file(WLOC_MODIFIER) == "active"), entry
-    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
-        return False, None
-
-
-def _wloc_validate(lat, lon, accuracy=25):
-    try:
-        lat, lon, accuracy = float(lat), float(lon), int(accuracy)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("经纬度和精度必须是数字") from exc
-    if not -90 <= lat <= 90 or not -180 <= lon <= 180:
-        raise ValueError("纬度需在 -90~90，经度需在 -180~180")
-    if not 1 <= accuracy <= 100000:
-        raise ValueError("精度需在 1~100000 米")
-    return lat, lon, accuracy
-
-
-def _wloc_parse(text):
-    match = _WLOC_COORDS_RE.fullmatch(text or "")
-    if not match:
-        raise ValueError("格式应为：纬度,经度，例如 <code>35.681236,139.767125</code>")
-    return _wloc_validate(match.group(1), match.group(2))
-
-
-def _wloc_page():
-    enabled, entry = _wloc_load()
-    service = _is_active(WLOC_SERVICE) == "active"
-    if entry:
-        target = (f"<code>{entry.get('lat', 0):.6f}, {entry.get('lon', 0):.6f}</code>"
-                  f" (±{entry.get('accuracy_m', 25)}m)")
-    else:
-        target = "未设置"
-    text = (
-        "📍 <b>WLOC 虚拟定位</b>\n\n"
-        "仅劫持 <code>gs-loc.apple.com</code> 与 <code>gs-loc-cn.apple.com</code> 的定位响应，"
-        "不会扩大到其他 Apple 或普通流量。\n\n"
-        f"状态：<b>{'已开启' if enabled else '已关闭'}</b>\n"
-        f"拦截器：{'🟢 运行中' if service else '⚪ 未运行'}\n"
-        f"目标：{target}\n\n"
-        "首次使用请安装 WLOC CA，并在 iOS 的「证书信任设置」中开启完全信任。"
-        "切换后 locationd 可能有缓存，必要时重启设备。"
-    )
-    rows = [[{"text": "📜 下载 WLOC CA", "callback_data": "wloc:ca"}]]
-    preset_row = []
-    for key, (label, _lat, _lon) in WLOC_PRESETS.items():
-        preset_row.append({"text": "📌 " + label, "callback_data": "wloc:set:" + key})
-        if len(preset_row) == 2:
-            rows.append(preset_row)
-            preset_row = []
-    if preset_row:
-        rows.append(preset_row)
-    rows.append([{"text": "✍️ 输入经纬度", "callback_data": "wloc:input"}])
-    if enabled:
-        rows.append([{"text": "♻️ 关闭 WLOC", "callback_data": "wloc:off"}])
-    rows.append([{"text": "« 返回", "callback_data": "menu:main"}])
-    return text, rows
-
-
-def _wloc_apply(lat, lon, label=None, accuracy=25):
-    try:
-        lat, lon, accuracy = _wloc_validate(lat, lon, accuracy)
-    except ValueError as exc:
-        return "❌ " + html.escape(str(exc))
-    if not os.path.isfile("/etc/systemd/system/5gpn-wloc.service"):
-        return "❌ WLOC 运行时未安装。请先在服务器执行一次最新版 <code>install.sh</code>。"
-    value = {
-        "active": "current", "default_accuracy_m": accuracy,
-        "presets": {"current": {"lat": lat, "lon": lon, "accuracy_m": accuracy,
-                                  "datum": "wgs84", "label": label or "自定义地点"}},
-    }
-    try:
-        _wloc_atomic_write(WLOC_LOCATION, json.dumps(value, ensure_ascii=False) + "\n")
-        _wloc_atomic_write(WLOC_MODIFIER, "active\n")
-        ok, out = run2(["systemctl", "enable", "--now", WLOC_SERVICE], timeout=30)
-        if not ok:
-            _wloc_atomic_write(WLOC_MODIFIER, "paused\n")
-            return f"❌ WLOC 拦截器启动失败：{html.escape(_reason(out))}"
-        _wloc_atomic_write(WLOC_DOMAINS, "".join(f"full:{host}\n" for host in WLOC_HOSTS), 0o644)
-        ok, out = run2(["systemctl", "restart", "mosdns"], timeout=30)
-        if not ok:
-            _wloc_atomic_write(WLOC_DOMAINS, "", 0o644)
-            _wloc_atomic_write(WLOC_MODIFIER, "paused\n")
-            return f"❌ DNS 劫持未生效，已回滚：{html.escape(_reason(out))}"
-    except OSError as exc:
-        return f"❌ WLOC 状态写入失败：{html.escape(str(exc))}"
-    name = (label + " ") if label else ""
-    return f"✅ <b>WLOC 已开启</b>\n{html.escape(name)}<code>{lat:.6f}, {lon:.6f}</code> (±{accuracy}m)"
-
-
-def _wloc_disable():
-    try:
-        _wloc_atomic_write(WLOC_MODIFIER, "paused\n")
-        _wloc_atomic_write(WLOC_DOMAINS, "", 0o644)
-        ok, out = run2(["systemctl", "restart", "mosdns"], timeout=30)
-        if not ok:
-            return f"❌ DNS 恢复失败：{html.escape(_reason(out))}"
-        run2(["systemctl", "disable", "--now", WLOC_SERVICE], timeout=30)
-    except OSError as exc:
-        return f"❌ WLOC 状态写入失败：{html.escape(str(exc))}"
-    return "✅ <b>WLOC 已关闭</b>\nApple 网络定位已恢复原始直连。"
-
-
-def _send_wloc_ca(chat_id):
-    try:
-        with open(WLOC_CA, "rb") as fh:
-            cert = fh.read()
-    except OSError:
-        return "未找到 WLOC CA。请先运行最新版 <code>install.sh</code>。"
-    boundary = "----pgwWlocCA"
-    body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"chat_id\"\r\n\r\n{chat_id}\r\n").encode()
-    body += (f"--{boundary}\r\nContent-Disposition: form-data; name=\"caption\"\r\n\r\n"
-             "WLOC CA：安装后请在 iOS「设置 -> 通用 -> 关于本机 -> 证书信任设置」开启完全信任。\r\n").encode()
-    body += (f"--{boundary}\r\nContent-Disposition: form-data; name=\"document\"; filename=\"5GPN-WLOC-CA.cer\"\r\n"
-             "Content-Type: application/pkix-cert\r\n\r\n").encode() + cert
-    body += (f"\r\n--{boundary}--\r\n").encode()
-    try:
-        req = urllib.request.Request(API + "sendDocument", data=body,
-                                     headers={"Content-Type": "multipart/form-data; boundary=" + boundary})
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            return None if json.loads(resp.read().decode()).get("ok") else "CA 文件发送失败。"
-    except Exception:  # noqa: BLE001
-        return "CA 文件发送失败。"
-
-
-# --------------------------------------------------------------------------- #
 # Keyboards
 # --------------------------------------------------------------------------- #
 def main_menu():
@@ -2591,8 +2409,7 @@ def main_menu():
          {"text": "🌐 出口管理", "callback_data": "menu:exits"}],
         [{"text": "📑 分流管理", "callback_data": "menu:rules"},
          {"text": "🔐 DoT 管理", "callback_data": "menu:dot"}],
-        [{"text": "📡 WLOC 管理", "callback_data": "menu:wloc"},
-         {"text": "🛠 运维", "callback_data": "menu:ops"}],
+        [{"text": "🛠 运维", "callback_data": "menu:ops"}],
         [{"text": "📱 iOS 二维码", "callback_data": "act:ios"}],
     ]
 
@@ -3044,9 +2861,6 @@ def handle_message(msg):
             console_async(chat_id, exits_overview_text, keyboard_fn=exits_menu, message_id=mid)
         elif text.startswith("/rules"):
             reanchor_console(chat_id, "📑 <b>分流管理</b>：按域名分流到不同出口 / 直连 / 拒绝。", rules_menu())
-        elif text.startswith("/wloc"):
-            page, keyboard = _wloc_page()
-            reanchor_console(chat_id, page, keyboard)
         else:
             send(chat_id, "未知命令。发送 /menu 打开操作面板。")
         return
@@ -3170,20 +2984,6 @@ def handle_message(msg):
         background(delete_message, chat_id, msg.get("message_id"))
         mid = upsert_console(chat_id, "⏳ 正在设置 ECS 并刷新 DNS 规则…", message_id=prompt_mid)
         console_async(chat_id, lambda: op_set_ecs(ecs_text), dot_menu(), message_id=mid)
-        return
-    if state and state.get("action") == "wloc_location":
-        prompt_mid = state.get("prompt_mid")
-        try:
-            lat, lon, accuracy = _wloc_parse(text)
-        except ValueError as exc:
-            state["prompt_mid"] = upsert_console(chat_id, "❌ " + str(exc),
-                                                   cancel_kb("wloc"), message_id=prompt_mid)
-            return
-        PENDING.pop(chat_id, None)
-        background(delete_message, chat_id, msg.get("message_id"))
-        mid = upsert_console(chat_id, "⏳ 正在启用 WLOC…", message_id=prompt_mid)
-        console_async(chat_id, lambda: _wloc_apply(lat, lon, "自定义地点", accuracy),
-                      keyboard_fn=lambda: _wloc_page()[1], message_id=mid)
         return
     if state and state.get("action") == "dot_domain":
         prompt_mid = state.get("prompt_mid")
@@ -3321,10 +3121,6 @@ def handle_callback(cb):
         PENDING.pop(chat_id, None)
         edit(cb, "🔓 <b>DNS 直连域名</b>\n私网客户端跳过劫持、返回真实 A 记录的域名名单。",
              direct_domains_menu())
-    elif data == "cancel:wloc":
-        PENDING.pop(chat_id, None)
-        page, keyboard = _wloc_page()
-        edit(cb, page, keyboard)
     elif data == "cancel:ops":
         PENDING.pop(chat_id, None)
         edit(cb, "🛠 <b>运维</b>\n选择一个操作：", ops_menu())
@@ -3356,9 +3152,6 @@ def handle_callback(cb):
     elif data == "menu:direct":
         edit(cb, "🔓 <b>DNS 直连域名</b>\n私网客户端跳过劫持、返回真实 A 记录的域名名单。",
              direct_domains_menu())
-    elif data == "menu:wloc":
-        page, keyboard = _wloc_page()
-        edit(cb, page, keyboard)
     elif data == "menu:ops":
         edit(cb, "🛠 <b>运维</b>\n选择一个操作：", ops_menu())
     elif data == "menu:components":
@@ -3678,33 +3471,6 @@ def handle_callback(cb):
             edit(cb, "⏳ 正在从 DNS 直连名单删除…")
             edit_async(cb, lambda: op_del_direct_domain_button(index, token),
                        direct_domains_del_menu())
-    elif data == "wloc:input":
-        PENDING[chat_id] = {"action": "wloc_location", "prompt_mid": cb_mid}
-        edit(cb,
-             "✍️ <b>自定义 WLOC 地点</b>\n\n"
-             "发送 WGS84 经纬度，格式：<code>纬度,经度</code>\n"
-             "示例：<code>35.681236,139.767125</code>\n\n"
-             "该消息会在读取后尝试自动删除。",
-             cancel_kb("wloc"))
-    elif data.startswith("wloc:set:"):
-        preset = WLOC_PRESETS.get(data[len("wloc:set:"):])
-        if not preset:
-            page, keyboard = _wloc_page()
-            edit(cb, "地点列表已变化，请重新选择。", keyboard)
-        else:
-            label, lat, lon = preset
-            edit(cb, f"⏳ 正在把 WLOC 切换到 <b>{html.escape(label)}</b>…")
-            edit_async(cb, lambda: _wloc_apply(lat, lon, label), _wloc_page()[1])
-    elif data == "wloc:off":
-        edit(cb, "⏳ 正在关闭 WLOC 并恢复原始定位…")
-        edit_async(cb, _wloc_disable, _wloc_page()[1])
-    elif data == "wloc:ca":
-        result = _send_wloc_ca(chat_id)
-        page, keyboard = _wloc_page()
-        if result:
-            edit(cb, f"❌ {html.escape(result)}\n\n{page}", keyboard)
-        else:
-            edit(cb, "✅ WLOC CA 已作为文件发送。\n\n" + page, keyboard)
 
     # ---- views ----
     elif data == "rules:show":
@@ -3895,7 +3661,6 @@ BOT_COMMANDS = [
     ("status", "查看运行状态"),
     ("exits", "出口管理（切换/添加/删除）"),
     ("rules", "分流管理"),
-    ("wloc", "WLOC 虚拟定位管理"),
     ("id", "获取我的 Telegram ID"),
 ]
 

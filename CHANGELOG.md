@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Removed
+
+- 移除 WLOC 虚拟定位功能：苹果在最新 iOS beta 中对 `gs-loc.apple.com` 启用证书固定，拦截改写定位响应已失效；升级时自动清理旧 WLOC 单元与运行时文件。
+
 ## v1.2.0 (2026-08-08)
 
 ### Added

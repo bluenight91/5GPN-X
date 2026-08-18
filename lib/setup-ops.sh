@@ -375,7 +375,19 @@ do_update() {
     cur_ns="$(cat /etc/mosdns/.remote_dns 2>/dev/null || cat "${CONF_DIR}/.remote_dns" 2>/dev/null || echo "${DEFAULT_REMOTE_DNS[*]}")"
     REMOTE_DNS="$cur_ns" install_sniproxy
     install_whatsapp_shim
-    install_wloc
+    # One-time cleanup for upgrades from releases that shipped WLOC (removed
+    # after Apple blocked gs-loc interception via certificate pinning):
+    # disable the old unit and delete its runtime files. Best-effort.
+    if [[ -f /etc/systemd/system/5gpn-wloc.service || -d "${CONF_DIR}/wloc" ]]; then
+        info "Removing leftover WLOC runtime from a previous install..."
+        systemctl disable --now 5gpn-wloc.service 2>/dev/null || true
+        rm -f /etc/systemd/system/5gpn-wloc.service
+        rm -rf "${CONF_DIR}/wloc" /var/lib/5gpn/wloc
+        rm -f /etc/mosdns/wloc.txt
+        rm -f "${BASE_DIR}/bin/wloc-interceptor.py" "${BASE_DIR}/bin/wloc_rewrite.py" "${BASE_DIR}/bin/wloc_wifitile.py"
+        userdel wloc 2>/dev/null || true; groupdel wloc 2>/dev/null || true
+        systemctl daemon-reload 2>/dev/null || true
+    fi
     cmp -s "${LIB_DIR}/quic-proxy.go" "${SRC_DIR}/quic-proxy.go" 2>/dev/null || rm -f "${BASE_DIR}/bin/quic-proxy"
     install_quic_proxy
     cmp -s "${LIB_DIR}/client-socks.go" "${SRC_DIR}/client-socks.go" 2>/dev/null || rm -f "${BASE_DIR}/bin/client-socks"
@@ -474,11 +486,10 @@ do_uninstall() {
         systemctl stop "5gpn-singbox@$(basename "$f" .type).service" 2>/dev/null || true
     done
     shopt -u nullglob
-    systemctl stop mosdns dnsdist sniproxy wa-shim quic-proxy china-dns-race-proxy 5gpn-ios-profile.socket 5gpn-ios-profile 5gpn-exit 5gpn-tgbot 5gpn-api 5gpn-wloc 5gpn-health.timer 5gpn-health.service 5gpn-client-socks 5gpn-client-mtproto 5gpn-mtproxy 5gpn-mtg 5gpn-clash-remote 2>/dev/null || true
-    systemctl disable mosdns dnsdist sniproxy wa-shim quic-proxy china-dns-race-proxy 5gpn-ios-profile.socket 5gpn-ios-profile 5gpn-exit 5gpn-tgbot 5gpn-api 5gpn-wloc 5gpn-health.timer 5gpn-health.service 5gpn-client-socks 5gpn-client-mtproto 5gpn-mtproxy 5gpn-mtg 5gpn-clash-remote 2>/dev/null || true
+    systemctl stop mosdns dnsdist sniproxy wa-shim quic-proxy china-dns-race-proxy 5gpn-ios-profile.socket 5gpn-ios-profile 5gpn-exit 5gpn-tgbot 5gpn-api 5gpn-health.timer 5gpn-health.service 5gpn-client-socks 5gpn-client-mtproto 5gpn-mtproxy 5gpn-mtg 5gpn-clash-remote 2>/dev/null || true
+    systemctl disable mosdns dnsdist sniproxy wa-shim quic-proxy china-dns-race-proxy 5gpn-ios-profile.socket 5gpn-ios-profile 5gpn-exit 5gpn-tgbot 5gpn-api 5gpn-health.timer 5gpn-health.service 5gpn-client-socks 5gpn-client-mtproto 5gpn-mtproxy 5gpn-mtg 5gpn-clash-remote 2>/dev/null || true
     rm -f /etc/systemd/system/{mosdns,sniproxy,wa-shim,quic-proxy,china-dns-race-proxy,5gpn-ios-profile,update-mosdns-rules,5gpn-exit,5gpn-tgbot}.*
     rm -f /etc/systemd/system/5gpn-api.*
-    rm -f /etc/systemd/system/5gpn-wloc.*
     rm -f /etc/systemd/system/5gpn-health.service /etc/systemd/system/5gpn-health.timer
     rm -f /etc/systemd/system/5gpn-client-socks.service
     rm -f /etc/systemd/system/5gpn-client-mtproto.service /etc/systemd/system/5gpn-mtproxy.service /etc/systemd/system/5gpn-mtg.service
@@ -512,8 +523,6 @@ do_uninstall() {
     fi
     userdel "${EXIT_USER}" 2>/dev/null || true
     userdel mosdns 2>/dev/null || true
-    userdel wloc 2>/dev/null || true
-    groupdel wloc 2>/dev/null || true
     rm -rf /var/lib/5gpn
     warn "SSL certificates in /etc/letsencrypt/live/ are kept. Remove manually if needed."
     if [[ -e /swapfile ]]; then
@@ -1061,7 +1070,6 @@ main_install() {
     configure_dns_upstreams
     install_sniproxy
     install_whatsapp_shim
-    install_wloc
     install_quic_proxy
     install_client_socks_binary
     install_client_mtproto_binary || warn "client-mtproto 预装失败（可稍后 enable-client-mtproto）"

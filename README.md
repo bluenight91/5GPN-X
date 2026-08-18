@@ -29,7 +29,6 @@
 - DNS + DoT：客户端通过 TCP/UDP 53（仅 `172.22.0.0/16`）或 DoT 853（所有来源）接入；来源 IP 按段区分解析策略；上游支持纯 IP 与 `https://`/`tls://`（**域名 DoH/DoT**，如自建 AdGuard Home）；ChinaList 查询携带 ECS（可配置）；全局不返回 AAAA。
 - 智能分流：mihomo `smart` 出口按域名 / IP / GEOSITE / GEOIP / RULE-SET 分流，远程规则集自动更新。
 - iOS WhatsApp Patch：wa-shim 监听 TCP 443，仅分流客户端网段内 `ED`/`WA` 开头的无 SNI Noise 连接，其余 fail-open 交给 sniproxy。
-- WLOC 虚拟定位（可选）：拦截并改写 `gs-loc.apple.com` 的定位响应，让私网 iOS 设备的网络定位变为设定坐标（见 Telegram Bot 一节的 WLOC 虚拟定位）。
 - 低内存模式：≤ 1 GB 内存自动降低缓存与内核参数，512 MB VPS 可运行。
 
 **管理与控制台**
@@ -294,13 +293,7 @@ sudo 5gpn setup-tgbot
 
 不知道自己的数字 ID 时，先启用 Bot 后发送 `/id`，把返回的 ID 写入 `/opt/5gpn/etc/tgbot.env` 并 `sudo systemctl restart 5gpn-tgbot`。
 
-命令：`/start` 打开面板、`/status` 状态、`/exits` 出口、`/rules` 分流、`/wloc` 虚拟定位、`/cancel` 取消输入、`/id` 查 ID。
-
-### WLOC 虚拟定位
-
-在 Bot 的 `📡 WLOC 管理` 中选择预置地点，或输入 WGS84 经纬度（例如 `35.681236,139.767125`）。首次使用先通过菜单下载并安装 `5GPN-WLOC-CA.cer`，然后在 iOS `设置 -> 通用 -> 关于本机 -> 证书信任设置` 对该证书开启完全信任。
-
-WLOC 仅在启用时将 `gs-loc.apple.com` 和 `gs-loc-cn.apple.com` 导向网关本地的受限拦截器；仅改写 `/clls/wloc` 及必要的 Apple 定位辅助响应。关闭后会清除这两个精确 DNS 映射并恢复原始网络定位。切换地点后 iOS 的 `locationd` 可能保有缓存，必要时重启设备。
+命令：`/start` 打开面板、`/status` 状态、`/exits` 出口、`/rules` 分流、`/cancel` 取消输入、`/id` 查 ID。
 
 添加出口：`🌐 出口 -> ➕ 添加出口`，直接粘贴节点链接（`ss:// vmess:// trojan:// vless:// hysteria2:// tuic:// anytls:// masque:// socks5:// http://`），备注会自动作为出口名；MASQUE 也可整段粘贴含 `type: masque` 和 `name:` 的 YAML 块。
 
@@ -336,7 +329,7 @@ sudo 5gpn smoke           # doctor --deep 别名
 sudo 5gpn report          # 脱敏报告写入 /tmp
 ```
 
-只读、约一分钟：服务状态、端口监听、DNS/DoT 应答（区分无应答与上游拒绝）、客户端网段、TUN 链路（`--deep` 含 `--interface pgw-smart` 出网探测）、fwmark 规则健康度、API 健康、证书有效期、WLOC 状态；配置了域名 DoH 上游时还会做一次 wire-format 直连探测。结尾附人工核对步骤。配置了 Telegram Bot 或 webhook 时，`5gpn-health.timer` 每 20 分钟复检并在失败/恢复时告警。
+只读、约一分钟：服务状态、端口监听、DNS/DoT 应答（区分无应答与上游拒绝）、客户端网段、TUN 链路（`--deep` 含 `--interface pgw-smart` 出网探测）、fwmark 规则健康度、API 健康、证书有效期；配置了域名 DoH 上游时还会做一次 wire-format 直连探测。结尾附人工核对步骤。配置了 Telegram Bot 或 webhook 时，`5gpn-health.timer` 每 20 分钟复检并在失败/恢复时告警。
 
 ## 配置参考
 
@@ -369,7 +362,6 @@ CHANGELOG.md      # 变更记录
 | `/etc/mosdns/.remote_dns` `.local_dns` `.ecs` | DNS 上游与 ECS（`--set-dns` / `--set-ecs` 维护） |
 | `/etc/mosdns/gfwlist-extra-local.txt` | 本地补充 GFWList 域名（每行一个，`--update-rules` 时并入） |
 | `/etc/mosdns/direct-domains.txt` | DNS 直连名单（私网客户端跳过劫持，返回真实 A 记录；SSH 主机名等） |
-| `/etc/mosdns/wloc.txt` | WLOC 劫持域名（仅启用时写入，关闭即清空） |
 | `/etc/sniproxy.conf` | sniproxy 配置（resolver 强制 `ipv4_only`） |
 
 ### 端口

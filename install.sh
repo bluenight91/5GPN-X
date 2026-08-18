@@ -53,7 +53,6 @@ bootstrap_from_repo_if_needed() {
         lib/mosdns.yaml.template lib/update-rules.sh lib/ios-http.py lib/tgbot.py
         lib/wa-shim.py lib/rules-import.py lib/mihomo-exit-config.py
         lib/mihomo-router-config.py lib/rules-default.conf lib/host-setup.sh
-        lib/wloc-interceptor.py lib/wloc-rewrite.py lib/wloc-wifitile.py
     )
     local missing=0 f tmpdir
     for f in "${required[@]}"; do

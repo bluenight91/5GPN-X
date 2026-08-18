@@ -22,7 +22,7 @@ iOS 描述文件）或明文 DNS 接入，DNS 答案决定"直连还是进网关
 | `5gpn-api` | HTTP 控制 API + 静态 webui（默认仅回环 `:8444`） | root（编排服务） |
 | `5gpn-failover.timer` | 出口自愈 watchdog（每 60s 一跳，**默认关闭**，I11） | root（编排服务） |
 | `5gpn-ios-profile.socket` | iOS 描述文件 HTTP 分发（每连接一个实例） | root 短时 |
-| 可选 | `5gpn-wloc`、`5gpn-mtproxy`、`5gpn-client-mtproto`、`5gpn-client-socks`、`5gpn-clash-remote` | 各自专用用户 |
+| 可选 | `5gpn-mtproxy`、`5gpn-client-mtproto`、`5gpn-client-socks`、`5gpn-clash-remote` | 各自专用用户 |
 
 ## 数据流
 

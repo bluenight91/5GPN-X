@@ -4,7 +4,6 @@ import importlib.util
 import ipaddress
 import os
 import struct
-import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 os.environ.update(WA_SHIM_ALLOW_CIDR="172.22.0.0/16", WA_SHIM_SELF_IPS="127.0.0.1")
@@ -30,26 +29,6 @@ assert wa.hostport("[2606:4700:4700::1111]:5353", 53) == ("2606:4700:4700::1111"
 assert wa.hostport("2606:4700:4700::1111", 53) == ("2606:4700:4700::1111", 53)
 assert wa.hostport("1.1.1.1", 53) == ("1.1.1.1", 53)
 assert "127.0.0.1" in wa.SELF_IPS and "::1" in wa.SELF_IPS
-
-
-def client_hello_sni(name):
-    encoded = name.encode("ascii")
-    names = b"\0" + struct.pack(">H", len(encoded)) + encoded
-    sni = struct.pack(">H", len(names)) + names
-    extension = struct.pack(">HH", 0, len(sni)) + sni
-    body = b"\x03\x03" + (b"\0" * 32) + b"\0" + b"\0\x02\x13\x01" + b"\x01\0"
-    body += struct.pack(">H", len(extension)) + extension
-    handshake = b"\x01" + len(body).to_bytes(3, "big") + body
-    return b"\x16\x03\x01" + struct.pack(">H", len(handshake)) + handshake
-
-
-hello = client_hello_sni("gs-loc.apple.com")
-assert wa.tls_server_name(hello) == "gs-loc.apple.com"
-with tempfile.NamedTemporaryFile(mode="w", delete=False) as state:
-    state.write("active\n")
-    wa.WLOC_STATE = state.name
-assert wa.classify(hello) == ("wloc", "")
-os.unlink(wa.WLOC_STATE)
 
 
 async def fail_open_on_edge_error():

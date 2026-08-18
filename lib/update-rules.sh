@@ -198,9 +198,9 @@ PY
 render_config() {
     local server_ip remote_dns local_dns cache_size local_concurrent client_match_cidrs
     local remote_primary remote_secondary local_primary local_secondary
-    # The merged template loads wloc_domains / direct_domains from these files;
+    # The merged template loads direct_domains from this file;
     # mosdns FATALs when a referenced file is missing.
-    touch "$BASE_DIR/wloc.txt" "$BASE_DIR/direct-domains.txt"
+    touch "$BASE_DIR/direct-domains.txt"
     server_ip=$(cat "$BASE_DIR/.public_ip" 2>/dev/null || ip route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]\+\).*/\1/p' | head -n1)
     [[ -n "$server_ip" ]] || server_ip="127.0.0.1"
     remote_dns=$(cat "$BASE_DIR/.remote_dns" 2>/dev/null || printf '%s ' "${DEFAULT_REMOTE_DNS[@]}")

@@ -14,14 +14,6 @@ plugins:
       files:
         - /etc/mosdns/chinalist.txt
 
-  # Empty while WLOC is disabled. Exact host names only; this never broadens
-  # interception to other Apple traffic.
-  - tag: wloc_domains
-    type: domain_set
-    args:
-      files:
-        - /etc/mosdns/wloc.txt
-
   # Domains that private clients must resolve for real (no gateway IP spoof).
   # Used for SSH hostnames and other non-HTTP services that cannot use SNI.
   - tag: direct_domains
@@ -153,9 +145,6 @@ __LOCAL_SECONDARY_UPSTREAMS__
   - tag: private_client
     type: sequence
     args:
-      - matches:
-          - qname $wloc_domains
-        exec: black_hole __SERVER_IP__
       - matches:
           - qname $china_domains
         exec: goto local_resolve

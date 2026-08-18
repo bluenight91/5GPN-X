@@ -313,37 +313,6 @@ if [[ -f "${CONF_DIR}/api.env" ]]; then
     fi
 fi
 
-# ----- WLOC -----
-if [[ -f /etc/systemd/system/5gpn-wloc.service ]]; then
-    [[ "$JSON" -eq 0 && "$QUIET" -eq 0 ]] && echo "----- WLOC -----"
-    wloc_dir="${CONF_DIR}/wloc"
-    if [[ -s "${wloc_dir}/ca.crt" && -s "${wloc_dir}/leaf.crt" && -s "${wloc_dir}/leaf.key" ]]; then
-        ok "WLOC 证书" "present"
-    else
-        bad "WLOC 证书" "missing"
-    fi
-    wstate="$(cat "${wloc_dir}/modifier.state" 2>/dev/null || echo paused)"
-    if [[ "$wstate" == "active" ]]; then
-        if svc_active 5gpn-wloc; then
-            ok "WLOC" "active+running"
-        else
-            bad "WLOC" "active but service down"
-        fi
-        if ss -H -tln 2>/dev/null | grep -q "127.0.0.1:10451"; then
-            ok "WLOC 端口" "127.0.0.1:10451"
-        else
-            bad "WLOC 端口" "10451 not listening"
-        fi
-        if grep -q "gs-loc.apple.com" /etc/mosdns/wloc.txt 2>/dev/null; then
-            ok "WLOC DNS 劫持" "gs-loc.apple.com present"
-        else
-            bad "WLOC DNS 劫持" "wloc.txt missing gs-loc.apple.com"
-        fi
-    else
-        note "WLOC" "disabled"
-    fi
-fi
-
 # ----- certs -----
 [[ "$JSON" -eq 0 && "$QUIET" -eq 0 ]] && echo "----- 证书 -----"
 if [[ -s /etc/mosdns/certs/fullchain.pem && -s /etc/mosdns/certs/privkey.pem ]]; then

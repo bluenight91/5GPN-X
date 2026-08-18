@@ -21,7 +21,6 @@ fail() { echo "$1" >&2; exit 1; }
 [[ "${tpl}" == *'__ECS_HOST__'* ]] || fail "mosdns template must take ECS from a placeholder"
 [[ "${tpl}" != *'139.226.48.1'* ]] || fail "ECS must not be hardcoded in the template"
 [[ "${rules}" == *'$BASE_DIR/.ecs'* ]] || fail "render_config must read .ecs"
-[[ "${rules}" == *'touch "$BASE_DIR/wloc.txt"'* ]] || fail "render_config must ensure wloc.txt exists (template requires it)"
 [[ "${install_body}" == *'PGW_ECS:-139.226.48.0/24'* ]] || fail "install must default .ecs to 139.226.48.0/24"
 [[ "${install_body}" == *'set_ecs() {'* && "${install_body}" == *'--set-ecs)'* ]] || fail "install.sh must provide --set-ecs"
 

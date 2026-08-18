@@ -104,7 +104,6 @@ SERVICES = [
     "sniproxy",
     "wa-shim",
     "quic-proxy",
-    "5gpn-wloc",
     "5gpn-ios-profile.socket",
     "5gpn-tgbot",
     "5gpn-api",

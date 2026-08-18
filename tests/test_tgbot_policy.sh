@@ -27,8 +27,7 @@ assert bot.main_menu() == [
      {"text": "🌐 出口管理", "callback_data": "menu:exits"}],
     [{"text": "📑 分流管理", "callback_data": "menu:rules"},
      {"text": "🔐 DoT 管理", "callback_data": "menu:dot"}],
-    [{"text": "📡 WLOC 管理", "callback_data": "menu:wloc"},
-     {"text": "🛠 运维", "callback_data": "menu:ops"}],
+    [{"text": "🛠 运维", "callback_data": "menu:ops"}],
     [{"text": "📱 iOS 二维码", "callback_data": "act:ios"}],
 ]
 assert bot.ops_menu() == [
@@ -68,9 +67,6 @@ def click(data):
     return edits[0]
 
 assert click("menu:ops") == ("🛠 <b>运维</b>\n选择一个操作：", bot.ops_menu())
-wloc_text, wloc_keyboard = click("menu:wloc")
-assert "WLOC" in wloc_text and "虚拟定位" in wloc_text
-assert any(b["callback_data"] == "menu:main" for row in wloc_keyboard for b in row)
 PY
 
 # --- authorization must gate every operation --------------------------------
@@ -112,7 +108,6 @@ PY
 [[ "${bot_body}" == *'"prompt_mid": cb_mid'* ]] || fail "PENDING flows must remember the prompt message for in-place edits"
 [[ "${bot_body}" == *'def reanchor_console('* ]] || fail "slash commands must re-anchor the console with a fresh visible message"
 [[ "${bot_body}" == *'keyboard_fn=exits_menu'* ]] || fail "add-exit success menu must refresh exits after the new exit is written"
-[[ "${bot_body}" == *'"📡 WLOC 管理", "callback_data": "menu:wloc"'* ]] || fail "main menu must expose the WLOC management entry"
 [[ "${bot_body}" == *'"🛠 运维", "callback_data": "menu:ops"'* ]] || fail "main menu must expose operations management"
 [[ "${bot_body}" == *'def send_document('* ]] || fail "tgbot.py must be able to send report documents"
 [[ "${bot_body}" == *'def deliver_report('* ]] || fail "tgbot.py must deliver diagnostic reports as files"

@@ -91,10 +91,6 @@ if [[ "${update_body}" != *'systemctl reset-failed'* ]]; then
     echo "do_update must reset-failed services before restart (start-limit-hit after crash loops)." >&2
     exit 1
 fi
-if [[ "${update_body}" != *'install_wloc'* ]]; then
-    echo "do_update must install the WLOC runtime as well (else /wloc reports not installed)." >&2
-    exit 1
-fi
 if [[ "${update_body}" != *'( PGW_EXIT_OVERWRITE=1 add_exit "$n" < "$f" )'* ]]; then
     echo "do_update must subshell-wrap add_exit (no per-exit smart regen; exit 1 cannot kill the update)." >&2
     exit 1
@@ -133,10 +129,6 @@ if [[ "${install_body}" != *'set -- "--$1" "${@:2}"'* ]]; then
 fi
 
 uninstall_body="$(sed -n '/^do_uninstall()/,/^}/p' "${root}/lib/setup-ops.sh")"
-if [[ "${uninstall_body}" != *'5gpn-wloc'* || "${uninstall_body}" != *'userdel wloc'* ]]; then
-    echo "do_uninstall must clean up the WLOC service and user." >&2
-    exit 1
-fi
 if [[ "${uninstall_body}" != *'rm -f /usr/local/bin/5gpn'* ]]; then
     echo "do_uninstall must remove the global 5gpn cli." >&2
     exit 1
