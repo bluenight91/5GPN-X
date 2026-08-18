@@ -68,6 +68,13 @@ done
 [[ "${ui}" == *'x.state==="DOWN").length'* ]] || fail "connectivity check must only count DOWN exits as unreachable (udp is N/A, not bad)"
 [[ "${ui}" == *'x.state==="UP"||x.state==="udp"'* ]] || fail "udp state must render as an ok pill"
 
+# --- daily rollup traffic chart: plot daily volume (bytes/day), never rate ----
+# 回归锁：日汇总点是一天总字节，除以 86400 会显示成几百 Kbps 的假速率。
+[[ "${ui}" == *'daily=iv>=86400'* ]] || fail "traffic chart must detect daily rollup data"
+[[ "${ui}" == *'daily ? (x=>Array.isArray(x)?x[0]+x[1]:null)'* ]] || fail "daily traffic chart must plot raw daily bytes"
+[[ "${ui}" == *'fmtBytes(b)+"/天"'* ]] || fail "daily traffic Y axis must be labeled as bytes per day"
+[[ "${ui}" == *'流量=每日总量'* ]] || fail "daily view note must state traffic shows daily totals"
+
 # --- inline script must parse (a stray '*/' inside a JS comment once killed
 #     every handler on the page; node is available on GitHub runners) ----------
 if command -v node >/dev/null 2>&1; then

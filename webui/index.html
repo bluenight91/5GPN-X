@@ -1149,7 +1149,7 @@ function attachHover(cv){
   cv.addEventListener("mouseleave", ()=>{ tip.classList.add("hide"); base(); });
 }
 function chartSparseNote(iv, winSec, pts){
-  if(iv>=86400) return pts.length?"按 UTC 日汇总（当日为进行中数据）":"历史数据积累中，明天起可见";
+  if(iv>=86400) return pts.length?"按 UTC 日汇总：流量=每日总量，延迟=日均值（当日为进行中数据）":"历史数据积累中，明天起可见";
   if(pts.length>=2){
     if(winSec<=iv*2) return "采样约每 "+(iv/60)+" 分钟一次，短窗口点很少";
     return "";
@@ -1159,7 +1159,13 @@ function chartSparseNote(iv, winSec, pts){
 function drawChart(d){
   lastTraffic=d; const cv=$("chart"); if(!cv) return; const iv=d.interval_sec||300;
   initChartRange();
-  const {series,pts,winSec}=lineChart(cv, d, x=>Array.isArray(x)?(x[0]+x[1])*8/iv/1e6:null, fmtRate);
+  // 日汇总点是一天的总字节量：纵轴必须画成"每日总量"，不能套速率公式
+  // （bytes*8/86400 会把 7.7GB/天 显示成 717Kbps，看起来像链路只有几百 K）。
+  const daily=iv>=86400;
+  const {series,pts,winSec}=lineChart(cv, d,
+    daily ? (x=>Array.isArray(x)?x[0]+x[1]:null)
+          : (x=>Array.isArray(x)?(x[0]+x[1])*8/iv/1e6:null),
+    daily ? (b=>fmtBytes(b)+"/天") : fmtRate);
   const totals={}; series.forEach(s=>totals[s]=0);
   pts.forEach(p=>{const v=p.v||{}; series.forEach(s=>{ if(Array.isArray(v[s])) totals[s]+=v[s][0]+v[s][1]; });});
   $("legend").innerHTML = series.map((s,i)=>`<span class="pill" style="border-color:${COLORS[i%COLORS.length]};color:${COLORS[i%COLORS.length]}">${s==="server"?"本机":esc(s)} ${fmtBytes(totals[s])}</span>`).join("")||`<span class="muted small">暂无数据</span>`;
