@@ -417,6 +417,13 @@ do_update() {
     clamp_mosdns_cache_size
     touch /etc/mosdns/direct-domains.txt 2>/dev/null || true
     [[ -f /etc/mosdns/.client_cidr ]] || echo "${CLIENT_CIDR:-172.22.0.0/16}" > /etc/mosdns/.client_cidr
+    # The live config is rendered from the template only by update-mosdns-rules.sh
+    # (weekly timer / --update-rules). If a release changes the template, the
+    # rendered config must be refreshed here too — a stale config once kept the
+    # removed WLOC plugin and crash-looped mosdns after wloc.txt was cleaned up.
+    # render_config validates before publishing, so a failure leaves the old
+    # config in place and only warns.
+    /usr/local/bin/update-mosdns-rules.sh >/dev/null 2>&1 || warn "mosdns 配置重渲染失败，请手动运行 5gpn update-rules"
     setup_exit_switching
     generate_ios_profile
     apply_lowmem_go_limits

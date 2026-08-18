@@ -1898,7 +1898,7 @@ class Handler(BaseHTTPRequestHandler):
                 n = 7
             with _traffic_lock:
                 data = _load_traffic()
-                hist = _load_json(HISTORY_TRAFFIC_FILE)
+                hist = _load_json(HISTORY_TRAFFIC_FILE, {})
                 current = _current_traffic_day(data)
             return self._send(200, daily_series(hist.get("days", {}), n,
                                                 int(time.time()), current))
@@ -1910,7 +1910,7 @@ class Handler(BaseHTTPRequestHandler):
                 n = 7
             with _lat_lock:
                 data = _load_latency()
-                hist = _load_json(HISTORY_LATENCY_FILE)
+                hist = _load_json(HISTORY_LATENCY_FILE, {})
                 current = _current_latency_day(data)
             return self._send(200, daily_series(hist.get("days", {}), n,
                                                 int(time.time()), current,

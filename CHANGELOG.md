@@ -6,6 +6,11 @@
 
 - 移除 WLOC 虚拟定位功能：苹果在最新 iOS beta 中对 `gs-loc.apple.com` 启用证书固定，拦截改写定位响应已失效；升级时自动清理旧 WLOC 单元与运行时文件。
 
+### Fixed
+
+- `--update` 此前只刷新 mosdns 模板而不重渲染活配置 `/etc/mosdns/config.yaml`（只有每周规则更新才渲染）：模板与活配置漂移导致 WLOC 移除后旧配置仍引用已删除的 `wloc.txt`，mosdns 崩溃循环。`do_update` 现在刷新模板后立即重渲染并验证（validate-then-publish，失败仅告警）。Policy 测试锁定。
+- `/api/traffic/daily` 与 `/api/latency/daily` 端点少传 `_load_json` 的 default 参数，请求即 TypeError（webui 7d/30d 图无数据）。新增真实 HTTP 端点级回归测试。
+
 ## v1.2.0 (2026-08-08)
 
 ### Added

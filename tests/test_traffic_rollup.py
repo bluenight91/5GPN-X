@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Unit tests for the api-server daily rollup (history-*.json, 62d window)."""
 import calendar
+import http.client
 import importlib.util
 import json
 import os
 import tempfile
+import threading
 import unittest
+from http.server import ThreadingHTTPServer
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -136,6 +139,69 @@ class RollupTest(unittest.TestCase):
         ]}
         cur = self.api._current_latency_day(lat, now=self.now)
         self.assertEqual((cur["jp"]["sum"], cur["jp"]["n"]), (100, 2))
+
+
+class DailyEndpointTest(unittest.TestCase):
+    """Exercise /api/traffic/daily and /api/latency/daily through a real HTTP
+    server — the helpers alone passing once hid a missing-argument TypeError
+    that only fired inside do_GET."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.api = load_api()
+        cls.api.TOKEN = "test-token"
+        cls.srv = ThreadingHTTPServer(("127.0.0.1", 0), cls.api.Handler)
+        cls.port = cls.srv.server_address[1]
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+        cls.srv.server_close()
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="rollup-http-")
+        self.api.HISTORY_TRAFFIC_FILE = os.path.join(self.tmpdir, "ht.json")
+        self.api.HISTORY_LATENCY_FILE = os.path.join(self.tmpdir, "hl.json")
+        self.api.TRAFFIC_FILE = os.path.join(self.tmpdir, "traffic.json")
+        self.api.LATENCY_FILE = os.path.join(self.tmpdir, "latency.json")
+
+    def tearDown(self):
+        for name in os.listdir(self.tmpdir):
+            os.unlink(os.path.join(self.tmpdir, name))
+        os.rmdir(self.tmpdir)
+
+    def _get(self, path):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        conn.request("GET", path, headers={"Authorization": "Bearer test-token"})
+        resp = conn.getresponse()
+        body = resp.read()
+        conn.close()
+        return resp.status, json.loads(body)
+
+    def test_traffic_daily_endpoint_200(self):
+        status, data = self._get("/api/traffic/daily?days=7")
+        self.assertEqual(status, 200)
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["interval_sec"], 86400)
+        self.assertIn("points", data)
+
+    def test_latency_daily_endpoint_200(self):
+        status, data = self._get("/api/latency/daily?days=30")
+        self.assertEqual(status, 200)
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["interval_sec"], 86400)
+
+    def test_daily_endpoint_requires_auth(self):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        conn.request("GET", "/api/traffic/daily")
+        self.assertEqual(conn.getresponse().status, 401)
+        conn.close()
+
+    def test_daily_endpoint_bad_days_falls_back(self):
+        status, data = self._get("/api/traffic/daily?days=abc")
+        self.assertEqual(status, 200)
+        self.assertTrue(data["ok"])
 
 
 if __name__ == "__main__":

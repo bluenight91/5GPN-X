@@ -103,6 +103,10 @@ if [[ "${update_body}" != *'sync_repo_to_origin_main'* ]]; then
     echo "do_update must sync via sync_repo_to_origin_main (explicit origin/main refspec)." >&2
     exit 1
 fi
+if [[ "${update_body}" != *'cp "${LIB_DIR}/mosdns.yaml.template"'* || "${update_body}" != *'update-mosdns-rules.sh >/dev/null'* ]]; then
+    echo "do_update must re-render the live mosdns config after refreshing the template (template/live-config drift crash-looped mosdns once)." >&2
+    exit 1
+fi
 if [[ "${update_body}" != *'record_deployed_revision'* ]]; then
     echo "do_update must stamp the deployed git revision for status." >&2
     exit 1
