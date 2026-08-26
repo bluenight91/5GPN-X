@@ -54,10 +54,12 @@ done
 [[ "${ui}" == *'deleteSnapshot('* ]] || fail "settings must expose snapshot delete"
 [[ "${ui}" == *'轻量配置包'* && "${ui}" == *'运行时快照'* ]] || fail "backup UI must distinguish config packages and snapshots"
 
-# --- auth model unchanged ------------------------------------------------------
+# --- auth model: Bearer token persisted in localStorage (remember-me) ----------
 [[ "${ui}" == *'Bearer'* ]] || fail "panel must keep bearer-token auth"
-[[ "${ui}" == *'sessionStorage.setItem("pgw_token"'* ]] || fail "API token must be stored in sessionStorage"
-[[ "${ui}" != *'localStorage.setItem("pgw_token"'* ]] || fail "API token must not be stored in localStorage"
+[[ "${ui}" == *'localStorage.setItem("pgw_token"'* ]] || fail "API token must persist in localStorage across sessions"
+[[ "${ui}" == *'localStorage.setItem("pgw_url"'* ]] || fail "API base URL must persist in localStorage"
+[[ "${ui}" == *'sessionStorage.removeItem("pgw_token")'* ]] || fail "legacy sessionStorage token must be migrated away"
+[[ "${ui}" == *'localStorage.removeItem("pgw_token")'* ]] || fail "clear button must wipe the persisted token"
 
 # --- mobile tabbar: auto-hide on scroll down + horizontal overflow scroll -------
 [[ "${ui}" == *'.tabbar.hide'* ]] || fail "tabbar must support auto-hide"

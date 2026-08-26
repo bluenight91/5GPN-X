@@ -369,7 +369,7 @@ iframe.mihomo{
       <button onclick="clearCreds()">清除</button>
     </div>
     <div class="row small muted" id="conn" style="margin-top:12px">未连接</div>
-    <p class="hint">令牌仅保存在本机会话中，关闭标签页后需重新输入。</p>
+    <p class="hint">地址与令牌保存在本机浏览器中，下次打开自动连接；公用设备上请用「清除」退出。</p>
   </div>
 </div>
 
@@ -882,7 +882,7 @@ async function connect() {
   try {
     await fetch(BASE+"/api/health").then(r=>r.json());
     await api("/api/status");
-    localStorage.setItem("pgw_url", BASE); sessionStorage.setItem("pgw_token", TOKEN); localStorage.removeItem("pgw_token");
+    localStorage.setItem("pgw_url", BASE); localStorage.setItem("pgw_token", TOKEN); sessionStorage.removeItem("pgw_token");
     $("login").classList.add("hide"); $("app").classList.remove("hide");
     $("brandDot").classList.add("on"); $("sideUrl").textContent = BASE;
     syncThemeSel();
@@ -1875,11 +1875,12 @@ async function aiApply(){
   if(ok){ AIPLAN=null; $("ai_plan").innerHTML=""; }
 }
 
-// restore saved URL and session-scoped token. Remove old localStorage tokens if upgrading.
-(function(){ const u=localStorage.getItem("pgw_url"), old=localStorage.getItem("pgw_token");
-  if(old && !sessionStorage.getItem("pgw_token")) sessionStorage.setItem("pgw_token", old);
-  if(old) localStorage.removeItem("pgw_token");
-  const t=sessionStorage.getItem("pgw_token");
+// restore saved URL and persisted token. Migrate legacy sessionStorage tokens.
+(function(){ const u=localStorage.getItem("pgw_url");
+  let t=localStorage.getItem("pgw_token");
+  const sess=sessionStorage.getItem("pgw_token");
+  if(!t && sess){ t=sess; localStorage.setItem("pgw_token", t); }
+  sessionStorage.removeItem("pgw_token");
   if(u) $("url").value=u; if(t) $("token").value=t; if(u&&t) connect(); })();
 
 </script>
