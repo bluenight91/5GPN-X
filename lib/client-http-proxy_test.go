@@ -13,6 +13,31 @@ import (
 	"time"
 )
 
+func TestNotifyReady(t *testing.T) {
+	socket := t.TempDir() + "/notify.sock"
+	listener, err := net.ListenUnixgram("unixgram", &net.UnixAddr{Name: socket, Net: "unixgram"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	t.Setenv("NOTIFY_SOCKET", socket)
+
+	if err := notifyReady(); err != nil {
+		t.Fatal(err)
+	}
+	if err := listener.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	payload := make([]byte, 32)
+	n, _, err := listener.ReadFromUnix(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(payload[:n]); got != "READY=1" {
+		t.Fatalf("notification = %q, want READY=1", got)
+	}
+}
+
 func testProxy(t *testing.T, cidrs string) *proxy {
 	t.Helper()
 	nets, err := parseCIDRs(cidrs)

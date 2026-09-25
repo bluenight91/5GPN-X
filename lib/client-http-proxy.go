@@ -75,9 +75,34 @@ func main() {
 	if !*quiet {
 		log.Printf("HTTP proxy listening on %s (ACL %s)", *listenAddr, *allowCIDR)
 	}
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	listener, err := net.Listen("tcp", server.Addr)
+	if err != nil {
 		log.Fatalf("listen: %v", err)
 	}
+	if err := notifyReady(); err != nil {
+		_ = listener.Close()
+		log.Fatalf("systemd readiness notification: %v", err)
+	}
+	if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
+		log.Fatalf("serve: %v", err)
+	}
+}
+
+func notifyReady() error {
+	socket := os.Getenv("NOTIFY_SOCKET")
+	if socket == "" {
+		return nil
+	}
+	if strings.HasPrefix(socket, "@") {
+		socket = "\x00" + socket[1:]
+	}
+	conn, err := net.DialUnix("unixgram", nil, &net.UnixAddr{Name: socket, Net: "unixgram"})
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	_, err = conn.Write([]byte("READY=1"))
+	return err
 }
 
 func parseCIDRs(value string) ([]*net.IPNet, error) {
