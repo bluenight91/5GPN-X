@@ -13,6 +13,7 @@ install="$(cat "${root}/install.sh" "${root}/lib"/setup-*.sh)"
 host="$(cat "${root}/lib/host-setup.sh")"
 template="$(cat "${root}/lib/mosdns.yaml.template")"
 rules="$(cat "${root}/lib/update-rules.sh")"
+doctor="$(cat "${root}/scripts/doctor.sh")"
 
 [[ "${install}" == *'--doctor)'* ]] || fail "install.sh must expose --doctor"
 [[ "${install}" == *'--report)'* ]] || fail "install.sh must expose --report"
@@ -35,6 +36,14 @@ rules="$(cat "${root}/lib/update-rules.sh")"
     || fail "mosdns template must substitute client CIDR"
 [[ "${rules}" == *'__CLIENT_CIDR__'* ]] || fail "update-rules must render __CLIENT_CIDR__"
 [[ "${rules}" == *'.client_cidr'* ]] || fail "update-rules must read .client_cidr"
+[[ "${doctor}" == *'client_cidr_mosdns="${CLIENT_CIDR//,/ }"'* ]] \
+    || fail "doctor must translate comma-separated CIDRs to mosdns matcher syntax"
+[[ "${doctor}" == *'grep -Fq "client_ip ${client_cidr_mosdns}"'* ]] \
+    || fail "doctor must compare the rendered multi-CIDR matcher literally"
+
+client_cidr='172.22.0.0/16,172.31.11.94/32'
+[[ "${client_cidr//,/ }" == '172.22.0.0/16 172.31.11.94/32' ]] \
+    || fail "multi-CIDR doctor normalization must preserve both networks"
 
 [[ "${host}" == *'__CLIENT_CIDR__'* ]] || fail "nft managed firewall must use __CLIENT_CIDR__ placeholder"
 [[ "${host}" == *'client_cidr_list()'* && "${host}" == *'for client_cidr in $(client_cidr_list)'* ]] \
