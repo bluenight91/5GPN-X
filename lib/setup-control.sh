@@ -4,6 +4,21 @@
 # and runs under install.sh's set -euo pipefail (ShellCheck scopes below).
 # shellcheck disable=SC2154,SC2034,SC2164,SC2317
 
+_agent_debug_log() {
+    local hypothesis_id="$1" location="$2" message="$3"
+    shift 3
+    python3 - "$hypothesis_id" "$location" "$message" "$@" <<'PY' 2>/dev/null || true
+import json, os, sys, time
+data = {}
+for item in sys.argv[4:]:
+    key, _, value = item.partition("=")
+    data[key] = value
+with open("/opt/cursor/logs/debug.log", "a", encoding="utf-8") as stream:
+    stream.write(json.dumps({"hypothesisId": sys.argv[1], "location": sys.argv[2],
+        "message": sys.argv[3], "data": data, "timestamp": int(time.time() * 1000)}) + "\n")
+PY
+}
+
 install_client_socks_binary() {
     ensure_proxy_user
     mkdir -p "${BASE_DIR}/bin" "${SRC_DIR}" "${CONF_DIR}"
@@ -161,6 +176,14 @@ install_client_http_proxy_binary() {
             go build -ldflags="-s -w" -o "${CLIENT_HTTP_PROXY_BIN}" client-http-proxy.go
         )
     fi
+    # region agent log
+    _agent_debug_log "C" "lib/setup-control.sh:install_client_http_proxy_binary" \
+        "binary prepared" "umask=$(umask)" \
+        "binaryMode=$(stat -c %a "${CLIENT_HTTP_PROXY_BIN}" 2>/dev/null || echo missing)" \
+        "binaryOwner=$(stat -c %U:%G "${CLIENT_HTTP_PROXY_BIN}" 2>/dev/null || echo missing)" \
+        "exitUser=${EXIT_USER}" \
+        "sourceMatches=$([[ -f "${SRC_DIR}/client-http-proxy.go" ]] && cmp -s "${LIB_DIR}/client-http-proxy.go" "${SRC_DIR}/client-http-proxy.go" && echo yes || echo no)"
+    # endregion
     cat > /etc/systemd/system/5gpn-client-http-proxy.service <<EOF
 [Unit]
 Description=5GPN-X private client HTTP/HTTPS proxy (CIDR ACL + user/pass)
@@ -184,6 +207,13 @@ LimitNOFILE=65535
 WantedBy=multi-user.target
 EOF
     systemctl daemon-reload
+    # region agent log
+    _agent_debug_log "A,C" "lib/setup-control.sh:install_client_http_proxy_binary" \
+        "unit rendered" \
+        "unitVerify=$(systemd-analyze verify /etc/systemd/system/5gpn-client-http-proxy.service >/dev/null 2>&1 && echo pass || echo fail)" \
+        "binParentMode=$(stat -c %a "${BASE_DIR}/bin" 2>/dev/null || echo missing)" \
+        "confParentMode=$(stat -c %a "${CONF_DIR}" 2>/dev/null || echo missing)"
+    # endregion
 }
 client_http_proxy_ensure_creds() {
     mkdir -p "${CONF_DIR}"
@@ -209,9 +239,21 @@ HTTP_PROXY_PASS=${pass}
 HTTP_PROXY_ALLOW_CIDR=${cidr}
 EOF
     chmod 600 "${CLIENT_HTTP_PROXY_ENV}"
+    # region agent log
+    _agent_debug_log "A,B" "lib/setup-control.sh:client_http_proxy_ensure_creds" \
+        "environment written" "port=${port}" "userLength=${#user}" \
+        "passLength=${#pass}" "cidr=${cidr}" \
+        "envMode=$(stat -c %a "${CLIENT_HTTP_PROXY_ENV}" 2>/dev/null || echo missing)"
+    # endregion
 }
 enable_client_http_proxy() {
     check_root
+    # region agent log
+    _agent_debug_log "C,D,E" "lib/setup-control.sh:enable_client_http_proxy" \
+        "enable entered" \
+        "markerBefore=$([[ -f "${CLIENT_HTTP_PROXY_ENABLED}" ]] && echo present || echo absent)" \
+        "portOwner=$(ss -H -ltnp "sport = :${CLIENT_HTTP_PROXY_PORT_DEFAULT}" 2>/dev/null | head -1 | tr '\n' ' ')"
+    # endregion
     install_client_http_proxy_binary
     client_http_proxy_ensure_creds
     # shellcheck disable=SC1090
@@ -225,8 +267,41 @@ enable_client_http_proxy() {
             return 1
         }
     fi
-    systemctl enable --now 5gpn-client-http-proxy.service
-    systemctl restart 5gpn-client-http-proxy.service
+    # region agent log
+    _agent_debug_log "D,E" "lib/setup-control.sh:enable_client_http_proxy" \
+        "marker and firewall committed before service start" \
+        "marker=$([[ -f "${CLIENT_HTTP_PROXY_ENABLED}" ]] && echo present || echo absent)" \
+        "port=${HTTP_PROXY_PORT}"
+    # endregion
+    local start_rc=0
+    if systemctl enable --now 5gpn-client-http-proxy.service; then
+        start_rc=0
+    else
+        start_rc=$?
+    fi
+    # region agent log
+    _agent_debug_log "A,C,D,E" "lib/setup-control.sh:enable_client_http_proxy" \
+        "enable-now completed" "rc=${start_rc}" \
+        "activeState=$(systemctl show -p ActiveState --value 5gpn-client-http-proxy.service 2>/dev/null || echo unknown)" \
+        "subState=$(systemctl show -p SubState --value 5gpn-client-http-proxy.service 2>/dev/null || echo unknown)" \
+        "execStatus=$(systemctl show -p ExecMainStatus --value 5gpn-client-http-proxy.service 2>/dev/null || echo unknown)"
+    # endregion
+    [[ $start_rc -eq 0 ]] || return "$start_rc"
+    local restart_rc=0
+    if systemctl restart 5gpn-client-http-proxy.service; then
+        restart_rc=0
+    else
+        restart_rc=$?
+    fi
+    # region agent log
+    _agent_debug_log "A,C,D,E" "lib/setup-control.sh:enable_client_http_proxy" \
+        "restart completed" "rc=${restart_rc}" \
+        "activeState=$(systemctl show -p ActiveState --value 5gpn-client-http-proxy.service 2>/dev/null || echo unknown)" \
+        "subState=$(systemctl show -p SubState --value 5gpn-client-http-proxy.service 2>/dev/null || echo unknown)" \
+        "execStatus=$(systemctl show -p ExecMainStatus --value 5gpn-client-http-proxy.service 2>/dev/null || echo unknown)" \
+        "portListening=$(ss -H -ltn "sport = :${HTTP_PROXY_PORT}" 2>/dev/null | head -1 | tr '\n' ' ')"
+    # endregion
+    [[ $restart_rc -eq 0 ]] || return "$restart_rc"
     local host; host="$(client_socks_host_ip)"
     ok "私网 HTTP/HTTPS 代理已开启"
     echo "  地址:   ${host}:${HTTP_PROXY_PORT}"

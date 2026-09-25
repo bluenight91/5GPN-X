@@ -11,6 +11,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -21,6 +22,26 @@ import (
 	"strings"
 	"time"
 )
+
+func agentDebugLog(hypothesisID, location, message string, data map[string]any) {
+	entry := map[string]any{
+		"hypothesisId": hypothesisID,
+		"location":     location,
+		"message":      message,
+		"data":         data,
+		"timestamp":    time.Now().UnixMilli(),
+	}
+	payload, err := json.Marshal(entry)
+	if err != nil {
+		return
+	}
+	file, err := os.OpenFile("/opt/cursor/logs/debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o666)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+	_, _ = file.Write(append(payload, '\n'))
+}
 
 var (
 	listenAddr = flag.String("l", "0.0.0.0:38444", "listen address")
@@ -49,6 +70,12 @@ func main() {
 		fmt.Fprintf(os.Stderr, "client-http-proxy: bad -a: %v\n", err)
 		os.Exit(2)
 	}
+	// #region agent log
+	agentDebugLog("A,C,D", "lib/client-http-proxy.go:main", "proxy parsed startup arguments", map[string]any{
+		"listenAddr": *listenAddr, "allowCIDR": *allowCIDR, "cidrCount": len(nets),
+		"userLength": len(*username), "passLength": len(*password), "euid": os.Geteuid(),
+	})
+	// #endregion
 	dialer := &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}
 	p := &proxy{
 		nets: nets,
