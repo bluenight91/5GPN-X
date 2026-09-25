@@ -150,6 +150,8 @@ EOF
 install_client_http_proxy_binary() {
     ensure_proxy_user
     mkdir -p "${BASE_DIR}/bin" "${SRC_DIR}" "${CONF_DIR}"
+    local unit_dir="${SYSTEMD_UNIT_DIR:-/etc/systemd/system}"
+    mkdir -p "$unit_dir"
     [[ -f "${LIB_DIR}/client-http-proxy.go" ]] || { err "client-http-proxy.go missing"; return 1; }
     if ! cmp -s "${LIB_DIR}/client-http-proxy.go" "${SRC_DIR}/client-http-proxy.go" 2>/dev/null \
         || [[ ! -x "${CLIENT_HTTP_PROXY_BIN}" ]]; then
@@ -161,14 +163,19 @@ install_client_http_proxy_binary() {
             go build -ldflags="-s -w" -o "${CLIENT_HTTP_PROXY_BIN}" client-http-proxy.go
         )
     fi
-    cat > /etc/systemd/system/5gpn-client-http-proxy.service <<EOF
+    # Credential writers use umask 077 and shell functions inherit it.  Keep
+    # the root-owned binary executable by the unprivileged service account.
+    chmod 0755 "${CLIENT_HTTP_PROXY_BIN}"
+    cat > "${unit_dir}/5gpn-client-http-proxy.service" <<EOF
 [Unit]
 Description=5GPN-X private client HTTP/HTTPS proxy (CIDR ACL + user/pass)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
+TimeoutStartSec=15
 EnvironmentFile=-${CLIENT_HTTP_PROXY_ENV}
 ExecStart=${CLIENT_HTTP_PROXY_BIN} -l 0.0.0.0:\${HTTP_PROXY_PORT} -u \${HTTP_PROXY_USER} -P \${HTTP_PROXY_PASS} -a \${HTTP_PROXY_ALLOW_CIDR} -q
 Restart=on-failure
@@ -210,6 +217,15 @@ HTTP_PROXY_ALLOW_CIDR=${cidr}
 EOF
     chmod 600 "${CLIENT_HTTP_PROXY_ENV}"
 }
+client_http_proxy_enable_rollback() {
+    systemctl disable --now 5gpn-client-http-proxy.service >/dev/null 2>&1 \
+        || systemctl stop 5gpn-client-http-proxy.service >/dev/null 2>&1 \
+        || true
+    rm -f "${CLIENT_HTTP_PROXY_ENABLED}"
+    if declare -F firewall_http_proxy_sync >/dev/null 2>&1; then
+        firewall_http_proxy_sync || warn "HTTP proxy rollback firewall sync failed"
+    fi
+}
 enable_client_http_proxy() {
     check_root
     install_client_http_proxy_binary
@@ -220,13 +236,26 @@ enable_client_http_proxy() {
     chmod 644 "${CLIENT_HTTP_PROXY_ENABLED}"
     if declare -F firewall_http_proxy_sync >/dev/null 2>&1; then
         firewall_http_proxy_sync || {
-            rm -f "${CLIENT_HTTP_PROXY_ENABLED}"
+            client_http_proxy_enable_rollback
             err "HTTP proxy firewall sync failed; HTTP proxy not enabled"
             return 1
         }
     fi
-    systemctl enable --now 5gpn-client-http-proxy.service
-    systemctl restart 5gpn-client-http-proxy.service
+    if ! systemctl enable --now 5gpn-client-http-proxy.service; then
+        client_http_proxy_enable_rollback
+        err "HTTP proxy service failed to start; HTTP proxy not enabled"
+        return 1
+    fi
+    if ! systemctl restart 5gpn-client-http-proxy.service; then
+        client_http_proxy_enable_rollback
+        err "HTTP proxy service failed to restart; HTTP proxy not enabled"
+        return 1
+    fi
+    if ! systemctl is-active --quiet 5gpn-client-http-proxy.service; then
+        client_http_proxy_enable_rollback
+        err "HTTP proxy service failed readiness check; HTTP proxy not enabled"
+        return 1
+    fi
     local host; host="$(client_socks_host_ip)"
     ok "私网 HTTP/HTTPS 代理已开启"
     echo "  地址:   ${host}:${HTTP_PROXY_PORT}"

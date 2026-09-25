@@ -51,6 +51,8 @@ Android Private DNS / iOS 描述文件          明文 DNS
 可选的 `5gpn-client-http-proxy` 提供带 Basic 鉴权的 HTTP 正向代理与 HTTPS
 CONNECT 隧道，默认监听 TCP `38444`。进程 ACL 与主机防火墙都只允许客户端
 来源 CIDR，服务以 `pxout` 身份运行，因此代理出站遵循 I3 的当前出口策略。
+服务只在监听套接字建立后向 systemd 报告 ready；启用过程若启动、重启或就绪
+检查失败，会停止并禁用服务、删除 enabled 标记并撤销对应防火墙放行。
 
 ## 运行时不变量
 
