@@ -255,7 +255,10 @@ if [[ -n "$domain" ]] && command -v openssl >/dev/null 2>&1; then
 fi
 # client cidr vs mosdns config
 if [[ -f /etc/mosdns/config.yaml ]]; then
-    if grep -q "client_ip ${CLIENT_CIDR}" /etc/mosdns/config.yaml 2>/dev/null; then
+    # Stored ACLs are comma-separated; mosdns renders one matcher with
+    # space-separated CIDRs: "client_ip net1 net2".
+    client_cidr_mosdns="${CLIENT_CIDR//,/ }"
+    if grep -Fq "client_ip ${client_cidr_mosdns}" /etc/mosdns/config.yaml 2>/dev/null; then
         ok "客户端网段" "${CLIENT_CIDR} 已写入 mosdns"
     else
         note "客户端网段" "配置为 ${CLIENT_CIDR}，但 config.yaml 可能尚未刷新（跑 5gpn update-rules）"
