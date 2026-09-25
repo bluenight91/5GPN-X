@@ -44,6 +44,10 @@ Android Private DNS / iOS 描述文件          明文 DNS
               5gpn-mihomo@<exit> → 运维者配置的节点出网
 ```
 
+客户端来源 ACL 接受一个或多个英文逗号分隔的 IPv4 CIDR；单主机用 `/32`
+精确表示。默认拒绝前缀短于 `/16` 的宽网段，除非运维者显式设置
+`FORCE_WIDE_CIDR=1`。
+
 ## 运行时不变量
 
 以下不变量由 `tests/test_architecture_invariants.sh` 等 policy 测试锁定。

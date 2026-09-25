@@ -1331,7 +1331,7 @@ def _normalize_client_cidrs(value):
             net = ipaddress.ip_network(part, strict=False)
         except ValueError:
             return None
-        if net.version != 4 or not (8 <= net.prefixlen <= 30):
+        if net.version != 4 or not (8 <= net.prefixlen <= 32):
             return None
         if net.prefixlen < 16 and not force_wide:
             return None
@@ -2314,7 +2314,7 @@ class Handler(BaseHTTPRequestHandler):
             cidr = validate_client_cidr(b.get("cidr", ""))
             if not cidr:
                 return self._send(400, {"ok": False,
-                                        "error": "invalid cidr (IPv4 /16../30 by default; comma-separated; /8../15 require FORCE_WIDE_CIDR=1)"})
+                                        "error": "invalid cidr (IPv4 /16../32 by default; comma-separated; /8../15 require FORCE_WIDE_CIDR=1)"})
             ok, out = ctl("--set-client-cidr", cidr, timeout=180)
             return self._send(200 if ok else 500, {"ok": ok, "output": out,
                                                     "cidr": get_client_cidr()})

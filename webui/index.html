@@ -584,9 +584,9 @@ iframe.mihomo{
       <div data-settings-panel="network">
         <div class="card">
           <h2>客户端网段</h2>
-          <p class="lede">私网客户端来自这些 IPv4 CIDR 时走劫持/透明代理策略（默认 <span class="mono">172.22.0.0/16</span>；多段用英文逗号分隔）。改后会刷新 mosdns；managed 防火墙会尝试同步白名单。</p>
+          <p class="lede">私网客户端来自这些 IPv4 CIDR 时走劫持/透明代理策略（默认 <span class="mono">172.22.0.0/16</span>；单个 IP 用 <span class="mono">/32</span>；多段用英文逗号分隔）。改后会刷新 mosdns；managed 防火墙会尝试同步白名单。</p>
           <div class="row">
-            <input id="cidr_val" type="text" placeholder="例如 172.22.0.0/16,10.10.0.0/16" autocomplete="off" style="flex:1" class="mono">
+            <input id="cidr_val" type="text" placeholder="例如 172.22.0.0/16,172.31.11.94/32" autocomplete="off" style="flex:1" class="mono">
             <button class="primary" onclick="saveClientCidr()">保存</button>
             <button onclick="detectClientCidr()">探测</button>
             <button onclick="loadClientCidr()">刷新</button>

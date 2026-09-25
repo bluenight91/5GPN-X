@@ -226,7 +226,7 @@ try:
         if not item:
             continue
         net = ipaddress.ip_network(item, strict=False)
-        if net.version != 4 or not (8 <= net.prefixlen <= 30):
+        if net.version != 4 or not (8 <= net.prefixlen <= 32):
             raise ValueError
         if net.prefixlen < 16 and not force:
             raise ValueError

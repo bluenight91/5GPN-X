@@ -64,10 +64,11 @@ sudo 5gpn set-policy ai tokyo     # 把 ai 规则组改走 tokyo 出口
 sudo 5gpn detect-client-cidr          # 从本机网卡猜测
 sudo 5gpn set-client-cidr 10.10.0.0/16
 sudo 5gpn set-client-cidr 172.22.0.0/16,10.10.0.0/16
+sudo 5gpn set-client-cidr 172.22.0.0/16,172.31.11.94/32  # 额外放行单个 IP
 cat /etc/mosdns/.client_cidr
 ```
 
-默认拒绝过宽网段（小于 `/16`）以避免误把大范围来源纳入劫持/放行。确认需要时设置 `FORCE_WIDE_CIDR=1` 后再运行命令。也可在 Bot「DoT 管理 → 客户端网段」或网页控制台「设置」中修改。改完后会刷新 mosdns；若是 `FIREWALL_MODE=managed`，也会尝试重写白名单。自管防火墙需自行放行新网段的 53/80/443。
+单个客户端 IP 使用 `/32`。默认拒绝过宽网段（小于 `/16`）以避免误把大范围来源纳入劫持/放行。确认需要时设置 `FORCE_WIDE_CIDR=1` 后再运行命令。也可在 Bot「DoT 管理 → 客户端网段」或网页控制台「设置」中修改。改完后会刷新 mosdns；若是 `FIREWALL_MODE=managed`，也会尝试重写白名单。自管防火墙需自行放行新网段的 53/80/443。
 
 ## API / WebUI 访问
 

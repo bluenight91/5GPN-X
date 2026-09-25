@@ -133,7 +133,7 @@ sudo 5gpn doctor             # 结构化健康检查（--json / --deep）
 sudo 5gpn report             # 脱敏诊断报告 → /tmp
 sudo 5gpn snapshot           # 手动保存配置快照
 sudo 5gpn rollback           # 回滚到最近快照
-sudo 5gpn set-client-cidr 172.22.0.0/16   # 私网客户端源网段
+sudo 5gpn set-client-cidr 172.22.0.0/16,172.31.11.94/32   # 私网客户端源网段；单 IP 用 /32
 sudo 5gpn detect-client-cidr # 从本机网卡猜测并应用
 sudo 5gpn enable-client-socks   # 开启私网 SOCKS5（默认 :38443，打印一次密码）
 sudo 5gpn client-socks-status   # 查看状态（密码隐藏）

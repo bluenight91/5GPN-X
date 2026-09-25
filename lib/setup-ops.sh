@@ -733,7 +733,7 @@ PY
 }
 set_client_cidr() {
     local cidr="${1:-}"
-    [[ -n "$cidr" ]] || { err "Usage: $0 --set-client-cidr <a.b.c.0/16[,10.0.0.0/16...]>"; exit 1; }
+    [[ -n "$cidr" ]] || { err "Usage: $0 --set-client-cidr <a.b.c.0/16[,10.0.0.1/32...]>"; exit 1; }
     if ! cidr="$(FORCE_WIDE_CIDR="${FORCE_WIDE_CIDR:-0}" python3 - "$cidr" <<'PY'
 import ipaddress, os, sys
 raw = sys.argv[1].replace(";", ",").replace(" ", ",")
@@ -744,7 +744,7 @@ force = os.environ.get("FORCE_WIDE_CIDR", "0") == "1"
 out = []
 for p in parts:
     net = ipaddress.ip_network(p, strict=False)
-    if net.version != 4 or not (8 <= net.prefixlen <= 30):
+    if net.version != 4 or not (8 <= net.prefixlen <= 32):
         raise SystemExit(1)
     if net.prefixlen < 16 and not force:
         raise SystemExit(1)
@@ -752,7 +752,7 @@ for p in parts:
 print(",".join(out))
 PY
 )"; then
-        err "无效 CIDR（IPv4 /16../30，多段用逗号；宽网段需 FORCE_WIDE_CIDR=1）"; exit 1
+        err "无效 CIDR（IPv4 /16../32，多段用逗号；宽网段需 FORCE_WIDE_CIDR=1）"; exit 1
     fi
     [[ -n "$cidr" ]] || { err "无效 CIDR"; exit 1; }
     mkdir -p /etc/mosdns "$CONF_DIR"
@@ -822,7 +822,7 @@ confirm_client_cidr_choice() {
         elif [[ -t 0 ]]; then
             warn "检测到宽网段 ${cidr}（前缀 < /16）。误配会扩大劫持/放行面。"
             read -r -p "确认使用该宽网段？请再次输入完整 CIDR 以确认: " ans || true
-            [[ "$ans" == "$cidr" ]] || { err "未确认宽网段；请改用 /16../30，或 FORCE_WIDE_CIDR=1"; return 1; }
+            [[ "$ans" == "$cidr" ]] || { err "未确认宽网段；请改用 /16../32，或 FORCE_WIDE_CIDR=1"; return 1; }
         else
             err "宽网段 ${cidr}（</16）在非交互安装需 FORCE_WIDE_CIDR=1 显式确认"
             return 1
@@ -836,7 +836,7 @@ confirm_client_cidr_choice() {
         if [[ -z "$ans" || "$ans" =~ ^[Yy]$ ]]; then
             :
         elif [[ "$ans" =~ ^[Nn]$ ]]; then
-            read -r -p "请输入客户端 CIDR (IPv4 /16../30，宽网段需再确认): " ans || true
+            read -r -p "请输入客户端 CIDR (IPv4 /16../32，宽网段需再确认): " ans || true
             [[ -n "$ans" ]] || { err "未提供客户端网段"; return 1; }
             cidr="$ans"
             CLIENT_CIDR_CONFIRMED=1 confirm_client_cidr_choice "$cidr" || return 1
@@ -880,7 +880,7 @@ for line in out.splitlines():
         net = ipaddress.ip_network(cidr, strict=False)
     except ValueError:
         continue
-    if not net.is_private or net.is_loopback or net.prefixlen > 30:
+    if not net.is_private or net.is_loopback or net.prefixlen > 32:
         continue
     score = 0
     if iface != default_if:
@@ -934,7 +934,7 @@ for line in out.splitlines():
         net = ipaddress.ip_network(cidr, strict=False)
     except ValueError:
         continue
-    if not net.is_private or net.is_loopback or net.prefixlen > 30:
+    if not net.is_private or net.is_loopback or net.prefixlen > 32:
         continue
     # Prefer non-default-route NIC (NPN data path), else any private /16-/24.
     score = 0
