@@ -14,6 +14,8 @@ proxy_go="$(cat "${root}/lib/client-http-proxy.go")"
 
 [[ -f "${root}/lib/client-http-proxy.go" ]] || fail "HTTP proxy implementation must exist"
 [[ -f "${root}/lib/client-http-proxy_test.go" ]] || fail "HTTP proxy unit tests must exist"
+[[ "$(cat "${root}/install.sh")" == *'lib/client-http-proxy.go'* ]] \
+    || fail "bootstrap source manifest must require the HTTP proxy implementation"
 if command -v go >/dev/null 2>&1; then
     (
         cd "${root}/lib"

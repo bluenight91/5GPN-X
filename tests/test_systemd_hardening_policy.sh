@@ -45,6 +45,13 @@ b="$(unit_block '5gpn-ios-profile@.service')"
 [[ "$b" == *'ProtectSystem=strict'* && "$b" == *'ProtectHome=true'* && "$b" == *'PrivateTmp=true'* ]] \
     || fail "ios-profile@ must be sandboxed"
 
+# --- private HTTP proxy: unprivileged non-orchestrator sandbox -----------------
+b="$(unit_block 5gpn-client-http-proxy.service)"
+[[ "$b" == *'User=${EXIT_USER}'* ]] || fail "client HTTP proxy must run as the exit user"
+[[ "$b" == *'ProtectSystem=strict'* && "$b" == *'ProtectHome=true'* && "$b" == *'PrivateTmp=true'* ]] \
+    || fail "client HTTP proxy must use the strict service sandbox"
+[[ "$b" == *'NoNewPrivileges=true'* ]] || fail "client HTTP proxy must prohibit privilege escalation"
+
 # --- root orchestrators: full /etc-/usr lockdown with an explicit whitelist ----
 rw='/etc/5gpn /etc/mosdns /etc/sniproxy.conf /etc/wireguard /etc/nftables.conf /etc/letsencrypt /etc/systemd/system /usr/local/bin'
 for u in 5gpn-tgbot.service 5gpn-api.service 5gpn-failover.service; do

@@ -51,7 +51,7 @@ bootstrap_from_repo_if_needed() {
         install.sh
         lib/setup-core.sh lib/setup-exit.sh lib/setup-control.sh lib/setup-ops.sh
         lib/renew-hook.sh lib/sniproxy.conf lib/quic-proxy.go lib/client-socks.go
-        lib/client-mtproto.go lib/clash-remote.go
+        lib/client-http-proxy.go lib/client-mtproto.go lib/clash-remote.go
         lib/mosdns.yaml.template lib/update-rules.sh lib/ios-http.py lib/tgbot.py
         lib/wa-shim.py lib/rules-import.py lib/mihomo-exit-config.py
         lib/mihomo-router-config.py lib/rules-default.conf lib/host-setup.sh

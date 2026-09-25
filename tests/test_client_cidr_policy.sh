@@ -19,6 +19,9 @@ for source in "$ops" "$host" "$rules" "$api"; do
 done
 
 [[ "$ops" == *'IPv4 /16../32'* ]] || fail "CLI validation message must document /32"
+[[ "$ops" == *'HTTP_PROXY_ALLOW_CIDR=${cidr}'* \
+    && "$ops" == *'systemctl restart 5gpn-client-http-proxy.service'* ]] \
+    || fail "client CIDR updates must propagate to the HTTP proxy"
 [[ "$api" == *'IPv4 /16../32 by default'* ]] || fail "API error must document /32"
 [[ "$bot" == *'前缀 /8–/32'* ]] || fail "Telegram prompt must document /32"
 [[ "$ui" == *'单个 IP 用 <span class="mono">/32</span>'* ]] \

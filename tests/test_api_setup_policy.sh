@@ -44,6 +44,7 @@ api_body="$(cat "${api}")"
 [[ "${api_body}" == *'"5gpn-api"'* || "${api_body}" == *'"5gpn-api",'* ]] || fail "API SERVICES must list the API itself"
 [[ "${api_body}" == *'5gpn-client-mtproto'* ]] || fail "API status must include MTProto when enabled"
 [[ "${api_body}" == *'5gpn-client-socks'* ]] || fail "API status must include SOCKS when enabled"
+[[ "${api_body}" == *'5gpn-client-http-proxy'* ]] || fail "API status must include HTTP proxy when enabled"
 
 # --- exit names follow install.sh's validator (Chinese names allowed) ----------
 [[ "${api_body}" == *'{1,16}'* ]] || fail "API exit-name rule must allow 1-16 chars like install.sh"
