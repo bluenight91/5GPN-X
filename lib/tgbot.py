@@ -3436,9 +3436,9 @@ def handle_callback(cb):
         PENDING[chat_id] = {"action": "cidr_set", "prompt_mid": cb_mid}
         edit(cb,
              ("✏️ <b>设置客户端网段</b>\n\n"
-              "发送一个 IPv4 CIDR（前缀 /8–/30）。\n\n"
+              "发送一个或多个 IPv4 CIDR（前缀 /8–/32，多段用英文逗号分隔）。\n\n"
               f"当前：<code>{html.escape(_client_cidr())}</code>\n"
-              "示例：<code>172.22.0.0/16</code> 或 <code>10.10.0.0/16</code>"),
+              "示例：<code>172.22.0.0/16,172.31.11.94/32</code>"),
              cancel_kb("dot"))
     elif data == "cidr:detect":
         edit(cb, "⏳ 正在从本机网卡探测客户端网段…")
