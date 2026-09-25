@@ -49,6 +49,7 @@
 - `doctor` / `report`：结构化自检与脱敏诊断报告；`smoke` 为 `doctor --deep` 别名。
 - 可配置客户端网段（CLI / Bot / WebUI）；健康定时器可经 Telegram 告警。
 - 可选私网 SOCKS5（默认 TCP **38443**，用户名/密码 + 仅客户端 CIDR）：手机 Telegram 等可指向网关公网 IP；出站跟随当前出口。
+- 可选私网 HTTP/HTTPS 代理（默认 TCP **38444**，Basic 用户名/密码 + 仅客户端 CIDR）：支持普通 HTTP 转发和 HTTPS CONNECT；出站跟随当前出口。
 - API 安全加固：全响应安全响应头（HSTS/XFO/nosniff/CSP）、每源 IP 限流（429）、PII 静默日志。
 
 ## 环境要求
@@ -138,6 +139,9 @@ sudo 5gpn detect-client-cidr # 从本机网卡猜测并应用
 sudo 5gpn enable-client-socks   # 开启私网 SOCKS5（默认 :38443，打印一次密码）
 sudo 5gpn client-socks-status   # 查看状态（密码隐藏）
 sudo 5gpn disable-client-socks  # 关闭
+sudo 5gpn enable-client-http-proxy   # 开启私网 HTTP/HTTPS 代理（默认 :38444）
+sudo 5gpn client-http-proxy-status   # 查看状态（密码隐藏）
+sudo 5gpn disable-client-http-proxy  # 关闭
 sudo 5gpn update-rules       # 更新 GFWList/ChinaList 并重载 mosdns
 sudo 5gpn renew-cert         # 续期证书
 sudo 5gpn set-dot-domain dns.example.com

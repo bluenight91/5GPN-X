@@ -610,6 +610,18 @@ iframe.mihomo{
           <div id="socks_creds" class="mono small" style="margin-top:8px;white-space:pre-wrap"></div>
         </div>
         <div class="card">
+          <h2>私网 HTTP/HTTPS 代理</h2>
+          <p class="lede">可选：仅客户端网段可访问的用户名/密码正向代理（默认端口 <span class="mono">38444</span>，支持普通 HTTP 与 HTTPS CONNECT，出站跟随当前出口）。</p>
+          <div id="http_proxy_state" class="mono small" style="margin-bottom:8px">（加载中…）</div>
+          <div class="row">
+            <button class="primary" onclick="httpProxyAction('enable')">开启</button>
+            <button class="danger" onclick="httpProxyAction('disable')">关闭</button>
+            <button onclick="httpProxyAction('reset-creds')">重置密码</button>
+            <button onclick="loadClientHttpProxy()">刷新</button>
+          </div>
+          <div id="http_proxy_creds" class="mono small" style="margin-top:8px;white-space:pre-wrap"></div>
+        </div>
+        <div class="card">
           <h2>私网 MTProto</h2>
           <p class="lede">可选：仅客户端网段可访问的 Telegram MTProto 代理（固定端口 <span class="mono">5753</span>，classic）。密钥为 <span class="mono">32</span> 位 hex，可直接填进 Telegram。</p>
           <div id="mtproto_state" class="mono small" style="margin-bottom:8px">（加载中…）</div>
@@ -816,7 +828,7 @@ function onEnter(sec){
   else if(sec==="rules"){ loadStatus(); loadRules(); }
   else if(sec==="monitor"){ loadMihomoOverview(); loadXdFrame(); }
   else if(sec==="ai"){ aiLoadConfig(); }
-  else if(sec==="settings"){ fillSettings(); showSettingsPanel(localStorage.getItem("pgw_set_panel")||"network"); loadClientCidr(); loadClientSocks(); loadClientMtproto(); loadClashRemote(); loadDirectDomains(); loadComponents(); }
+  else if(sec==="settings"){ fillSettings(); showSettingsPanel(localStorage.getItem("pgw_set_panel")||"network"); loadClientCidr(); loadClientSocks(); loadClientHttpProxy(); loadClientMtproto(); loadClashRemote(); loadDirectDomains(); loadComponents(); }
 }
 document.querySelectorAll('[data-section]').forEach(el=>el.addEventListener('click',()=>{
   showSection(el.dataset.section);
@@ -1667,6 +1679,43 @@ async function socksAction(action){
     }
     await loadClientSocks();
   }catch(e){ log("❌ SOCKS5："+e.message); }
+  finally{ busy(false); }
+}
+
+/* ---- private client HTTP/HTTPS proxy ---- */
+async function loadClientHttpProxy(){
+  const box=$("http_proxy_state"), cred=$("http_proxy_creds");
+  if(!box) return;
+  try{
+    const r=await api("/api/client-http-proxy");
+    const st = r.enabled ? (r.running ? "已开启 · 运行中" : "已开启 · 未运行") : "已关闭";
+    box.textContent = st+"\n"+
+      (r.host||"?")+":"+(r.port||"38444")+
+      "  user="+(r.user||"?")+
+      "  allow="+(r.allow_cidr||"?");
+    if(cred && !cred.dataset.keep) cred.textContent="";
+  }catch(e){ box.textContent="加载失败："+e.message; }
+}
+async function httpProxyAction(action){
+  const cred=$("http_proxy_creds");
+  if(action==="disable" && !confirm("关闭私网 HTTP/HTTPS 代理？")) return;
+  if(action==="reset-creds" && !confirm("轮换用户名/密码？旧密码立即失效。")) return;
+  busy(true);
+  try{
+    const r=await api("/api/client-http-proxy","POST",{action});
+    log((r.ok?"✅ ":"❌ ")+(action)+" HTTP proxy");
+    if(cred){
+      if(r.ok && (r.password||"").length>3){
+        cred.dataset.keep="1";
+        cred.textContent = "请立即保存（仅显示一次）：\n"+
+          "host "+(r.host||"")+"\nport "+(r.port||"")+"\nuser "+(r.user||"")+"\npass "+r.password;
+      } else if(action==="disable"){
+        delete cred.dataset.keep;
+        cred.textContent="";
+      }
+    }
+    await loadClientHttpProxy();
+  }catch(e){ log("❌ HTTP proxy："+e.message); }
   finally{ busy(false); }
 }
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# setup-control.sh — Client-facing control surfaces: SOCKS/MTProto/Clash-remote proxies, tgbot, API.
+# setup-control.sh — Client-facing control surfaces: SOCKS/HTTP/MTProto/Clash-remote proxies, tgbot, API.
 # Sourced by install.sh; do not execute directly. Relies on install.sh globals
 # and runs under install.sh's set -euo pipefail (ShellCheck scopes below).
 # shellcheck disable=SC2154,SC2034,SC2164,SC2317
@@ -143,6 +143,147 @@ EOF
     fi
     local host; host="$(client_socks_host_ip)"
     ok "SOCKS5 凭据已轮换"
+    echo "  地址: ${host}:${port}"
+    echo "  用户: ${user}"
+    echo "  密码: ${pass}"
+}
+install_client_http_proxy_binary() {
+    ensure_proxy_user
+    mkdir -p "${BASE_DIR}/bin" "${SRC_DIR}" "${CONF_DIR}"
+    [[ -f "${LIB_DIR}/client-http-proxy.go" ]] || { err "client-http-proxy.go missing"; return 1; }
+    if ! cmp -s "${LIB_DIR}/client-http-proxy.go" "${SRC_DIR}/client-http-proxy.go" 2>/dev/null \
+        || [[ ! -x "${CLIENT_HTTP_PROXY_BIN}" ]]; then
+        info "Compiling client-http-proxy (private HTTP/HTTPS proxy)..."
+        cp "${LIB_DIR}/client-http-proxy.go" "${SRC_DIR}/client-http-proxy.go"
+        (
+            cd "${SRC_DIR}"
+            export PATH=$PATH:/usr/local/go/bin
+            go build -ldflags="-s -w" -o "${CLIENT_HTTP_PROXY_BIN}" client-http-proxy.go
+        )
+    fi
+    cat > /etc/systemd/system/5gpn-client-http-proxy.service <<EOF
+[Unit]
+Description=5GPN-X private client HTTP/HTTPS proxy (CIDR ACL + user/pass)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-${CLIENT_HTTP_PROXY_ENV}
+ExecStart=${CLIENT_HTTP_PROXY_BIN} -l 0.0.0.0:\${HTTP_PROXY_PORT} -u \${HTTP_PROXY_USER} -P \${HTTP_PROXY_PASS} -a \${HTTP_PROXY_ALLOW_CIDR} -q
+Restart=on-failure
+RestartSec=3
+User=${EXIT_USER}
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+}
+client_http_proxy_ensure_creds() {
+    mkdir -p "${CONF_DIR}"
+    local port user pass cidr
+    port="$(cat "${CLIENT_HTTP_PROXY_PORT_FILE}" 2>/dev/null || echo "${CLIENT_HTTP_PROXY_PORT_DEFAULT}")"
+    [[ "$port" =~ ^[0-9]+$ ]] || port="${CLIENT_HTTP_PROXY_PORT_DEFAULT}"
+    echo "$port" > "${CLIENT_HTTP_PROXY_PORT_FILE}"
+    cidr="$(cat /etc/mosdns/.client_cidr 2>/dev/null || echo '172.22.0.0/16')"
+    if [[ -f "${CLIENT_HTTP_PROXY_ENV}" ]]; then
+        # shellcheck disable=SC1090
+        set -a; source "${CLIENT_HTTP_PROXY_ENV}"; set +a
+    fi
+    user="${HTTP_PROXY_USER:-${CLIENT_HTTP_PROXY_USER_DEFAULT}}"
+    pass="${HTTP_PROXY_PASS:-}"
+    if [[ -z "$pass" ]]; then
+        pass="$(openssl rand -hex 12 2>/dev/null || head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+    fi
+    umask 077
+    cat > "${CLIENT_HTTP_PROXY_ENV}" <<EOF
+HTTP_PROXY_PORT=${port}
+HTTP_PROXY_USER=${user}
+HTTP_PROXY_PASS=${pass}
+HTTP_PROXY_ALLOW_CIDR=${cidr}
+EOF
+    chmod 600 "${CLIENT_HTTP_PROXY_ENV}"
+}
+enable_client_http_proxy() {
+    check_root
+    install_client_http_proxy_binary
+    client_http_proxy_ensure_creds
+    # shellcheck disable=SC1090
+    set -a; source "${CLIENT_HTTP_PROXY_ENV}"; set +a
+    : > "${CLIENT_HTTP_PROXY_ENABLED}"
+    chmod 644 "${CLIENT_HTTP_PROXY_ENABLED}"
+    if declare -F firewall_http_proxy_sync >/dev/null 2>&1; then
+        firewall_http_proxy_sync || {
+            rm -f "${CLIENT_HTTP_PROXY_ENABLED}"
+            err "HTTP proxy firewall sync failed; HTTP proxy not enabled"
+            return 1
+        }
+    fi
+    systemctl enable --now 5gpn-client-http-proxy.service
+    systemctl restart 5gpn-client-http-proxy.service
+    local host; host="$(client_socks_host_ip)"
+    ok "私网 HTTP/HTTPS 代理已开启"
+    echo "  地址:   ${host}:${HTTP_PROXY_PORT}"
+    echo "  用户:   ${HTTP_PROXY_USER}"
+    echo "  密码:   ${HTTP_PROXY_PASS}"
+    echo "  允许源: ${HTTP_PROXY_ALLOW_CIDR}"
+    warn "密码仅此时完整显示；之后 status 会隐藏。需要时可 --reset-client-http-proxy-creds"
+}
+disable_client_http_proxy() {
+    check_root
+    systemctl disable --now 5gpn-client-http-proxy.service 2>/dev/null || true
+    rm -f "${CLIENT_HTTP_PROXY_ENABLED}"
+    declare -F firewall_http_proxy_sync >/dev/null 2>&1 && firewall_http_proxy_sync || true
+    ok "私网 HTTP/HTTPS 代理已关闭"
+}
+client_http_proxy_status() {
+    local on=0 host port user cidr
+    [[ -f "${CLIENT_HTTP_PROXY_ENABLED}" ]] && on=1
+    port="$(cat "${CLIENT_HTTP_PROXY_PORT_FILE}" 2>/dev/null || echo "${CLIENT_HTTP_PROXY_PORT_DEFAULT}")"
+    host="$(client_socks_host_ip)"
+    cidr="$(cat /etc/mosdns/.client_cidr 2>/dev/null || echo '172.22.0.0/16')"
+    user="?"
+    if [[ -f "${CLIENT_HTTP_PROXY_ENV}" ]]; then
+        user="$(sed -n 's/^HTTP_PROXY_USER=//p' "${CLIENT_HTTP_PROXY_ENV}" | head -1)"
+    fi
+    echo "client-http-proxy: $([[ $on -eq 1 ]] && echo enabled || echo disabled)"
+    echo "listen: ${host}:${port}"
+    echo "user: ${user}"
+    echo "password: ***"
+    echo "allow: ${cidr}"
+    if [[ $on -eq 1 ]]; then
+        systemctl is-active --quiet 5gpn-client-http-proxy.service \
+            && echo "service: running" || echo "service: not running"
+    fi
+}
+reset_client_http_proxy_creds() {
+    check_root
+    mkdir -p "${CONF_DIR}"
+    local port user pass cidr
+    port="$(cat "${CLIENT_HTTP_PROXY_PORT_FILE}" 2>/dev/null || echo "${CLIENT_HTTP_PROXY_PORT_DEFAULT}")"
+    user="${CLIENT_HTTP_PROXY_USER_DEFAULT}"
+    pass="$(openssl rand -hex 12 2>/dev/null || head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+    cidr="$(cat /etc/mosdns/.client_cidr 2>/dev/null || echo '172.22.0.0/16')"
+    echo "$port" > "${CLIENT_HTTP_PROXY_PORT_FILE}"
+    umask 077
+    cat > "${CLIENT_HTTP_PROXY_ENV}" <<EOF
+HTTP_PROXY_PORT=${port}
+HTTP_PROXY_USER=${user}
+HTTP_PROXY_PASS=${pass}
+HTTP_PROXY_ALLOW_CIDR=${cidr}
+EOF
+    chmod 600 "${CLIENT_HTTP_PROXY_ENV}"
+    if [[ -f "${CLIENT_HTTP_PROXY_ENABLED}" ]]; then
+        systemctl restart 5gpn-client-http-proxy.service 2>/dev/null || true
+    fi
+    local host; host="$(client_socks_host_ip)"
+    ok "HTTP/HTTPS 代理凭据已轮换"
     echo "  地址: ${host}:${port}"
     echo "  用户: ${user}"
     echo "  密码: ${pass}"

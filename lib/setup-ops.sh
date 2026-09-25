@@ -397,6 +397,13 @@ do_update() {
         systemctl restart 5gpn-client-socks.service 2>/dev/null || true
         declare -F firewall_socks_sync >/dev/null 2>&1 && firewall_socks_sync || true
     fi
+    cmp -s "${LIB_DIR}/client-http-proxy.go" "${SRC_DIR}/client-http-proxy.go" 2>/dev/null || rm -f "${BASE_DIR}/bin/client-http-proxy"
+    install_client_http_proxy_binary
+    if [[ -f "${CLIENT_HTTP_PROXY_ENABLED}" ]]; then
+        client_http_proxy_ensure_creds
+        systemctl restart 5gpn-client-http-proxy.service 2>/dev/null || true
+        declare -F firewall_http_proxy_sync >/dev/null 2>&1 && firewall_http_proxy_sync || true
+    fi
     cmp -s "${LIB_DIR}/client-mtproto.go" "${SRC_DIR}/client-mtproto.go" 2>/dev/null || rm -f "${BASE_DIR}/bin/client-mtproto"
     install_client_mtproto_binary || warn "client-mtproto 二进制安装失败（可稍后手动 enable-client-mtproto）"
     if [[ -f "${CLIENT_MTPROTO_ENABLED}" ]]; then
@@ -493,15 +500,17 @@ do_uninstall() {
         systemctl stop "5gpn-singbox@$(basename "$f" .type).service" 2>/dev/null || true
     done
     shopt -u nullglob
-    systemctl stop mosdns dnsdist sniproxy wa-shim quic-proxy china-dns-race-proxy 5gpn-ios-profile.socket 5gpn-ios-profile 5gpn-exit 5gpn-tgbot 5gpn-api 5gpn-health.timer 5gpn-health.service 5gpn-client-socks 5gpn-client-mtproto 5gpn-mtproxy 5gpn-mtg 5gpn-clash-remote 2>/dev/null || true
-    systemctl disable mosdns dnsdist sniproxy wa-shim quic-proxy china-dns-race-proxy 5gpn-ios-profile.socket 5gpn-ios-profile 5gpn-exit 5gpn-tgbot 5gpn-api 5gpn-health.timer 5gpn-health.service 5gpn-client-socks 5gpn-client-mtproto 5gpn-mtproxy 5gpn-mtg 5gpn-clash-remote 2>/dev/null || true
+    systemctl stop mosdns dnsdist sniproxy wa-shim quic-proxy china-dns-race-proxy 5gpn-ios-profile.socket 5gpn-ios-profile 5gpn-exit 5gpn-tgbot 5gpn-api 5gpn-health.timer 5gpn-health.service 5gpn-client-socks 5gpn-client-http-proxy 5gpn-client-mtproto 5gpn-mtproxy 5gpn-mtg 5gpn-clash-remote 2>/dev/null || true
+    systemctl disable mosdns dnsdist sniproxy wa-shim quic-proxy china-dns-race-proxy 5gpn-ios-profile.socket 5gpn-ios-profile 5gpn-exit 5gpn-tgbot 5gpn-api 5gpn-health.timer 5gpn-health.service 5gpn-client-socks 5gpn-client-http-proxy 5gpn-client-mtproto 5gpn-mtproxy 5gpn-mtg 5gpn-clash-remote 2>/dev/null || true
     rm -f /etc/systemd/system/{mosdns,sniproxy,wa-shim,quic-proxy,china-dns-race-proxy,5gpn-ios-profile,update-mosdns-rules,5gpn-exit,5gpn-tgbot}.*
     rm -f /etc/systemd/system/5gpn-api.*
     rm -f /etc/systemd/system/5gpn-health.service /etc/systemd/system/5gpn-health.timer
     rm -f /etc/systemd/system/5gpn-client-socks.service
+    rm -f /etc/systemd/system/5gpn-client-http-proxy.service
     rm -f /etc/systemd/system/5gpn-client-mtproto.service /etc/systemd/system/5gpn-mtproxy.service /etc/systemd/system/5gpn-mtg.service
     rm -f /etc/systemd/system/5gpn-clash-remote.service
     declare -F firewall_socks_remove_rules >/dev/null 2>&1 && firewall_socks_remove_rules || true
+    declare -F firewall_http_proxy_remove_rules >/dev/null 2>&1 && firewall_http_proxy_remove_rules || true
     declare -F firewall_mtproto_remove_rules >/dev/null 2>&1 && firewall_mtproto_remove_rules || true
     declare -F firewall_clash_remote_remove_rules >/dev/null 2>&1 && firewall_clash_remote_remove_rules || true
     rm -f /usr/local/bin/5gpn
@@ -775,6 +784,14 @@ PY
         fi
         [[ -f "${CLIENT_SOCKS_ENABLED}" ]] && systemctl restart 5gpn-client-socks.service 2>/dev/null || true
     fi
+    if [[ -f "${CLIENT_HTTP_PROXY_ENV}" ]]; then
+        if grep -q '^HTTP_PROXY_ALLOW_CIDR=' "${CLIENT_HTTP_PROXY_ENV}"; then
+            sed -i -E "s#^HTTP_PROXY_ALLOW_CIDR=.*#HTTP_PROXY_ALLOW_CIDR=${cidr}#" "${CLIENT_HTTP_PROXY_ENV}"
+        else
+            echo "HTTP_PROXY_ALLOW_CIDR=${cidr}" >> "${CLIENT_HTTP_PROXY_ENV}"
+        fi
+        [[ -f "${CLIENT_HTTP_PROXY_ENABLED}" ]] && systemctl restart 5gpn-client-http-proxy.service 2>/dev/null || true
+    fi
     if [[ -f "${CLIENT_MTPROTO_ENV}" ]]; then
         if grep -q '^MTPROTO_ALLOW_CIDR=' "${CLIENT_MTPROTO_ENV}"; then
             sed -i -E "s#^MTPROTO_ALLOW_CIDR=.*#MTPROTO_ALLOW_CIDR=${cidr}#" "${CLIENT_MTPROTO_ENV}"
@@ -806,6 +823,7 @@ PY
         info "若使用自管防火墙，请自行放行来源 ${cidr} 的 53/80/443"
     fi
     declare -F firewall_socks_sync >/dev/null 2>&1 && firewall_socks_sync || true
+    declare -F firewall_http_proxy_sync >/dev/null 2>&1 && firewall_http_proxy_sync || true
     declare -F firewall_mtproto_sync >/dev/null 2>&1 && firewall_mtproto_sync || true
     declare -F firewall_clash_remote_sync >/dev/null 2>&1 && firewall_clash_remote_sync || true
     ok "客户端网段已设置为 ${cidr}"
@@ -1079,6 +1097,7 @@ main_install() {
     install_whatsapp_shim
     install_quic_proxy
     install_client_socks_binary
+    install_client_http_proxy_binary
     install_client_mtproto_binary || warn "client-mtproto 预装失败（可稍后 enable-client-mtproto）"
     install_clash_remote_binary || warn "clash-remote 预装失败（可稍后 enable-clash-remote）"
     prompt_client_cidr_install

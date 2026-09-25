@@ -40,6 +40,7 @@ check_fn set_exit exit
 check_fn regen_smart exit
 check_fn setup_api control
 check_fn enable_client_socks control
+check_fn enable_client_http_proxy control
 check_fn do_update ops
 check_fn main_install ops
 

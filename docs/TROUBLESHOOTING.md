@@ -105,6 +105,29 @@ sudo 5gpn reset-client-socks-creds     # 忘记密码时轮换
 
 也可在 Bot「运维 → 私网 SOCKS5」或网页「设置」开关。
 
+## 私网 HTTP/HTTPS 代理连不上
+
+可选功能，默认关闭。默认端口 **38444**，使用 Basic 用户名/密码鉴权，支持
+普通 HTTP 转发和 HTTPS CONNECT。
+
+```bash
+sudo 5gpn client-http-proxy-status
+sudo 5gpn enable-client-http-proxy          # 打印地址/用户/密码（只显示一次）
+sudo 5gpn reset-client-http-proxy-creds     # 忘记密码时轮换
+
+# 客户端验证
+curl -x http://5gpn:YOUR_PASSWORD@192.0.2.10:38444 https://example.com/
+```
+
+核对：
+
+1. 客户端源 IP 必须在配置的客户端 CIDR 内。
+2. HTTP 和 HTTPS 都填写同一个 `http://<网关IP>:38444` 代理地址；HTTPS 由 CONNECT 隧道承载，不是要求代理端口本身启用 TLS。
+3. `FIREWALL_MODE=preserve` 的临时规则标签为 `5gpn-http-proxy`，防火墙重启后需自行恢复。
+4. `journalctl -u 5gpn-client-http-proxy -n 50 --no-pager`
+
+也可在 Bot「运维 → 私网 HTTP 代理」或网页「设置」开关。
+
 ## SSH 到「主机名.域名」进了网关
 
 私网客户端对非 ChinaList、非直连名单的域名会得到网关 IP；SSH 无 SNI，落到本机 `sshd`。
