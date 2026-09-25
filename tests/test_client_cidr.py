@@ -1,11 +1,9 @@
-#!/usr/bin/env python3
 """Unit tests for client CIDR normalization and validation."""
 
 import importlib.util
 import os
 import unittest
 from unittest import mock
-
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
