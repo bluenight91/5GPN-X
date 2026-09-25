@@ -9,7 +9,7 @@ fail() { echo "$1" >&2; exit 1; }
 
 unit_block() { # unit-name → heredoc body of its unit definition in install.sh
     awk -v u="$1" '
-        $0 ~ "cat > .*" u " <<" { inb=1; next }
+        $0 ~ "cat > .*" u ".*<<" { inb=1; next }
         inb && /^EOF$/ { exit }
         inb { print }
     ' "${install[@]}"
