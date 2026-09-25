@@ -50,7 +50,8 @@ warn() { :; }
 err() { :; }
 
 run_failure_case() {
-    local stage="$1" case_dir="${tmp}/${stage}"
+    local stage="$1"
+    local case_dir="${tmp}/${stage}"
     mkdir -p "$case_dir"
     CLIENT_HTTP_PROXY_ENABLED="${case_dir}/client-http-proxy.enabled"
     CLIENT_HTTP_PROXY_ENV="${case_dir}/client-http-proxy.env"
