@@ -72,6 +72,7 @@ SERVICES = [
     "5gpn-tgbot",
     "5gpn-api",
     "5gpn-client-socks",
+    "5gpn-client-http-proxy",
     "5gpn-mtproxy",
     "5gpn-client-mtproto",
 ]
@@ -1026,6 +1027,8 @@ def _status_items():
     items = list(STATUS_ITEMS)
     if os.path.isfile("/opt/5gpn/etc/client-socks.enabled"):
         items.append(("5gpn-client-socks", "私网 SOCKS5"))
+    if os.path.isfile("/opt/5gpn/etc/client-http-proxy.enabled"):
+        items.append(("5gpn-client-http-proxy", "私网 HTTP 代理"))
     if os.path.isfile("/opt/5gpn/etc/client-mtproto.enabled"):
         items.append(("5gpn-mtproxy", "MTProto core"))
         items.append(("5gpn-client-mtproto", "MTProto front"))
@@ -2423,9 +2426,10 @@ def ops_menu():
         [{"text": "⏪ 回滚最新", "callback_data": "act:rollback"},
          {"text": "🧭 向导", "callback_data": "wiz:start"}],
         [{"text": "🧦 私网 SOCKS5", "callback_data": "menu:socks"},
-         {"text": "📡 私网 MTProto", "callback_data": "menu:mtproto"}],
-        [{"text": "🖥 远程 Clash API", "callback_data": "menu:clash_remote"},
-         {"text": "🩹 出口自愈", "callback_data": "menu:failover"}],
+         {"text": "🌐 私网 HTTP 代理", "callback_data": "menu:http_proxy"}],
+        [{"text": "📡 私网 MTProto", "callback_data": "menu:mtproto"},
+         {"text": "🖥 远程 Clash API", "callback_data": "menu:clash_remote"}],
+        [{"text": "🩹 出口自愈", "callback_data": "menu:failover"}],
         [{"text": "🔑 轮换 API 令牌", "callback_data": "act:rotate_token"},
          {"text": "🛡 API 白名单", "callback_data": "menu:api_allow"}],
         [{"text": "🧩 组件版本", "callback_data": "menu:components"},
@@ -2441,6 +2445,16 @@ def client_socks_menu():
          {"text": "⏹ 关闭", "callback_data": "socks:disable"}],
         [{"text": "🔑 重置密码", "callback_data": "socks:reset"},
          {"text": "🔄 刷新状态", "callback_data": "socks:status"}],
+        [{"text": "« 返回", "callback_data": "menu:ops"}],
+    ]
+
+
+def client_http_proxy_menu():
+    return [
+        [{"text": "▶️ 开启", "callback_data": "http_proxy:enable"},
+         {"text": "⏹ 关闭", "callback_data": "http_proxy:disable"}],
+        [{"text": "🔑 重置密码", "callback_data": "http_proxy:reset"},
+         {"text": "🔄 刷新状态", "callback_data": "http_proxy:status"}],
         [{"text": "« 返回", "callback_data": "menu:ops"}],
     ]
 
@@ -2553,6 +2567,37 @@ def op_disable_client_socks():
 
 def op_reset_client_socks_creds():
     ok, out = run2(["bash", MGMT, "--reset-client-socks-creds"], timeout=120)
+    body = html.escape(_strip_ansi(out)[-2000:])
+    if ok:
+        return (f"✅ <b>凭据已轮换</b>\n<pre>{body}</pre>\n请立即保存新密码。")
+    return f"❌ <b>轮换失败</b>\n{html.escape(_reason(out))}"
+
+
+def op_client_http_proxy_status():
+    _, out = run2(["bash", MGMT, "--client-http-proxy-status"], timeout=60)
+    body = html.escape(_strip_ansi(out)[-2000:] or "无输出")
+    return (f"🌐 <b>私网 HTTP/HTTPS 代理</b>\n<pre>{body}</pre>\n"
+            "仅客户端网段可访问；支持 HTTP 与 HTTPS CONNECT；出站跟随当前出口。")
+
+
+def op_enable_client_http_proxy():
+    ok, out = run2(["bash", MGMT, "--enable-client-http-proxy"], timeout=180)
+    body = html.escape(_strip_ansi(out)[-2500:])
+    if ok:
+        return (f"✅ <b>HTTP/HTTPS 代理已开启</b>\n<pre>{body}</pre>\n"
+                "请立即保存用户名/密码；之后状态页会隐藏密码。")
+    return f"❌ <b>开启失败</b>\n{html.escape(_reason(out))}"
+
+
+def op_disable_client_http_proxy():
+    ok, out = run2(["bash", MGMT, "--disable-client-http-proxy"], timeout=120)
+    if ok:
+        return f"✅ <b>HTTP/HTTPS 代理已关闭</b>\n{html.escape(_strip_ansi(out)[-800:])}"
+    return f"❌ <b>关闭失败</b>\n{html.escape(_reason(out))}"
+
+
+def op_reset_client_http_proxy_creds():
+    ok, out = run2(["bash", MGMT, "--reset-client-http-proxy-creds"], timeout=120)
     body = html.escape(_strip_ansi(out)[-2000:])
     if ok:
         return (f"✅ <b>凭据已轮换</b>\n<pre>{body}</pre>\n请立即保存新密码。")
@@ -3184,6 +3229,9 @@ def handle_callback(cb):
     elif data == "menu:socks":
         edit(cb, "⏳ 正在读取 SOCKS5 状态…")
         edit_async(cb, op_client_socks_status, client_socks_menu())
+    elif data == "menu:http_proxy":
+        edit(cb, "⏳ 正在读取 HTTP/HTTPS 代理状态…")
+        edit_async(cb, op_client_http_proxy_status, client_http_proxy_menu())
     elif data == "menu:mtproto":
         PENDING.pop(chat_id, None)
         edit(cb, "⏳ 正在读取 MTProto 状态…")
@@ -3531,6 +3579,18 @@ def handle_callback(cb):
     elif data == "socks:reset":
         edit(cb, "⏳ 正在轮换 SOCKS5 凭据…")
         edit_async(cb, op_reset_client_socks_creds, client_socks_menu())
+    elif data == "http_proxy:status":
+        edit(cb, "⏳ 正在读取 HTTP/HTTPS 代理状态…")
+        edit_async(cb, op_client_http_proxy_status, client_http_proxy_menu())
+    elif data == "http_proxy:enable":
+        edit(cb, "⏳ 正在开启私网 HTTP/HTTPS 代理…")
+        edit_async(cb, op_enable_client_http_proxy, client_http_proxy_menu())
+    elif data == "http_proxy:disable":
+        edit(cb, "⏳ 正在关闭私网 HTTP/HTTPS 代理…")
+        edit_async(cb, op_disable_client_http_proxy, client_http_proxy_menu())
+    elif data == "http_proxy:reset":
+        edit(cb, "⏳ 正在轮换 HTTP/HTTPS 代理凭据…")
+        edit_async(cb, op_reset_client_http_proxy_creds, client_http_proxy_menu())
     elif data == "mtproto:status":
         edit(cb, "⏳ 正在读取 MTProto 状态…")
         edit_async(cb, op_client_mtproto_status, client_mtproto_menu())

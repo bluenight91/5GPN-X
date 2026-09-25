@@ -142,6 +142,15 @@ if [[ -f "${CONF_DIR}/client-socks.enabled" ]]; then
 else
     note "私网 SOCKS5" "disabled"
 fi
+if [[ -f "${CONF_DIR}/client-http-proxy.enabled" ]]; then
+    if svc_active 5gpn-client-http-proxy; then
+        ok "服务 client-http-proxy" "running"
+    else
+        bad "服务 client-http-proxy" "enabled but not running"
+    fi
+else
+    note "私网 HTTP/HTTPS 代理" "disabled"
+fi
 if [[ -f "${CONF_DIR}/client-mtproto.enabled" ]]; then
     if svc_active 5gpn-mtproxy && svc_active 5gpn-client-mtproto; then
         ok "服务 client-mtproto" "running"
@@ -192,6 +201,10 @@ check_listen tcp 443 "HTTPS/SNI"
 if [[ -f "${CONF_DIR}/client-socks.enabled" ]]; then
     socks_port="$(cat "${CONF_DIR}/client-socks.port" 2>/dev/null || echo 38443)"
     check_listen tcp "$socks_port" "私网 SOCKS5"
+fi
+if [[ -f "${CONF_DIR}/client-http-proxy.enabled" ]]; then
+    http_proxy_port="$(cat "${CONF_DIR}/client-http-proxy.port" 2>/dev/null || echo 38444)"
+    check_listen tcp "$http_proxy_port" "私网 HTTP/HTTPS 代理"
 fi
 if [[ -f "${CONF_DIR}/client-mtproto.enabled" ]]; then
     mtproto_port="$(cat "${CONF_DIR}/client-mtproto.port" 2>/dev/null || echo 5753)"

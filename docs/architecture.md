@@ -22,7 +22,7 @@ iOS 描述文件）或明文 DNS 接入，DNS 答案决定"直连还是进网关
 | `5gpn-api` | HTTP 控制 API + 静态 webui（默认仅回环 `:8444`） | root（编排服务） |
 | `5gpn-failover.timer` | 出口自愈 watchdog（每 60s 一跳，**默认关闭**，I11） | root（编排服务） |
 | `5gpn-ios-profile.socket` | iOS 描述文件 HTTP 分发（每连接一个实例） | root 短时 |
-| 可选 | `5gpn-mtproxy`、`5gpn-client-mtproto`、`5gpn-client-socks`、`5gpn-clash-remote` | 各自专用用户 |
+| 可选 | `5gpn-mtproxy`、`5gpn-client-mtproto`、`5gpn-client-socks`、`5gpn-client-http-proxy`、`5gpn-clash-remote` | 各自专用用户 |
 
 ## 数据流
 
@@ -47,6 +47,10 @@ Android Private DNS / iOS 描述文件          明文 DNS
 客户端来源 ACL 接受一个或多个英文逗号分隔的 IPv4 CIDR；单主机用 `/32`
 精确表示。默认拒绝前缀短于 `/16` 的宽网段，除非运维者显式设置
 `FORCE_WIDE_CIDR=1`。
+
+可选的 `5gpn-client-http-proxy` 提供带 Basic 鉴权的 HTTP 正向代理与 HTTPS
+CONNECT 隧道，默认监听 TCP `38444`。进程 ACL 与主机防火墙都只允许客户端
+来源 CIDR，服务以 `pxout` 身份运行，因此代理出站遵循 I3 的当前出口策略。
 
 ## 运行时不变量
 

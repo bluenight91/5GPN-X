@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- 新增可选私网 HTTP/HTTPS 正向代理：默认 TCP `38444`，客户端 CIDR 与 Basic 用户名/密码双重限制，支持普通 HTTP 转发和 HTTPS CONNECT；以 `pxout` 运行并跟随当前出口。CLI、API、WebUI、Telegram、doctor、防火墙及卸载流程均已集成。
+
 ### Changed
 
 - 客户端网段现在支持 IPv4 `/31` 与 `/32`，可在保留默认网段的同时精确放行单个客户端 IP。

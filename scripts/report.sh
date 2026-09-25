@@ -30,7 +30,7 @@ tmp="$(mktemp)"
 redact() {
     # Strip tokens, passwords, secrets, long hex/base64-ish blobs.
     sed -E \
-        -e 's/(API_TOKEN|TG_BOT_TOKEN|SOCKS_PASS|token|password|passwd|secret|uuid)=[^[:space:]]+/\1=***REDACTED***/Ig' \
+        -e 's/(API_TOKEN|TG_BOT_TOKEN|SOCKS_PASS|HTTP_PROXY_PASS|token|password|passwd|secret|uuid)=[^[:space:]]+/\1=***REDACTED***/Ig' \
         -e 's#(ss|vmess|vless|trojan|hysteria2|hy2|tuic|anytls|socks5h?|https?)://[^[:space:]]+#\1://***REDACTED***#Ig' \
         -e 's/[A-Za-z0-9_-]{32,}/***REDACTED***/g'
 }
@@ -55,10 +55,10 @@ redact() {
     bash "${BASE_DIR}/scripts/doctor.sh" --deep 2>&1 || true
     echo ""
     echo "----- services -----"
-    systemctl is-active mosdns sniproxy wa-shim quic-proxy 5gpn-tgbot 5gpn-api 2>&1 || true
+    systemctl is-active mosdns sniproxy wa-shim quic-proxy 5gpn-tgbot 5gpn-api 5gpn-client-socks 5gpn-client-http-proxy 2>&1 || true
     echo ""
     echo "----- listeners -----"
-    ss -tlnp 2>/dev/null | grep -E ':(53|853|80|443|8111|8444|9090)\s' || true
+    ss -tlnp 2>/dev/null | grep -E ':(53|853|80|443|8111|8444|9090|38443|38444)\s' || true
     ss -ulnp 2>/dev/null | grep -E ':(53|443)\s' || true
     echo ""
     echo "----- ip rule / route 100 -----"
@@ -66,7 +66,7 @@ redact() {
     ip route show table 100 2>/dev/null || true
     echo ""
     echo "----- recent journals -----"
-    for u in mosdns sniproxy wa-shim quic-proxy 5gpn-tgbot 5gpn-api; do
+    for u in mosdns sniproxy wa-shim quic-proxy 5gpn-tgbot 5gpn-api 5gpn-client-socks 5gpn-client-http-proxy; do
         echo "## $u"
         journalctl -u "$u" -n 20 --no-pager -o short-iso 2>/dev/null || true
         echo ""

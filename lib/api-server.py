@@ -1406,12 +1406,14 @@ BACKUP_PATHS = ["etc/5gpn", "etc/mosdns/gfwlist-extra-local.txt",
                 "etc/mosdns/.ecs", "etc/mosdns/.sniproxy_dns",
                 "etc/wireguard", "opt/5gpn/etc/current-exit",
                 "opt/5gpn/etc/.client_cidr", "opt/5gpn/etc/client-socks.port",
+                "opt/5gpn/etc/client-http-proxy.port",
                 "opt/5gpn/etc/client-mtproto.port", "opt/5gpn/etc/clash-remote.port"]
 
 
 def _backup_secret_name(name):
     base = os.path.basename(name).lower()
-    if base in ("api.env", "tgbot.env", "client-socks.env", "client-mtproto.env",
+    if base in ("api.env", "tgbot.env", "client-socks.env", "client-http-proxy.env",
+                "client-mtproto.env",
                 "clash-remote.env", "mtg.toml", "mtprotoproxy.conf.py", "mihomo-api-secret"):
         return True
     if base.endswith(".pem"):
@@ -1463,6 +1465,7 @@ def _backup_allowed(name):
                 or re.match(r"etc/wireguard/pgw-[^/]+\.conf$", name)
                 or name in ("opt/5gpn/etc/current-exit", "opt/5gpn/etc/.client_cidr",
                             "opt/5gpn/etc/client-socks.port",
+                            "opt/5gpn/etc/client-http-proxy.port",
                             "opt/5gpn/etc/client-mtproto.port",
                             "opt/5gpn/etc/clash-remote.port"))
 
@@ -1860,6 +1863,8 @@ class Handler(BaseHTTPRequestHandler):
             units = list(SERVICES)
             if os.path.isfile(os.path.join(CONF_DIR, "client-socks.enabled")):
                 units.append("5gpn-client-socks")
+            if os.path.isfile(os.path.join(CONF_DIR, "client-http-proxy.enabled")):
+                units.append("5gpn-client-http-proxy")
             if os.path.isfile(os.path.join(CONF_DIR, "client-mtproto.enabled")):
                 units.extend(["5gpn-mtproxy", "5gpn-client-mtproto"])
             if os.path.isfile(os.path.join(CONF_DIR, "clash-remote.enabled")):
@@ -1991,6 +1996,25 @@ class Handler(BaseHTTPRequestHandler):
             running = False
             if enabled:
                 running = run(["systemctl", "is-active", "5gpn-client-socks"], timeout=5)[0]
+            host = read_file("/etc/mosdns/.public_ip").strip() or ""
+            return self._send(200, {
+                "ok": True, "enabled": enabled, "running": running,
+                "host": host, "port": port, "user": user,
+                "password": "***" if enabled or user else "",
+                "allow_cidr": get_client_cidr(),
+                "note": "password is masked; use enable/reset-creds to receive it once",
+            })
+        if path == "/api/client-http-proxy":
+            enabled = os.path.isfile(os.path.join(CONF_DIR, "client-http-proxy.enabled"))
+            port = read_file(os.path.join(CONF_DIR, "client-http-proxy.port")).strip() or "38444"
+            user = ""
+            env = read_file(os.path.join(CONF_DIR, "client-http-proxy.env"))
+            for line in env.splitlines():
+                if line.startswith("HTTP_PROXY_USER="):
+                    user = line.split("=", 1)[1].strip()
+            running = False
+            if enabled:
+                running = run(["systemctl", "is-active", "5gpn-client-http-proxy"], timeout=5)[0]
             host = read_file("/etc/mosdns/.public_ip").strip() or ""
             return self._send(200, {
                 "ok": True, "enabled": enabled, "running": running,
@@ -2345,6 +2369,37 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200 if ok else 500, {
                 "ok": ok, "output": out,
                 "enabled": os.path.isfile(os.path.join(CONF_DIR, "client-socks.enabled")),
+                "host": host, "port": port, "user": user, "password": password,
+                "allow_cidr": get_client_cidr(),
+                "note": ("password returned once; future GET responses mask it"
+                         if action in ("enable", "reset-creds") else "password is masked"),
+            })
+
+        if path == "/api/client-http-proxy":
+            action = str(b.get("action", "")).strip().lower()
+            if action == "enable":
+                ok, out = ctl("--enable-client-http-proxy", timeout=180)
+            elif action == "disable":
+                ok, out = ctl("--disable-client-http-proxy", timeout=120)
+            elif action == "reset-creds":
+                ok, out = ctl("--reset-client-http-proxy-creds", timeout=120)
+            else:
+                return self._send(400, {"ok": False,
+                                        "error": "action must be enable|disable|reset-creds"})
+            host = port = user = password = ""
+            for line in (out or "").splitlines():
+                s = line.strip()
+                if "地址:" in s or "地址：" in s:
+                    val = s.split(":", 1)[-1].split("：", 1)[-1].strip()
+                    if ":" in val and not val.startswith("http"):
+                        host, port = val.rsplit(":", 1)
+                elif "用户:" in s or "用户：" in s:
+                    user = s.split(":", 1)[-1].split("：", 1)[-1].strip()
+                elif "密码:" in s or "密码：" in s:
+                    password = s.split(":", 1)[-1].split("：", 1)[-1].strip()
+            return self._send(200 if ok else 500, {
+                "ok": ok, "output": out,
+                "enabled": os.path.isfile(os.path.join(CONF_DIR, "client-http-proxy.enabled")),
                 "host": host, "port": port, "user": user, "password": password,
                 "allow_cidr": get_client_cidr(),
                 "note": ("password returned once; future GET responses mask it"

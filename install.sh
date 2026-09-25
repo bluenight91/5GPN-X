@@ -14,6 +14,8 @@ IOS_PROFILE_PORT=8111
 API_PORT_DEFAULT=8444
 CLIENT_SOCKS_PORT_DEFAULT=38443
 CLIENT_SOCKS_USER_DEFAULT=5gpn
+CLIENT_HTTP_PROXY_PORT_DEFAULT=38444
+CLIENT_HTTP_PROXY_USER_DEFAULT=5gpn
 CLIENT_MTPROTO_PORT_DEFAULT=5753
 CLIENT_MTPROTO_BACKEND_DEFAULT=127.0.0.1:15753
 CLASH_REMOTE_PORT_DEFAULT=9443
@@ -228,6 +230,14 @@ Options:
                  Show SOCKS5 status (password omitted)
   --reset-client-socks-creds
                  Rotate SOCKS5 username/password (prints once)
+  --enable-client-http-proxy
+                 Enable private HTTP/HTTPS proxy (user/pass; only client CIDR; default TCP 38444)
+  --disable-client-http-proxy
+                 Disable the private HTTP/HTTPS proxy
+  --client-http-proxy-status
+                 Show HTTP proxy status (password omitted)
+  --reset-client-http-proxy-creds
+                 Rotate HTTP proxy username/password (prints once)
   --enable-client-mtproto
                  Enable private MTProto proxy (classic; only client CIDR; TCP 5753)
   --disable-client-mtproto
@@ -302,6 +312,13 @@ CLIENT_SOCKS_BIN="${BASE_DIR}/bin/client-socks"
 CLIENT_SOCKS_ENV="${CONF_DIR}/client-socks.env"
 CLIENT_SOCKS_ENABLED="${CONF_DIR}/client-socks.enabled"
 CLIENT_SOCKS_PORT_FILE="${CONF_DIR}/client-socks.port"
+
+
+# ----- private client HTTP/HTTPS proxy (opt-in; uncommon port; pxout egress) -----
+CLIENT_HTTP_PROXY_BIN="${BASE_DIR}/bin/client-http-proxy"
+CLIENT_HTTP_PROXY_ENV="${CONF_DIR}/client-http-proxy.env"
+CLIENT_HTTP_PROXY_ENABLED="${CONF_DIR}/client-http-proxy.enabled"
+CLIENT_HTTP_PROXY_PORT_FILE="${CONF_DIR}/client-http-proxy.port"
 
 
 # ----- private client MTProto (classic mtprotoproxy + CIDR ACL; TCP 5753) -----
@@ -525,6 +542,18 @@ case "${1:-}" in
         ;;
     --reset-client-socks-creds)
         reset_client_socks_creds
+        ;;
+    --enable-client-http-proxy)
+        enable_client_http_proxy
+        ;;
+    --disable-client-http-proxy)
+        disable_client_http_proxy
+        ;;
+    --client-http-proxy-status)
+        client_http_proxy_status
+        ;;
+    --reset-client-http-proxy-creds)
+        reset_client_http_proxy_creds
         ;;
     --enable-client-mtproto)
         enable_client_mtproto
