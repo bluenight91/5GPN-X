@@ -20,6 +20,7 @@ SYSTEMD_UNIT_DIR="${tmp}/systemd"
 
 ensure_proxy_user() { :; }
 systemctl() { [[ "$1" == daemon-reload ]]; }
+info() { :; }
 source "${root}/lib/setup-control.sh"
 
 (umask 077; install_client_http_proxy_binary)
