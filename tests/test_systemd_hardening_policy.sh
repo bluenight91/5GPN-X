@@ -44,6 +44,20 @@ b="$(unit_block '5gpn-mihomo@.service')"
 b="$(unit_block '5gpn-ios-profile@.service')"
 [[ "$b" == *'ProtectSystem=strict'* && "$b" == *'ProtectHome=true'* && "$b" == *'PrivateTmp=true'* ]] \
     || fail "ios-profile@ must be sandboxed"
+# A stalled public connection is cut off with SIGALRM. That per-connection
+# instance must not enter failed: is-system-running would go degraded and
+# external health gates would fail the host.
+[[ "$b" == *'SuccessExitStatus=ALRM'* ]] \
+    || fail "ios-profile@ must treat SIGALRM timeout as success"
+[[ "$b" == *'CollectMode=inactive'* ]] \
+    || fail "ios-profile@ instances must be collected once inactive"
+ios_http="$(cat "${root}/lib/ios-http.py")"
+[[ "$ios_http" == *'os._exit(0)'* ]] \
+    || fail "ios-http timeout must hard-exit 0 (sys.exit from a signal handler is not a reliable status)"
+[[ "$ios_http" == *'signal.alarm(_request_timeout())'* ]] \
+    || fail "ios-http must still arm a stall timeout"
+grep -qF "systemctl reset-failed '5gpn-ios-profile@*'" "${root}/lib/setup-core.sh" \
+    || fail "generate_ios_profile must clear already-failed per-connection instances"
 
 # --- private HTTP proxy: unprivileged non-orchestrator sandbox -----------------
 b="$(unit_block 5gpn-client-http-proxy.service)"
