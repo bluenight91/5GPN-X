@@ -1140,6 +1140,9 @@ EOF
     cat > /etc/systemd/system/5gpn-ios-profile@.service <<EOF
 [Unit]
 Description=Proxy Gateway iOS profile responder (per-connection)
+# One short-lived instance per connection. Drop it when the peer is gone so
+# scanners cannot pile inactive units into the manager.
+CollectMode=inactive
 
 [Service]
 Type=simple
@@ -1152,8 +1155,16 @@ User=root
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
+# The responder cuts a stalled peer off with SIGALRM and exits 0. If systemd
+# still records signal death, that must be success: a failed instance marks
+# the whole host degraded (systemctl is-system-running) and external health
+# gates then fail an otherwise healthy machine.
+SuccessExitStatus=ALRM
 EOF
     systemctl daemon-reload
+    # A connection that already failed under the old unit keeps the host
+    # degraded until it is cleared. New timeouts no longer enter failed.
+    systemctl reset-failed '5gpn-ios-profile@*' 5gpn-ios-profile.service 2>/dev/null || true
     systemctl enable --now 5gpn-ios-profile.socket
     echo "$profile_url" > "${WWW_DIR}/ios-profile-url.txt"
     if command -v qrencode >/dev/null 2>&1; then

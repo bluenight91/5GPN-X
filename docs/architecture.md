@@ -24,6 +24,15 @@ iOS 描述文件）或明文 DNS 接入，DNS 答案决定"直连还是进网关
 | `5gpn-ios-profile.socket` | iOS 描述文件 HTTP 分发（每连接一个实例） | root 短时 |
 | 可选 | `5gpn-mtproxy`、`5gpn-client-mtproto`、`5gpn-client-socks`、`5gpn-client-http-proxy`、`5gpn-clash-remote` | 各自专用用户 |
 
+`5gpn-ios-profile.socket` 监听公网 `8111`，`Accept=yes`：每个 TCP 连接一个
+`5gpn-ios-profile@` 实例，空闲时没有常驻进程。对端连上后不发请求（端口扫描、
+半开连接）时，响应进程在 10 秒后结束，退出码为 0。单元声明
+`SuccessExitStatus=ALRM`：即使该退出仍被记成信号死亡，也算成功。失败实例会让
+`systemctl is-system-running` 变成 `degraded`，外部编排的健康门禁会把整机判失败。
+安装和更新在重写单元后对 `5gpn-ios-profile@*` 和旧的非模板单元执行
+`reset-failed`，清掉升级前已经留下的失败实例。结束的实例用
+`CollectMode=inactive` 卸载，避免扫描连接在 manager 里堆积。
+
 ## 数据流
 
 ```text
